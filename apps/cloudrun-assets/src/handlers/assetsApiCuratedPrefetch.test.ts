@@ -94,6 +94,12 @@ function makeEmptyDeps(overrides: Partial<CuratedPrefetchDeps> = {}): CuratedPre
         async listMembersBySlug(): Promise<AssetCollectionMemberRow[]> {
             return [];
         },
+        async listMemberMintsBySlug() {
+            return [];
+        },
+        async getSummariesBySlugs() {
+            return [];
+        },
     };
 
     const variantsRepo: AssetVariantsRepo = {
@@ -282,6 +288,12 @@ describe('assetsApiCuratedPrefetchForApi', () => {
                     if (slug === 'majors') return [{ asset_id: 'solana' }];
                     return [];
                 },
+                async listMemberMintsBySlug() {
+                    return [];
+                },
+                async getSummariesBySlugs() {
+                    return [];
+                },
             },
             assetsRepo: {
                 ...makeEmptyDeps().assetsRepo,
@@ -401,6 +413,12 @@ describe('assetsApiCuratedPrefetchForApi', () => {
                 async listMembersBySlug() {
                     return [{ asset_id: 'solana' }];
                 },
+                async listMemberMintsBySlug() {
+                    return [];
+                },
+                async getSummariesBySlugs() {
+                    return [];
+                },
             },
             assetsRepo: {
                 ...makeEmptyDeps().assetsRepo,
@@ -445,6 +463,12 @@ describe('assetsApiCuratedPrefetchForApi', () => {
             assetCollectionsReadsRepo: {
                 async listMembersBySlug() {
                     return [{ asset_id: 'bnb' }];
+                },
+                async listMemberMintsBySlug() {
+                    return [];
+                },
+                async getSummariesBySlugs() {
+                    return [];
                 },
             },
             assetsRepo: {
@@ -515,6 +539,12 @@ describe('assetsApiCuratedPrefetchForApi', () => {
             assetCollectionsReadsRepo: {
                 async listMembersBySlug() {
                     return [{ asset_id: 'legacy-asset' }, { asset_id: 'solana' }];
+                },
+                async listMemberMintsBySlug() {
+                    return [];
+                },
+                async getSummariesBySlugs() {
+                    return [];
                 },
             },
             assetsRepo: {

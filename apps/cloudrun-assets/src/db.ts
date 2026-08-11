@@ -3117,6 +3117,42 @@ export function makePostgresAssetCollectionsReadsRepo(sql: Sql): AssetCollection
             `;
             return rows;
         },
+        async listMemberMintsBySlug(slug, limit) {
+            const rows = await sql<{ mint: string }[]>`
+                SELECT av.mint
+                FROM asset_collection_members acm
+                JOIN assets a ON a.asset_id = acm.asset_id AND a.is_active = true
+                JOIN asset_variants av ON av.asset_id = acm.asset_id AND av.is_active = true
+                WHERE acm.collection_slug = ${slug}
+                ORDER BY acm.rank ASC, av.mint ASC
+                LIMIT ${limit}
+            `;
+            return rows;
+        },
+        async getSummariesBySlugs(slugs) {
+            if (slugs.length === 0) return [];
+            const rows = await sql<
+                { collection_slug: string; member_count: number; last_added_asset_id: string | null; last_added_at: number | null }[]
+            >`
+                SELECT acm.collection_slug,
+                       COUNT(*)::int AS member_count,
+                       (ARRAY_AGG(acm.asset_id ORDER BY acm.added_at DESC, acm.rank ASC))[1] AS last_added_asset_id,
+                       MAX(acm.added_at) AS last_added_at
+                FROM asset_collection_members acm
+                JOIN assets a ON a.asset_id = acm.asset_id AND a.is_active = true
+                WHERE acm.collection_slug IN ${sql([...slugs])}
+                  AND NOT EXISTS (
+                      SELECT 1 FROM asset_deletion_tombstones t WHERE t.asset_id = acm.asset_id
+                  )
+                GROUP BY acm.collection_slug
+            `;
+            return rows.map(r => ({
+                collection_slug: r.collection_slug,
+                member_count: r.member_count,
+                last_added_asset_id: r.last_added_asset_id,
+                last_added_at: r.last_added_at === null ? null : Number(r.last_added_at),
+            }));
+        },
     };
 }
 
@@ -3129,6 +3165,9 @@ export function makePostgresSeedRepo(sql: Sql): SeedRepo {
         },
         async upsertCanonicalAsset(args) {
             const now = new Date();
+            // Admin wins: once admin_edited_at is set, the registry seed stops
+            // overwriting every field (including is_active — the seed passing
+            // isActive=true must not undo an admin deactivation).
             await sql`
                 INSERT INTO assets (
                     id, asset_id, category, name, symbol, aliases,
@@ -3146,14 +3185,14 @@ export function makePostgresSeedRepo(sql: Sql): SeedRepo {
                     ${args.isActive}, ${now}, ${now}
                 )
                 ON CONFLICT (asset_id) DO UPDATE SET
-                    category = EXCLUDED.category,
-                    name = coalesce(EXCLUDED.name, assets.name),
-                    symbol = coalesce(EXCLUDED.symbol, assets.symbol),
-                    aliases = EXCLUDED.aliases,
-                    coingecko_id = coalesce(EXCLUDED.coingecko_id, assets.coingecko_id),
-                    image_url = coalesce(EXCLUDED.image_url, assets.image_url),
-                    is_active = EXCLUDED.is_active,
-                    updated_at = EXCLUDED.updated_at
+                    category = CASE WHEN assets.admin_edited_at IS NULL THEN EXCLUDED.category ELSE assets.category END,
+                    name = CASE WHEN assets.admin_edited_at IS NULL THEN coalesce(EXCLUDED.name, assets.name) ELSE assets.name END,
+                    symbol = CASE WHEN assets.admin_edited_at IS NULL THEN coalesce(EXCLUDED.symbol, assets.symbol) ELSE assets.symbol END,
+                    aliases = CASE WHEN assets.admin_edited_at IS NULL THEN EXCLUDED.aliases ELSE assets.aliases END,
+                    coingecko_id = CASE WHEN assets.admin_edited_at IS NULL THEN coalesce(EXCLUDED.coingecko_id, assets.coingecko_id) ELSE assets.coingecko_id END,
+                    image_url = CASE WHEN assets.admin_edited_at IS NULL THEN coalesce(EXCLUDED.image_url, assets.image_url) ELSE assets.image_url END,
+                    is_active = CASE WHEN assets.admin_edited_at IS NULL THEN EXCLUDED.is_active ELSE assets.is_active END,
+                    updated_at = CASE WHEN assets.admin_edited_at IS NULL THEN EXCLUDED.updated_at ELSE assets.updated_at END
             `;
         },
         async upsertCanonicalAssetVariant(args) {
@@ -3235,17 +3274,68 @@ export function makePostgresSeedRepo(sql: Sql): SeedRepo {
                     updated_at = EXCLUDED.updated_at
             `;
         },
-        async replaceAssetCollectionMembers(collectionSlug, members) {
-            const addedAt = Date.now();
+        async mergeAssetCollectionMembers(collectionSlug, members) {
             await sql.begin(async tx => {
-                await tx`DELETE FROM asset_collection_members WHERE collection_slug = ${collectionSlug}`;
                 for (const m of members) {
+                    // Existing rows keep their added_at and source (an asset
+                    // the admin added that later lands in the registry stays
+                    // source='admin'); only rank follows the registry.
                     await tx`
-                        INSERT INTO asset_collection_members (id, collection_slug, asset_id, rank, added_at)
-                        VALUES (${randomId('acm')}, ${m.collectionSlug}, ${m.assetId}, ${m.rank}, ${addedAt})
+                        INSERT INTO asset_collection_members (id, collection_slug, asset_id, rank, added_at, source)
+                        VALUES (${randomId('acm')}, ${m.collectionSlug}, ${m.assetId}, ${m.rank}, ${m.addedAt}, 'registry')
+                        ON CONFLICT (collection_slug, asset_id) DO UPDATE SET rank = EXCLUDED.rank
+                    `;
+                }
+                // Registry removals still propagate; admin rows are never pruned.
+                const keepAssetIds = members.map(m => m.assetId);
+                if (keepAssetIds.length === 0) {
+                    await tx`
+                        DELETE FROM asset_collection_members
+                        WHERE collection_slug = ${collectionSlug} AND source = 'registry'
+                    `;
+                } else {
+                    await tx`
+                        DELETE FROM asset_collection_members
+                        WHERE collection_slug = ${collectionSlug}
+                          AND source = 'registry'
+                          AND asset_id NOT IN ${tx(keepAssetIds)}
                     `;
                 }
             });
+        },
+        async listTombstonedRefs(normalizedRefs) {
+            if (normalizedRefs.length === 0) return [];
+            const rows = await sql<{ normalized_ref: string }[]>`
+                SELECT DISTINCT normalized_ref
+                FROM asset_deletion_tombstones
+                WHERE normalized_ref IN ${sql([...normalizedRefs])}
+            `;
+            return rows.map(r => r.normalized_ref);
+        },
+        async listCollectionMemberUnion(excludeSlug) {
+            const rows = await sql<{ collection_slug: string; asset_id: string; rank: number; added_at: number }[]>`
+                SELECT collection_slug, asset_id, rank, added_at
+                FROM asset_collection_members
+                WHERE collection_slug <> ${excludeSlug}
+            `;
+            return rows.map(r => ({
+                collectionSlug: r.collection_slug,
+                assetId: r.asset_id,
+                rank: r.rank,
+                addedAt: Number(r.added_at),
+            }));
+        },
+        async lowerCollectionMemberAddedAtByMint(mint, addedAtMs) {
+            const rows = await sql<{ id: string }[]>`
+                UPDATE asset_collection_members AS acm
+                SET added_at = ${addedAtMs}
+                FROM asset_variants av
+                WHERE av.mint = ${mint}
+                  AND acm.asset_id = av.asset_id
+                  AND acm.added_at > ${addedAtMs}
+                RETURNING acm.id
+            `;
+            return rows.length;
         },
         async findIdentityAssetsByAssetIds(assetIds) {
             if (assetIds.length === 0) return [];
@@ -3471,26 +3561,14 @@ export function makePostgresAdminActionsRepo(sql: Sql): AdminActionsRepo {
         },
 
         async upsertAssetCollectionMember(args) {
-            // asset_collection_members has no unique constraint on
-            // (collection_slug, asset_id), so ON CONFLICT is unavailable and a bare
-            // UPDATE-then-INSERT races: two concurrent calls can both see the UPDATE
-            // match nothing and both INSERT duplicate rows. Serialize per
-            // (slug, assetId) with an advisory lock, released at commit/rollback.
-            await sql.begin(async tx => {
-                await tx`SELECT pg_advisory_xact_lock(hashtext(${args.collectionSlug}), hashtext(${args.assetId}))`;
-                const updated = await tx<{ id: string }[]>`
-                    UPDATE asset_collection_members
-                    SET rank = ${args.rank}
-                    WHERE collection_slug = ${args.collectionSlug}
-                      AND asset_id = ${args.assetId}
-                    RETURNING id
-                `;
-                if (updated.length > 0) return;
-                await tx`
-                    INSERT INTO asset_collection_members (id, collection_slug, asset_id, rank, added_at)
-                    VALUES (${randomId('acm')}, ${args.collectionSlug}, ${args.assetId}, ${args.rank}, ${Date.now()})
-                `;
-            });
+            // Admin-added membership: the registry seed never removes or
+            // restamps source='admin' rows. On update the original added_at
+            // and source are preserved (only rank moves).
+            await sql`
+                INSERT INTO asset_collection_members (id, collection_slug, asset_id, rank, added_at, source)
+                VALUES (${randomId('acm')}, ${args.collectionSlug}, ${args.assetId}, ${args.rank}, ${Date.now()}, 'admin')
+                ON CONFLICT (collection_slug, asset_id) DO UPDATE SET rank = EXCLUDED.rank
+            `;
         },
 
         async upsertAssetCollectionTitle(slug, title) {

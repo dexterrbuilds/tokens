@@ -453,7 +453,16 @@ function makeSeedDeps(state: FakeState): SeedCronDeps {
             async upsertCanonicalAssetAlias() {},
             async ensureVariantMarketRow() {},
             async upsertAssetCollection() {},
-            async replaceAssetCollectionMembers() {},
+            async mergeAssetCollectionMembers() {},
+            async listTombstonedRefs() {
+                return [];
+            },
+            async listCollectionMemberUnion() {
+                return [];
+            },
+            async lowerCollectionMemberAddedAtByMint() {
+                return 0;
+            },
             async findIdentityAssetsByAssetIds() {
                 return [];
             },

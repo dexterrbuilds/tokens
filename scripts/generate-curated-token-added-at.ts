@@ -11,9 +11,16 @@
  * Usage:
  *   bun scripts/generate-curated-token-added-at.ts
  *
- * Run this after adding new mints to any curated list. Addresses present in the working
- * tree but not yet committed are stamped with the current time (they are, by definition,
- * the newest) and will settle to their real commit time on the next regeneration.
+ * NOTE: with the no-PR admin pipeline, normal token adds go through the admin
+ * UI, which stamps `added_at` in Postgres at insert time — no regeneration
+ * needed. This script remains for the rare bulk-import PR that adds mints to
+ * the committed registry files (the map also seeds the DB `added_at` values
+ * via the one-time `backfill-curated-added-at` job and new registry inserts).
+ *
+ * Run this after adding new mints to any curated list **via a registry PR**.
+ * Addresses present in the working tree but not yet committed are stamped with
+ * the current time (they are, by definition, the newest) and will settle to
+ * their real commit time on the next regeneration.
  */
 
 import { spawnSync } from 'node:child_process';

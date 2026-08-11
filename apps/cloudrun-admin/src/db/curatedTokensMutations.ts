@@ -80,10 +80,10 @@ export async function syncCollections(
             continue;
         }
         await tx`
-            INSERT INTO asset_collection_members (id, collection_slug, asset_id, rank, added_at)
+            INSERT INTO asset_collection_members (id, collection_slug, asset_id, rank, added_at, source)
             SELECT ${randomId('acm')}, ${slug}, ${args.assetId},
                    (SELECT COALESCE(MAX(rank), -1) + 1 FROM asset_collection_members WHERE collection_slug = ${slug}),
-                   ${args.nowMs}
+                   ${args.nowMs}, 'admin'
             WHERE NOT EXISTS (
                 SELECT 1 FROM asset_collection_members
                 WHERE asset_id = ${args.assetId} AND collection_slug = ${slug}
@@ -126,12 +126,12 @@ export function makePostgresAdminMutationsRepo(sql: Sql): AdminMutationsRepo {
                 await tx`
                     INSERT INTO assets (
                         id, asset_id, category, name, symbol, coingecko_id, description,
-                        image_url, is_active, created_at, updated_at
+                        image_url, is_active, created_at, updated_at, admin_edited_at
                     )
                     VALUES (
                         ${randomId('ast')}, ${args.assetId}, ${args.category},
                         ${args.name}, ${args.symbol}, ${args.coingeckoId}, ${args.description},
-                        ${args.imageUrl}, true, ${now}, ${now}
+                        ${args.imageUrl}, true, ${now}, ${now}, ${args.nowMs}
                     )
                 `;
                 await replaceAliasesForKind(tx, {
@@ -198,7 +198,8 @@ export function makePostgresAdminMutationsRepo(sql: Sql): AdminMutationsRepo {
                         description = ${nextDescription},
                         image_url = ${nextImageUrl},
                         is_active = ${nextIsActive},
-                        updated_at = ${new Date(args.nowMs)}
+                        updated_at = ${new Date(args.nowMs)},
+                        admin_edited_at = ${args.nowMs}
                     WHERE asset_id = ${args.assetId}
                 `;
 

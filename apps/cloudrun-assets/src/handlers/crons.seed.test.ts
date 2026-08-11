@@ -30,8 +30,12 @@ interface RecorderState {
     upsertedAliases: CanonicalAssetAliasUpsert[];
     ensuredMarkets: string[];
     upsertedCollections: CanonicalAssetCollectionUpsert[];
-    clearedCollectionSlugs: string[];
+    mergedCollectionSlugs: string[];
     upsertedCollectionMembers: CanonicalAssetCollectionMemberUpsert[];
+    /** Simulated DB rows per slug (post-merge), backing listCollectionMemberUnion. */
+    membersBySlug: Map<string, CanonicalAssetCollectionMemberUpsert[]>;
+    tombstonedRefs: Set<string>;
+    loweredAddedAtCalls: Array<{ mint: string; addedAtMs: number }>;
     refreshedViewCount: number;
     identityAssetsByAssetId: Record<string, IdentityAssetRow>;
     identityVariantsByAssetId: Record<string, IdentityVariantRow[]>;
@@ -46,8 +50,11 @@ function makeRepo(): { repo: SeedRepo; state: RecorderState } {
         upsertedAliases: [],
         ensuredMarkets: [],
         upsertedCollections: [],
-        clearedCollectionSlugs: [],
+        mergedCollectionSlugs: [],
         upsertedCollectionMembers: [],
+        membersBySlug: new Map(),
+        tombstonedRefs: new Set(),
+        loweredAddedAtCalls: [],
         refreshedViewCount: 0,
         identityAssetsByAssetId: {},
         identityVariantsByAssetId: {},
@@ -61,9 +68,31 @@ function makeRepo(): { repo: SeedRepo; state: RecorderState } {
         async upsertCanonicalAssetAlias(args) { state.upsertedAliases.push(args); },
         async ensureVariantMarketRow(mint) { state.ensuredMarkets.push(mint); },
         async upsertAssetCollection(args) { state.upsertedCollections.push(args); },
-        async replaceAssetCollectionMembers(slug, members) {
-            state.clearedCollectionSlugs.push(slug);
+        async mergeAssetCollectionMembers(slug, members) {
+            state.mergedCollectionSlugs.push(slug);
             for (const m of members) state.upsertedCollectionMembers.push(m);
+            // Registry merge replaces registry rows wholesale; admin rows are
+            // simulated by pre-seeding membersBySlug before the run.
+            const existing = state.membersBySlug.get(slug) ?? [];
+            const preserved = existing.filter(row => !members.some(m => m.assetId === row.assetId));
+            state.membersBySlug.set(slug, [...preserved, ...members]);
+        },
+        async listTombstonedRefs(normalizedRefs) {
+            return normalizedRefs.filter(ref => state.tombstonedRefs.has(ref));
+        },
+        async listCollectionMemberUnion(excludeSlug) {
+            const out: Array<{ collectionSlug: string; assetId: string; rank: number; addedAt: number }> = [];
+            for (const [slug, members] of state.membersBySlug) {
+                if (slug === excludeSlug) continue;
+                for (const m of members) {
+                    out.push({ collectionSlug: slug, assetId: m.assetId, rank: m.rank, addedAt: m.addedAt });
+                }
+            }
+            return out;
+        },
+        async lowerCollectionMemberAddedAtByMint(mint, addedAtMs) {
+            state.loweredAddedAtCalls.push({ mint, addedAtMs });
+            return 1;
         },
         async refreshSolanaDefaultVariantsView() { state.refreshedViewCount += 1; },
         async findIdentityAssetsByAssetIds(assetIds) {
@@ -144,36 +173,50 @@ describe('buildAssetAliases', () => {
 });
 
 describe('buildCollectionMembersFromMints', () => {
+    const resolve = (mint: string) => {
+        if (mint === 'mintA') return 'jup';
+        if (mint === 'mintB') return 'sol';
+        if (mint === 'mintA-dup') return 'jup';
+        return null;
+    };
+
     it('preserves rank by first-occurrence and dedupes asset ids', () => {
-        const members = buildCollectionMembersFromMints(['mintA', 'mintB', 'mintA-dup'], mint => {
-            if (mint === 'mintA') return 'jup';
-            if (mint === 'mintB') return 'sol';
-            if (mint === 'mintA-dup') return 'jup';
-            return null;
-        });
+        const members = buildCollectionMembersFromMints(['mintA', 'mintB', 'mintA-dup'], resolve, () => null, FIXED_NOW);
         expect(members).toEqual([
-            { assetId: 'jup', rank: 0 },
-            { assetId: 'sol', rank: 1 },
+            { assetId: 'jup', rank: 0, addedAt: FIXED_NOW },
+            { assetId: 'sol', rank: 1, addedAt: FIXED_NOW },
+        ]);
+    });
+
+    it('uses git added-at when known and keeps the min across an asset\'s mints', () => {
+        const addedAt = (mint: string) => (mint === 'mintA-dup' ? 1_000 : mint === 'mintB' ? 2_000 : null);
+        const members = buildCollectionMembersFromMints(['mintA', 'mintB', 'mintA-dup'], resolve, addedAt, FIXED_NOW);
+        expect(members).toEqual([
+            { assetId: 'jup', rank: 0, addedAt: 1_000 },
+            { assetId: 'sol', rank: 1, addedAt: 2_000 },
         ]);
     });
 });
 
 describe('seedCanonicalAssetsRegistry', () => {
-    it('upserts assets, variants, aliases, ensures markets, builds collections', async () => {
+    const GIT_ADDED_AT = 1_700_000_000_000;
+
+    function makeDeps(repo: SeedRepo) {
+        return {
+            repo,
+            now: () => FIXED_NOW,
+            listCanonicalAssets: () => [sampleAsset],
+            listCuratedListOrder: () => ['majors'],
+            getCuratedListMints: () => [sampleAsset.variants[0]!.mint],
+            getCuratedListTitle: () => ({ title: 'Majors', description: 'Major tokens' }),
+            resolveAssetIdByMint: (mint: string) => (mint === sampleAsset.variants[0]!.mint ? 'jup' : null),
+            getCuratedAddedAtMsByMint: (mint: string) => (mint === sampleAsset.variants[0]!.mint ? GIT_ADDED_AT : null),
+        };
+    }
+
+    it('upserts assets, variants, aliases, ensures markets, merges collections', async () => {
         const { repo, state } = makeRepo();
-        const res = await seedCanonicalAssetsRegistry(
-            {
-                repo,
-                now: () => FIXED_NOW,
-                listCanonicalAssets: () => [sampleAsset],
-                listCuratedListOrder: () => ['majors'],
-                getCuratedListMints: () => [sampleAsset.variants[0]!.mint],
-                getCuratedListTitle: () => ({ title: 'Majors', description: 'Major tokens' }),
-                getAllCuratedMintsInOrder: () => [sampleAsset.variants[0]!.mint],
-                resolveAssetIdByMint: mint => (mint === sampleAsset.variants[0]!.mint ? 'jup' : null),
-            },
-            {},
-        );
+        const res = await seedCanonicalAssetsRegistry(makeDeps(repo), {});
         expect(res.ok).toBe(true);
         expect(res.assets).toBe(1);
         expect(res.variants).toBe(1);
@@ -184,10 +227,37 @@ describe('seedCanonicalAssetsRegistry', () => {
         expect(state.upsertedAliases.length).toBeGreaterThan(0);
         const collectionSlugs = state.upsertedCollections.map(c => c.slug);
         expect(collectionSlugs).toEqual(['majors', 'all']);
-        expect(state.clearedCollectionSlugs).toEqual(['majors', 'all']);
-        expect(state.upsertedCollectionMembers.filter(m => m.collectionSlug === 'majors').length).toBe(1);
-        expect(state.upsertedCollectionMembers.filter(m => m.collectionSlug === 'all').length).toBe(1);
+        expect(state.mergedCollectionSlugs).toEqual(['majors', 'all']);
+        const majorsMembers = state.upsertedCollectionMembers.filter(m => m.collectionSlug === 'majors');
+        expect(majorsMembers).toEqual([{ collectionSlug: 'majors', assetId: 'jup', rank: 0, addedAt: GIT_ADDED_AT }]);
+        const allMembers = state.upsertedCollectionMembers.filter(m => m.collectionSlug === 'all');
+        expect(allMembers).toEqual([{ collectionSlug: 'all', assetId: 'jup', rank: 0, addedAt: GIT_ADDED_AT }]);
         expect(state.refreshedViewCount).toBe(1);
+    });
+
+    it('skips tombstoned assets entirely (no upsert, no membership)', async () => {
+        const { repo, state } = makeRepo();
+        state.tombstonedRefs.add(sampleAsset.variants[0]!.mint.toLowerCase());
+        const res = await seedCanonicalAssetsRegistry(makeDeps(repo), {});
+        expect(res.ok).toBe(true);
+        expect(res.tombstonedSkipped).toBe(1);
+        expect(state.upsertedAssets.length).toBe(0);
+        expect(state.upsertedVariants.length).toBe(0);
+        expect(state.upsertedCollectionMembers.length).toBe(0);
+    });
+
+    it("derives the 'all' collection from the DB union, including admin-added members", async () => {
+        const { repo, state } = makeRepo();
+        // Simulate a pre-existing admin-added membership in another slug.
+        state.membersBySlug.set('rwas', [
+            { collectionSlug: 'rwas', assetId: 'admin-token', rank: 5, addedAt: 42 },
+        ]);
+        await seedCanonicalAssetsRegistry(makeDeps(repo), {});
+        const allMembers = state.upsertedCollectionMembers.filter(m => m.collectionSlug === 'all');
+        expect(allMembers).toEqual([
+            { collectionSlug: 'all', assetId: 'jup', rank: 0, addedAt: GIT_ADDED_AT },
+            { collectionSlug: 'all', assetId: 'admin-token', rank: 1, addedAt: 42 },
+        ]);
     });
 
     it('skips view refresh when not provided', async () => {
@@ -200,7 +270,6 @@ describe('seedCanonicalAssetsRegistry', () => {
                 now: () => FIXED_NOW,
                 listCanonicalAssets: () => [],
                 listCuratedListOrder: () => [],
-                getAllCuratedMintsInOrder: () => [],
                 resolveAssetIdByMint: () => null,
             },
             {},

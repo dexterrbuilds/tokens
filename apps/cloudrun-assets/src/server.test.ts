@@ -2819,7 +2819,11 @@ function emptyFillQualityReadsRepo(): FillQualityReadsRepo {
 }
 
 function emptyAssetCollectionsReadsRepo(): AssetCollectionsReadsRepo {
-    return { async listMembersBySlug() { return []; } };
+    return {
+        async listMembersBySlug() { return []; },
+        async listMemberMintsBySlug() { return []; },
+        async getSummariesBySlugs() { return []; },
+    };
 }
 
 
@@ -3345,6 +3349,8 @@ describe('assetCollectionsGetMembers', () => {
                 receivedLimit = limit;
                 return rows;
             },
+            async listMemberMintsBySlug() { return []; },
+            async getSummariesBySlugs() { return []; },
         };
         const app = createApp(deps({ assetCollectionsReadsRepo: repo }));
         const res = await call(app, '/query/assetCollectionsGetMembers', authed({ slug: 'memes', limit: 100 }));
@@ -3367,6 +3373,8 @@ describe('assetCollectionsGetMembers', () => {
                 slugsSeen.push(slug);
                 return [{ asset_id: 'a' }];
             },
+            async listMemberMintsBySlug() { return []; },
+            async getSummariesBySlugs() { return []; },
         };
         const app = createApp(deps({ assetCollectionsReadsRepo: repo }));
         await call(app, '/query/assetCollectionsGetMembers', authed({ slug: 'xstocks' }));

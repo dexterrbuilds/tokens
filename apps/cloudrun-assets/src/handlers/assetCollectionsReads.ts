@@ -6,8 +6,30 @@ export interface AssetCollectionMemberRow {
     asset_id: string;
 }
 
+export interface AssetCollectionMemberMintRow {
+    mint: string;
+}
+
+export interface AssetCollectionSummaryRow {
+    collection_slug: string;
+    member_count: number;
+    last_added_asset_id: string | null;
+    last_added_at: number | null;
+}
+
 export interface AssetCollectionsReadsRepo {
     listMembersBySlug(slug: string, limit: number): Promise<AssetCollectionMemberRow[]>;
+    /** Active-variant mints for a collection's members, rank order. */
+    listMemberMintsBySlug(slug: string, limit: number): Promise<AssetCollectionMemberMintRow[]>;
+    /** Per-slug count + latest-added member, active-assets only, tombstone-filtered. */
+    getSummariesBySlugs(slugs: readonly string[]): Promise<AssetCollectionSummaryRow[]>;
+}
+
+export interface AssetCollectionSummary {
+    slug: string;
+    count: number;
+    lastAddedAssetId: string | null;
+    lastAddedAt: number | null;
 }
 
 export async function getMembers(
@@ -30,4 +52,67 @@ export async function getMembers(
     const limit = Math.min(Math.max(typeof a.limit === 'number' ? a.limit : 500, 1), 2000);
     const rows = await repo.listMembersBySlug(slug, limit);
     return rows.map(r => r.asset_id);
+}
+
+export async function getMemberMints(
+    repo: AssetCollectionsReadsRepo,
+    args: unknown,
+): Promise<string[]> {
+    if (typeof args !== 'object' || args === null) {
+        throw new InvalidArgsError('args must be an object');
+    }
+    const a = args as { slug?: unknown; limit?: unknown };
+    if (typeof a.slug !== 'string') {
+        throw new InvalidArgsError('slug must be a string');
+    }
+    if (a.limit !== undefined && typeof a.limit !== 'number') {
+        throw new InvalidArgsError('limit must be a number when present');
+    }
+    const rawSlug = a.slug.trim();
+    if (!rawSlug) return [];
+    const slug = normalizeCuratedTokenListId(rawSlug) ?? rawSlug;
+    const limit = Math.min(Math.max(typeof a.limit === 'number' ? a.limit : 2000, 1), 5000);
+    const rows = await repo.listMemberMintsBySlug(slug, limit);
+    return rows.map(r => r.mint);
+}
+
+export async function getSummaries(
+    repo: AssetCollectionsReadsRepo,
+    args: unknown,
+): Promise<AssetCollectionSummary[]> {
+    if (typeof args !== 'object' || args === null) {
+        throw new InvalidArgsError('args must be an object');
+    }
+    const a = args as { slugs?: unknown };
+    if (!Array.isArray(a.slugs)) {
+        throw new InvalidArgsError('slugs must be an array of strings');
+    }
+    for (const item of a.slugs) {
+        if (typeof item !== 'string') {
+            throw new InvalidArgsError('slugs must be an array of strings');
+        }
+    }
+    const requested: string[] = [];
+    const normalizedByRequested = new Map<string, string>();
+    for (const raw of (a.slugs as string[]).slice(0, 50)) {
+        const trimmed = raw.trim();
+        if (!trimmed) continue;
+        requested.push(trimmed);
+        normalizedByRequested.set(trimmed, normalizeCuratedTokenListId(trimmed) ?? trimmed);
+    }
+    if (requested.length === 0) return [];
+
+    const rows = await repo.getSummariesBySlugs([...new Set(normalizedByRequested.values())]);
+    const bySlug = new Map(rows.map(r => [r.collection_slug, r] as const));
+    // Requested order preserved; unknown slugs report as empty rather than erroring
+    // so one bad slug cannot take down the whole summaries response.
+    return requested.map(slug => {
+        const row = bySlug.get(normalizedByRequested.get(slug) ?? slug);
+        return {
+            slug,
+            count: row?.member_count ?? 0,
+            lastAddedAssetId: row?.last_added_asset_id ?? null,
+            lastAddedAt: row?.last_added_at ?? null,
+        };
+    });
 }

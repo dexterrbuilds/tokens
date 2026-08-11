@@ -95,6 +95,8 @@ const noopFillQualityReadsRepo: FillQualityReadsRepo = {
 };
 const noopAssetCollectionsReadsRepo: AssetCollectionsReadsRepo = {
     async listMembersBySlug() { return []; },
+    async listMemberMintsBySlug() { return []; },
+    async getSummariesBySlugs() { return []; },
 };
 const baseDeps = {
     repo: undefined as unknown as AssetsRepo,

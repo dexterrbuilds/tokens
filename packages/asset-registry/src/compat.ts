@@ -18,6 +18,7 @@ export {
 
 export type { LatestAddedToken } from './data/curated-latest-added';
 export { getCuratedTokenAddedAt, getLatestAddedToken } from './data/curated-latest-added';
+export { CURATED_TOKEN_ADDED_AT } from './data/curated-token-added-at';
 
 export type { TokenWrapper, TokenWrapperGroup } from './data/token-wrappers';
 export {

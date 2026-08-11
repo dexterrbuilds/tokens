@@ -67,6 +67,8 @@ import {
 } from './handlers/fillQualityReads';
 import {
     getMembers as assetCollectionsGetMembers,
+    getMemberMints as assetCollectionsGetMemberMints,
+    getSummaries as assetCollectionsGetSummaries,
     type AssetCollectionsReadsRepo,
 } from './handlers/assetCollectionsReads';
 import {
@@ -327,6 +329,10 @@ export function createApp(deps: ServerDeps) {
         variantFillQualityGetLatestByMints(deps.fillQualityReadsRepo, args);
     queries.assetCollectionsGetMembers = args =>
         assetCollectionsGetMembers(deps.assetCollectionsReadsRepo, args);
+    queries.assetCollectionsGetMemberMints = args =>
+        assetCollectionsGetMemberMints(deps.assetCollectionsReadsRepo, args);
+    queries.assetCollectionsGetSummaries = args =>
+        assetCollectionsGetSummaries(deps.assetCollectionsReadsRepo, args);
     queries.coingeckoReadsGetCoinById = args => coingeckoReadsGetCoinById(deps.coingeckoReadsRepo, args);
     queries.coingeckoReadsSearchCoins = args => coingeckoReadsSearchCoins(deps.coingeckoReadsRepo, args);
     queries.coingeckoReadsListOhlcv = args => coingeckoReadsListOhlcv(deps.coingeckoReadsRepo, args);
