@@ -4,6 +4,7 @@ import type { CanonicalAsset } from '@tokens/asset-registry';
 import {
     aggregateTokenStats,
     computeCompanyMarketCapUsd,
+    computePreStocksDerived,
     isCanonicalPublicEquityAsset,
     parsePrimaryVariantStrategy,
     parseStockVariantTier,
@@ -525,5 +526,54 @@ describe('company market cap computation', () => {
             ),
         ).toBeNull();
         expect(computeCompanyMarketCapUsd({ category: 'equity' }, null, NOW)).toBeNull();
+    });
+});
+
+describe('prestocks derived fields', () => {
+    const SNAPSHOT = {
+        markPriceUsd: 132.76,
+        markValuationUsd: 107_906_188_229,
+        tokenPriceUsd: 136.35,
+    };
+
+    it('derives premium and implied valuation from the on-chain price', () => {
+        const derived = computePreStocksDerived(SNAPSHOT, 174.01);
+        expect(derived.basisPriceUsd).toBe(174.01);
+        expect(derived.premiumToMarkPercent).toBeCloseTo((174.01 / 132.76 - 1) * 100, 6);
+        expect(derived.impliedValuationUsd).toBeCloseTo((107_906_188_229 * 174.01) / 132.76, 0);
+    });
+
+    it('reports a discount as a negative premium', () => {
+        const derived = computePreStocksDerived(SNAPSHOT, 99.57);
+        expect(derived.premiumToMarkPercent).toBeLessThan(0);
+    });
+
+    it('falls back to the provider token price when the on-chain price is missing', () => {
+        for (const onChain of [null, undefined, 0, -1, Number.NaN]) {
+            const derived = computePreStocksDerived(SNAPSHOT, onChain as number | null | undefined);
+            expect(derived.basisPriceUsd).toBe(136.35);
+            expect(derived.premiumToMarkPercent).toBeCloseTo((136.35 / 132.76 - 1) * 100, 6);
+        }
+    });
+
+    it('returns nulls when the mark price is missing or non-positive', () => {
+        for (const markPriceUsd of [null, 0, -5]) {
+            const derived = computePreStocksDerived({ ...SNAPSHOT, markPriceUsd }, 174.01);
+            expect(derived.premiumToMarkPercent).toBeNull();
+            expect(derived.impliedValuationUsd).toBeNull();
+        }
+    });
+
+    it('returns a premium but no valuation when the mark valuation is missing', () => {
+        const derived = computePreStocksDerived({ ...SNAPSHOT, markValuationUsd: null }, 174.01);
+        expect(derived.premiumToMarkPercent).not.toBeNull();
+        expect(derived.impliedValuationUsd).toBeNull();
+    });
+
+    it('returns all nulls when no usable price exists', () => {
+        const derived = computePreStocksDerived({ ...SNAPSHOT, tokenPriceUsd: null }, null);
+        expect(derived.basisPriceUsd).toBeNull();
+        expect(derived.premiumToMarkPercent).toBeNull();
+        expect(derived.impliedValuationUsd).toBeNull();
     });
 });

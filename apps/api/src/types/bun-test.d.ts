@@ -6,10 +6,17 @@ declare module 'bun:test' {
     export function afterEach(fn: () => void | Promise<void>): void;
     export function expect<T>(value: T): {
         toBe(expected: unknown): void;
+        toBeCloseTo(expected: number, numDigits?: number): void;
         toBeInstanceOf(expected: unknown): void;
+        toBeLessThan(expected: number): void;
         toBeLessThanOrEqual(expected: number): void;
         toBeNull(): void;
         toContain(expected: string): void;
         toEqual(expected: unknown): void;
+        not: {
+            toBe(expected: unknown): void;
+            toBeNull(): void;
+            toEqual(expected: unknown): void;
+        };
     };
 }

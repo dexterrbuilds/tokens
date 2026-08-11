@@ -2,6 +2,7 @@ import type { CanonicalAsset, PrimaryVariantStrategy, VariantKind } from '@token
 import { liquidityTierPriority } from '@tokens/asset-registry';
 
 import {
+    computePreStocksDerived,
     optionalText,
     resolveVariantSymbol,
     withDerivedVariantTier,
@@ -35,7 +36,35 @@ type CanonicalMarket =
           lastFetchedAt: number | null;
           providerLastUpdatedAt: number | null;
           asOf: number | null;
+      }
+    | {
+          source: 'prestocks';
+          symbol: string;
+          mint: string;
+          /** Basis price the derived fields use: on-chain token price, falling back to the PreStocks token price. */
+          price: number | null;
+          /** Implied company valuation (markValuation × price ÷ markPrice) — NOT the tokenized float value. */
+          marketCap: number | null;
+          markPriceUsd: number | null;
+          markValuationUsd: number | null;
+          impliedValuationUsd: number | null;
+          premiumToMarkPercent: number | null;
+          volume24hUSD: number | null;
+          priceChange24hPercent: number | null;
+          lastFetchedAt: number | null;
+          /** PreStocks provides no timestamp; mirrors our fetch time. */
+          providerLastUpdatedAt: number | null;
+          asOf: number | null;
       };
+
+/** Raw PreStocks reference snapshot for one mint, as stored by the cron. */
+export interface PreStocksMintSnapshot {
+    symbol: string;
+    markPriceUsd: number | null;
+    markValuationUsd: number | null;
+    tokenPriceUsd: number | null;
+    lastFetchedAt: number;
+}
 
 export interface BuildAssetDetailResponseParams {
     asset: CanonicalAsset;
@@ -51,6 +80,7 @@ export interface BuildAssetDetailResponseParams {
     symbols: string[];
     stockSymbol: string | null;
     canonicalMarket: CanonicalMarket | undefined;
+    preStocksByMint?: Map<string, PreStocksMintSnapshot>;
     mintRank: Map<string, number>;
     sanctumActiveMints: Set<string> | null;
     includeMint: string | null;
@@ -64,6 +94,22 @@ export interface BuildAssetDetailResponseParams {
         mint: string | null;
     };
     primaryVariantStrategy?: PrimaryVariantStrategy;
+}
+
+function buildVariantPreStocksBlock(
+    snapshot: PreStocksMintSnapshot | undefined,
+    onChainPriceUsd: number | null | undefined,
+) {
+    if (!snapshot) return null;
+    const derived = computePreStocksDerived(snapshot, onChainPriceUsd);
+    return {
+        symbol: snapshot.symbol,
+        markPriceUsd: snapshot.markPriceUsd,
+        markValuationUsd: snapshot.markValuationUsd,
+        impliedValuationUsd: derived.impliedValuationUsd,
+        premiumToMarkPercent: derived.premiumToMarkPercent,
+        lastFetchedAt: snapshot.lastFetchedAt,
+    };
 }
 
 export function buildAssetDetailResponse(params: BuildAssetDetailResponseParams) {
@@ -113,6 +159,8 @@ export function buildAssetDetailResponse(params: BuildAssetDetailResponseParams)
               }
             : null;
 
+        const preStocks = buildVariantPreStocksBlock(params.preStocksByMint?.get(variant.mint), token?.price);
+
         return withDerivedVariantTier(
             {
                 ...variant,
@@ -120,6 +168,7 @@ export function buildAssetDetailResponse(params: BuildAssetDetailResponseParams)
                 ...(variantName ? { name: variantName } : {}),
                 market,
                 executionQuality,
+                ...(preStocks ? { preStocks } : {}),
             },
             market?.liquidity,
         );
@@ -236,6 +285,9 @@ export function buildAssetDetailResponse(params: BuildAssetDetailResponseParams)
               lastFetchedAt: params.marketMeta ? params.marketMeta.lastFetchedAt : null,
           }
         : null;
+    const primaryPreStocks = params.primaryVariant
+        ? buildVariantPreStocksBlock(params.preStocksByMint?.get(params.primaryVariant.mint), params.token?.price)
+        : null;
 
     return {
         asset: {
@@ -262,6 +314,7 @@ export function buildAssetDetailResponse(params: BuildAssetDetailResponseParams)
                           ...(primaryVariantName ? { name: primaryVariantName } : {}),
                           market: primaryMarket,
                           executionQuality: params.fillQualityByMint.get(params.primaryVariant.mint) ?? null,
+                          ...(primaryPreStocks ? { preStocks: primaryPreStocks } : {}),
                       },
                       primaryMarket?.liquidity,
                   )

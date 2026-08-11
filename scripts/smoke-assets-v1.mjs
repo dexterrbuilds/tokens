@@ -124,6 +124,27 @@ async function main() {
   assertLiquiditySortedDesc(goldSpot, 'gold spot variants');
   assertLiquiditySortedDesc(goldEtf, 'gold etf variants');
 
+  // -----------------------------
+  // Anduril (PreStocks pre-IPO)
+  // -----------------------------
+  const anduril = await fetchJson('/api/v1/assets/anduril');
+  assert(
+    (anduril?.asset?.assetId ?? '').startsWith('pre-'),
+    'anduril should resolve to a pre-* PreStocks asset',
+  );
+  const andurilCanonical = anduril?.asset?.canonicalMarket ?? null;
+  // Tolerate a missing canonicalMarket while the prestocks pipeline warms, but
+  // when present it must be the prestocks source with the derived fields.
+  if (andurilCanonical) {
+    assert(
+      andurilCanonical.source === 'prestocks',
+      `anduril canonicalMarket.source should be "prestocks", got ${andurilCanonical.source}`,
+    );
+    assert('impliedValuationUsd' in andurilCanonical, 'anduril canonicalMarket should carry impliedValuationUsd');
+    assert('premiumToMarkPercent' in andurilCanonical, 'anduril canonicalMarket should carry premiumToMarkPercent');
+    assert('markPriceUsd' in andurilCanonical, 'anduril canonicalMarket should carry markPriceUsd');
+  }
+
   console.log('OK: v1 canonical asset smoke checks passed');
 }
 
