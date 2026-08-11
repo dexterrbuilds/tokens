@@ -32,8 +32,8 @@ jobs:
         id: secrets
         run: |
           set -euo pipefail
-          for key in SLACK_DEPLOY_WEBHOOK_URL VERCEL_TOKEN VERCEL_PROJECT_ID VERCEL_PROJECT_ID_APP \
-                    TOKENS_API_KEY TOKENS_API_PROD_URL TOKENS_APP_PROD_URL; do
+          for key in SLACK_DEPLOY_WEBHOOK_URL VERCEL_TOKEN VERCEL_PROJECT_ID VERCEL_PROJECT_ID_APP VERCEL_PROJECT_ID_ADMIN \
+                    TOKENS_API_KEY TOKENS_API_PROD_URL TOKENS_APP_PROD_URL TOKENS_ADMIN_PROD_URL; do
             value=$(doppler secrets get "$key" --plain --project "$DOPPLER_PROJECT" --config "$DOPPLER_CONFIG")
             echo "::add-mask::$value"
             echo "$key=$value" >> "$GITHUB_OUTPUT"
@@ -48,6 +48,7 @@ jobs:
           VERCEL_TOKEN: ${{ steps.secrets.outputs.VERCEL_TOKEN }}
           VERCEL_PROJECT_ID: ${{ steps.secrets.outputs.VERCEL_PROJECT_ID }}
           VERCEL_PROJECT_ID_APP: ${{ steps.secrets.outputs.VERCEL_PROJECT_ID_APP }}
+          VERCEL_PROJECT_ID_ADMIN: ${{ steps.secrets.outputs.VERCEL_PROJECT_ID_ADMIN }}
         run: |
           set -euo pipefail
           resolve() {
@@ -57,21 +58,27 @@ jobs:
           }
           api_json=$(resolve "$VERCEL_PROJECT_ID")
           app_json=$(resolve "$VERCEL_PROJECT_ID_APP")
+          admin_json=$(resolve "$VERCEL_PROJECT_ID_ADMIN")
           api_current=$(jq -r '.deployments[0].uid // empty' <<<"$api_json")
           api_target=$(jq -r '.deployments[1].uid // empty' <<<"$api_json")
           app_current=$(jq -r '.deployments[0].uid // empty' <<<"$app_json")
           app_target=$(jq -r '.deployments[1].uid // empty' <<<"$app_json")
-          if [ -z "$api_target" ] || [ -z "$app_target" ]; then
-            echo "::error::Missing rollback target — api_target=$api_target app_target=$app_target"
+          admin_current=$(jq -r '.deployments[0].uid // empty' <<<"$admin_json")
+          admin_target=$(jq -r '.deployments[1].uid // empty' <<<"$admin_json")
+          if [ -z "$api_target" ] || [ -z "$app_target" ] || [ -z "$admin_target" ]; then
+            echo "::error::Missing rollback target — api_target=$api_target app_target=$app_target admin_target=$admin_target"
             exit 1
           fi
-          echo "tokens-api  current=$api_current → target=$api_target"
-          echo "tokens-app  current=$app_current → target=$app_target"
+          echo "tokens-api    current=$api_current → target=$api_target"
+          echo "tokens-app    current=$app_current → target=$app_target"
+          echo "tokens-admin  current=$admin_current → target=$admin_target"
           {
             echo "api_current=$api_current"
             echo "api_target=$api_target"
             echo "app_current=$app_current"
             echo "app_target=$app_target"
+            echo "admin_current=$admin_current"
+            echo "admin_target=$admin_target"
           } >> "$GITHUB_OUTPUT"
 
       - name: Notify Slack — rollback started
@@ -81,6 +88,8 @@ jobs:
           API_TARGET: ${{ steps.targets.outputs.api_target }}
           APP_CURRENT: ${{ steps.targets.outputs.app_current }}
           APP_TARGET: ${{ steps.targets.outputs.app_target }}
+          ADMIN_CURRENT: ${{ steps.targets.outputs.admin_current }}
+          ADMIN_TARGET: ${{ steps.targets.outputs.admin_target }}
           ACTOR: ${{ github.actor }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RUN_ID: ${{ github.run_id }}
@@ -89,25 +98,27 @@ jobs:
           FIELDS=$(jq -n \
             --arg api_current "$API_CURRENT" --arg api_target "$API_TARGET" \
             --arg app_current "$APP_CURRENT" --arg app_target "$APP_TARGET" \
+            --arg admin_current "$ADMIN_CURRENT" --arg admin_target "$ADMIN_TARGET" \
             --arg actor   "$ACTOR" \
             --arg run_url "$RUN_URL" --arg run_id "$RUN_ID" \
             '[
-              {type:"mrkdwn", text:("*Tiers:*\n`api+app`")},
+              {type:"mrkdwn", text:("*Tiers:*\n`api+app+admin`")},
               {type:"mrkdwn", text:("*tokens-api:*\n`"+$api_current+"` → `"+$api_target+"`")},
               {type:"mrkdwn", text:("*tokens-app:*\n`"+$app_current+"` → `"+$app_target+"`")},
+              {type:"mrkdwn", text:("*tokens-admin:*\n`"+$admin_current+"` → `"+$admin_target+"`")},
               {type:"mrkdwn", text:("*Triggered by:*\n"+$actor)},
               {type:"mrkdwn", text:("*Run:*\n<"+$run_url+"|workflow #"+$run_id+">")}
             ]')
           PAYLOAD=$(jq -n \
             --arg marker "[STARTED] Rollback Tokens" \
-            --arg tiers "api+app" \
+            --arg tiers "api+app+admin" \
             --arg color "#ff8800" --argjson fields "$FIELDS" \
             '{
               text: ("*" + $marker + "* — tiers: `" + $tiers + "`"),
               attachments: [{
                 color: $color,
                 blocks: [
-                  {type:"section", text:{type:"mrkdwn", text:("*" + $marker + "* — rolling tokens-api and tokens-app back to previous prod")}},
+                  {type:"section", text:{type:"mrkdwn", text:("*" + $marker + "* — rolling tokens-api, tokens-app, and tokens-admin back to previous prod")}},
                   {type:"section", fields:$fields}
                 ]
               }]
@@ -133,6 +144,15 @@ jobs:
           set -euo pipefail
           vercel rollback "$TARGET_ID" --token="$VERCEL_TOKEN" --scope solana-foundation
 
+      - name: Rollback tokens-admin
+        if: steps.targets.outputs.admin_current != steps.targets.outputs.admin_target
+        env:
+          VERCEL_TOKEN: ${{ steps.secrets.outputs.VERCEL_TOKEN }}
+          TARGET_ID: ${{ steps.targets.outputs.admin_target }}
+        run: |
+          set -euo pipefail
+          vercel rollback "$TARGET_ID" --token="$VERCEL_TOKEN" --scope solana-foundation
+
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - run: bun install --frozen-lockfile
@@ -150,6 +170,7 @@ jobs:
           SLACK_WEBHOOK: ${{ steps.secrets.outputs.SLACK_DEPLOY_WEBHOOK_URL }}
           API_TARGET: ${{ steps.targets.outputs.api_target }}
           APP_TARGET: ${{ steps.targets.outputs.app_target }}
+          ADMIN_TARGET: ${{ steps.targets.outputs.admin_target }}
           ACTOR: ${{ github.actor }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RUN_ID: ${{ github.run_id }}
@@ -157,18 +178,20 @@ jobs:
           set -euo pipefail
           FIELDS=$(jq -n \
             --arg api_target "$API_TARGET" --arg app_target "$APP_TARGET" \
+            --arg admin_target "$ADMIN_TARGET" \
             --arg actor "$ACTOR" \
             --arg run_url "$RUN_URL" --arg run_id "$RUN_ID" \
             '[
-              {type:"mrkdwn", text:("*Tiers:*\n`api+app`")},
+              {type:"mrkdwn", text:("*Tiers:*\n`api+app+admin`")},
               {type:"mrkdwn", text:("*tokens-api now serving:*\n`"+$api_target+"`")},
               {type:"mrkdwn", text:("*tokens-app now serving:*\n`"+$app_target+"`")},
+              {type:"mrkdwn", text:("*tokens-admin now serving:*\n`"+$admin_target+"`")},
               {type:"mrkdwn", text:("*Triggered by:*\n"+$actor)},
               {type:"mrkdwn", text:("*Run:*\n<"+$run_url+"|workflow #"+$run_id+">")}
             ]')
           PAYLOAD=$(jq -n \
             --arg marker "[SUCCESS] Rollback Tokens" \
-            --arg tiers "api+app" \
+            --arg tiers "api+app+admin" \
             --arg color "#36a64f" --argjson fields "$FIELDS" \
             '{
               text: ("*" + $marker + "* — tiers: `" + $tiers + "`"),
@@ -196,13 +219,13 @@ jobs:
             --arg actor "$ACTOR" \
             --arg run_url "$RUN_URL" --arg run_id "$RUN_ID" \
             '[
-              {type:"mrkdwn", text:("*Tiers:*\n`api+app`")},
+              {type:"mrkdwn", text:("*Tiers:*\n`api+app+admin`")},
               {type:"mrkdwn", text:("*Triggered by:*\n"+$actor)},
               {type:"mrkdwn", text:("*Run:*\n<"+$run_url+"|workflow #"+$run_id+">")}
             ]')
           PAYLOAD=$(jq -n \
             --arg marker "[FAILED] Rollback Tokens" \
-            --arg tiers "api+app" \
+            --arg tiers "api+app+admin" \
             --arg color "#ff0000" --argjson fields "$FIELDS" \
             '{
               text: ("*" + $marker + "* — tiers: `" + $tiers + "`"),
