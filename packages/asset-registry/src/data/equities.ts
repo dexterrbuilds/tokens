@@ -41,6 +41,7 @@ const SK_HYNIX_BACKPACK_MINT = 'SKHYhSjuRWHgikq8eRKbtBbpABgJSkd7ytQV14i9EQ3';
 const SK_HYNIX_ONDO_MINT = 'Huyb2fyDDjSuDKCRWsN9ci2rmcgPo6NFiLbx9ZDondo';
 const SK_HYNIX_XSTOCK_MINT = 'XsnhgGRQwhExfS2bmWzR6EYddKGPRGDEjeJsatkmKqU';
 const TAKE_TWO_BACKPACK_MINT = 'TTWofwAge91oFhZs7kpQdyrVRkmevgM88xijGvQFbKo';
+const NEBIUS_BACKPACK_MINT = 'NBiSF3UaVUFtRzHwAfxyHsBCAZWGEKnMpewAE4oh7BG';
 
 const PRE_STOCK_MINTS: string[] = [
     SPACEX_PRESTOCK_MINT,
@@ -250,6 +251,7 @@ const SPECIAL_EQUITY_MINTS = new Set<string>([
     SK_HYNIX_ONDO_MINT,
     SK_HYNIX_XSTOCK_MINT,
     TAKE_TWO_BACKPACK_MINT,
+    NEBIUS_BACKPACK_MINT,
 ]);
 
 function buildSpecialEquityAssets(): CanonicalAsset[] {
@@ -513,6 +515,35 @@ function buildSpecialEquityAssets(): CanonicalAsset[] {
                     kind: 'tokenized_equity',
                     issuer: 'Backpack Securities',
                     issuerUrl: 'https://backpack.exchange/stocks/TTWO',
+                    trustTier: defaultTrustTier(),
+                    tags: ['curated:stocks', 'Backpack Securities'],
+                    label: 'Backpack Securities',
+                    stockVariantTier: 'share_redeemable',
+                },
+            ],
+        } satisfies CanonicalAsset,
+        {
+            assetId: 'nebius',
+            name: 'Nebius Group',
+            symbol: 'NBIS',
+            category: 'equity',
+            aliases: uniqueStrings([
+                'nebius',
+                'Nebius',
+                'Nebius Group',
+                'Nebius Group N.V.',
+                'NBIS',
+                NEBIUS_BACKPACK_MINT,
+            ]),
+            variants: [
+                {
+                    variantId: 'nebius:backpack',
+                    mint: NEBIUS_BACKPACK_MINT,
+                    symbol: 'NBIS',
+                    name: 'Nebius Group N.V. - Backpack Securities',
+                    kind: 'tokenized_equity',
+                    issuer: 'Backpack Securities',
+                    issuerUrl: 'https://backpack.exchange/stocks/NBIS',
                     trustTier: defaultTrustTier(),
                     tags: ['curated:stocks', 'Backpack Securities'],
                     label: 'Backpack Securities',
