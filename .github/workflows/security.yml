@@ -6,6 +6,10 @@ on:
   schedule:
     - cron: '0 8 * * 1'
 
+# Public repo: fork PRs run this workflow, so the token must stay read-only.
+permissions:
+  contents: read
+
 jobs:
   secret-scan:
     runs-on: ubuntu-latest

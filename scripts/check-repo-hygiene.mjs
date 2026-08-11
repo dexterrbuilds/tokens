@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { openSync, readSync, closeSync } from 'node:fs';
 
 const ALLOWLIST = new Set([]);
 const FORBIDDEN_ARTIFACT_SEGMENTS = new Set(['.claude', '.cursor', '.agents']);
@@ -44,11 +45,40 @@ function hasForbiddenPrefix(path) {
     return FORBIDDEN_PREFIXES.some(prefix => path.startsWith(prefix));
 }
 
+// Terraform plan/state artifacts embed provider credentials and full resource
+// attributes in plaintext; they must never be tracked in a public repo.
+function isTerraformArtifact(path) {
+    const basename = path.split('/').pop() ?? path;
+    if (basename.includes('.tfstate')) return true;
+    if (path.startsWith('terraform/') && basename.startsWith('tfplan')) return true;
+    if (basename.endsWith('.tfplan')) return true;
+    return false;
+}
+
+// Terraform sources are text (.tf/.tfvars/.sh/.md); a tracked binary under
+// terraform/ is almost certainly a plan/state bundle under another name.
+function isBinaryFile(path) {
+    let fd;
+    try {
+        fd = openSync(path, 'r');
+    } catch {
+        return false;
+    }
+    try {
+        const buffer = Buffer.alloc(8192);
+        const bytesRead = readSync(fd, buffer, 0, buffer.length, 0);
+        return buffer.subarray(0, bytesRead).includes(0);
+    } finally {
+        closeSync(fd);
+    }
+}
+
 const trackedFiles = readTrackedFiles();
 const secretFileViolations = [];
 const artifactViolations = [];
 const junkFileViolations = [];
 const scratchDirViolations = [];
+const terraformArtifactViolations = [];
 
 for (const path of trackedFiles) {
     if (ALLOWLIST.has(path)) continue;
@@ -68,6 +98,11 @@ for (const path of trackedFiles) {
         continue;
     }
 
+    if (isTerraformArtifact(path) || (path.startsWith('terraform/') && isBinaryFile(path))) {
+        terraformArtifactViolations.push(path);
+        continue;
+    }
+
     if (hasForbiddenFilename(path)) {
         junkFileViolations.push(path);
     }
@@ -77,7 +112,8 @@ if (
     secretFileViolations.length === 0 &&
     artifactViolations.length === 0 &&
     junkFileViolations.length === 0 &&
-    scratchDirViolations.length === 0
+    scratchDirViolations.length === 0 &&
+    terraformArtifactViolations.length === 0
 ) {
     console.log('Repo hygiene checks passed.');
     process.exit(0);
@@ -101,6 +137,11 @@ if (junkFileViolations.length > 0) {
 if (scratchDirViolations.length > 0) {
     console.error('Tracked scratch/migration-output files are not allowed:');
     for (const path of scratchDirViolations) console.error(`- ${path}`);
+}
+
+if (terraformArtifactViolations.length > 0) {
+    console.error('Tracked Terraform plan/state artifacts (or binaries under terraform/) are not allowed:');
+    for (const path of terraformArtifactViolations) console.error(`- ${path}`);
 }
 
 process.exit(1);

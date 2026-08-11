@@ -1,0 +1,24 @@
+# Security-sensitive paths require maintainer review before merge.
+# Pair this file with a branch-protection rule on `main` that enables
+# "Require review from Code Owners".
+#
+# NOTE: adjust the team handle if the maintainer team is named differently.
+
+# Infrastructure-as-code: IAM bindings, ingress, secrets wiring.
+/terraform/ @solana-foundation/tokens-maintainers
+
+# CI/CD: anything here runs with repository credentials.
+/.github/ @solana-foundation/tokens-maintainers
+
+# Authentication and authorization surfaces.
+/apps/admin/src/lib/admin-auth.ts @solana-foundation/tokens-maintainers
+/apps/admin/src/lib/cloudrun.ts @solana-foundation/tokens-maintainers
+/apps/admin/src/proxy.ts @solana-foundation/tokens-maintainers
+/apps/cloudrun-admin/src/adminAuth.ts @solana-foundation/tokens-maintainers
+/apps/cloudrun-assets/src/adminAuth.ts @solana-foundation/tokens-maintainers
+/apps/cloudrun-admin/src/oidc.ts @solana-foundation/tokens-maintainers
+/apps/cloudrun-assets/src/oidc.ts @solana-foundation/tokens-maintainers
+
+# Secret-scanner and hygiene tooling.
+/scripts/check-repo-hygiene.mjs @solana-foundation/tokens-maintainers
+/.githooks/ @solana-foundation/tokens-maintainers

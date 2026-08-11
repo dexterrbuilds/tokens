@@ -62,6 +62,7 @@ git checkout -b feature/your-feature-name
 - Keep public API contracts stable unless a breaking change is intentional and documented.
 - Treat admin and operational code as security-sensitive. Enforce authorization server-side, not only in UI state.
 - Never commit credentials, `.env.local` files, or assistant/tooling artifacts.
+- This is a public repository: never include real endpoints, tokens, Terraform plan/state files, or `.env` values in code, fixtures, commit messages, or PR descriptions. Use placeholders following the existing `*.example.run.app` / `.env.example` convention. A tracked pre-commit hook (`.githooks/pre-commit`, wired up by `bun install`) runs `gitleaks protect --staged` when gitleaks is installed locally; CI re-scans the tree and full history either way.
 - Do not treat `apps/admin` as a public anonymous surface. It is an authenticated maintainer tool.
 - Avoid adding vendored third-party assets unless redistribution terms are documented in `THIRD_PARTY_LICENSES.md`.
 

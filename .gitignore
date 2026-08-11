@@ -74,3 +74,6 @@ tfplan
 terraform/**/tfplan*
 .vercel
 .env*
+# Placeholder-only templates stay tracked (CONTRIBUTING tells contributors to
+# copy them); check-repo-hygiene.mjs and gitleaks guard their contents.
+!.env.example

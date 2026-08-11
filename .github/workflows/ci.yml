@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
 
+# Public repo: fork PRs run this workflow, so the token must stay read-only.
+permissions:
+  contents: read
+
 jobs:
   build-and-lint:
     runs-on: ubuntu-latest

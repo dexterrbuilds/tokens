@@ -22,7 +22,7 @@
         "verify:assets-api-v1": "bun scripts/verify-assets-api-v1-contract.ts",
         "verify:asset-registry-hubs": "bun scripts/audit-asset-registry-hubs.ts",
         "format": "prettier --write \"**/*.{ts,tsx,md}\"",
-        "postinstall": "node scripts/patch-liveline.mjs",
+        "postinstall": "node scripts/patch-liveline.mjs && node scripts/setup-git-hooks.mjs",
         "clean": "turbo run clean && rm -rf node_modules",
         "seed:tokens": "node scripts/seed-tokens.mjs",
         "seed:ohlcv": "node scripts/seed-ohlcv.mjs"

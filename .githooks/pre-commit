@@ -1,0 +1,18 @@
+#!/bin/sh
+# Pre-commit secret scan for this public repo.
+#
+# Runs gitleaks against the staged diff so credentials are caught before they
+# ever land in a commit. CI (security.yml) re-scans the working tree and full
+# history as the backstop, so a missing local gitleaks install warns instead
+# of blocking the commit.
+#
+# Install gitleaks: https://github.com/gitleaks/gitleaks#installing
+#   macOS: brew install gitleaks
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+    echo "pre-commit: gitleaks not installed; skipping staged secret scan (CI will still scan)." >&2
+    echo "pre-commit: install it with 'brew install gitleaks' to catch secrets before committing." >&2
+    exit 0
+fi
+
+exec gitleaks protect --staged --redact
