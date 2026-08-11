@@ -1,10 +1,14 @@
 # Testing
 
-What CI enforces, and what you can run locally before opening a PR. A PR is expected to pass the credential-free automated checks below; the environment-dependent checks are run by maintainers against staging.
+What CI enforces for maintainer-authored changes and what anyone can run
+locally. Maintainer pull requests are expected to pass the credential-free
+automated checks below; environment-dependent checks are run by maintainers
+against staging.
 
 ## Automated Checks (no credentials needed)
 
-These run in CI and locally with no external accounts — this is the bar for a PR:
+These run in CI and locally with no external accounts. They are the baseline for
+maintainer-authored changes:
 
 ```bash
 bun run check:repo-hygiene
@@ -25,7 +29,8 @@ What these cover:
 ## Environment-Dependent Checks (maintainers)
 
 Some verification requires real credentials, a seeded data environment, or a deployed API
-surface, so it is not part of the PR baseline and is run by maintainers against staging:
+surface, so it is not part of the credential-free baseline and is run by
+maintainers against staging:
 
 ```bash
 bun run verify:assets-api-v1
@@ -37,8 +42,8 @@ These require environment variables such as:
 - `API_BASE_URL` or `TOKENS_API_BASE_URL`
 - `API_KEY` or `TOKENS_API_KEY`
 
-You do not need these to contribute — open your PR against the credential-free checks above,
-and a maintainer will run the data-dependent checks during review where relevant.
+You do not need these credentials to run the public checks or work with a fork.
+Maintainers run the data-dependent checks during internal review where relevant.
 
 ## Testing Posture
 

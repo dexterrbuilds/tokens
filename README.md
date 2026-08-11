@@ -2,7 +2,25 @@
 
 Tokens is the open-source monorepo for the Tokens website, API, docs, and services. This is the live repository the project is developed and deployed from — it is not a mirror or a snapshot.
 
-Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) to get started and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
+Issues are welcome; external pull requests are not accepted. See the contribution policy below and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
+
+## Contributions and Curation
+
+Tokens is open source, and you are free to inspect, use, and fork the code under
+the terms of the MIT license. The hosted Tokens product—including its frontend
+experience and its curated token, venue, market, and metadata coverage—remains
+operated and controlled by the Tokens team. Publishing the source does not make
+the hosted product or its listings community-managed.
+
+We do not accept external pull requests, including requests to add or update
+tokens, venues, markets, logos, metadata, rankings, or other product content.
+External pull requests are closed automatically without review.
+
+If you have found a relevant bug, data issue, or other improvement, please
+[open an issue](https://github.com/solana-foundation/tokens/issues) with enough
+context for the maintainers to evaluate it. Please report security
+vulnerabilities through the process in [SECURITY.md](SECURITY.md), not through a
+public issue.
 
 ## Scope
 
@@ -96,7 +114,7 @@ bun run audit:deps
 
 ## Verification And Releases
 
-- Read [TESTING.md](TESTING.md) for what CI runs and what to run locally before opening a PR.
+- Read [TESTING.md](TESTING.md) for CI and local verification guidance used by maintainers.
 - Read [RELEASING.md](RELEASING.md) for how changes promote from staging to production, and how to roll back.
 - Review [SECURITY.md](SECURITY.md) before reporting vulnerabilities.
 

@@ -20,7 +20,9 @@ Unlike the other `cloudrun-*` services, `usage` has `ingress = INGRESS_TRAFFIC_A
 | `logApiRequest` | mutation | parity with `convex/auth.ts:logApiRequest`. Best-effort insert into `api_request_events` (same ownership checks + latency clamping) and a deduped `api_keys.last_used_at` bump. Feeds the cloudrun-assets rollup job. |
 | `ingestUsageAggregates` | mutation | parity with `convex/apiUsageRollups.ts:ingestUsageAggregates`. Ingests usage buckets (daily + per-endpoint with latency histograms) into the rollup tables additively, in one transaction. Its original caller (the Upstash drain timer) is retired. |
 
-The dashboard queries/mutations (`users.*`, `projects.*`, `auth.getProjectUsage*`, key reset/reveal) land in follow-up PRs.
+The dashboard queries and mutations (`users.*`, `projects.*`,
+`auth.getProjectUsage*`, key reset/reveal) will be implemented incrementally by
+the maintainers.
 
 ## Env
 

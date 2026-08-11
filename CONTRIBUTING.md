@@ -1,10 +1,37 @@
 # Contributing to Tokens
 
-This repository is the live, multi-app monorepo behind Tokens, and contributions are welcome. Changes should preserve the separation between public product surfaces, the platform API, and authenticated operational tooling.
+Tokens welcomes issues and feedback, but we do not accept external pull
+requests. External pull requests are closed automatically without review.
 
-We triage issues and review pull requests on a regular cadence. We can't promise a fixed response time, but issues and PRs are read — please be patient and feel free to bump a stale thread. For anything security-sensitive, follow [SECURITY.md](SECURITY.md) instead of opening a public issue.
+The code is open source under the MIT license, but the hosted Tokens product,
+its frontend experience, and its curated token, venue, market, and metadata
+coverage remain operated and controlled by the Tokens team. Maintainers decide
+which reported issues and suggestions are incorporated into the hosted product.
 
-## Getting Started
+## Filing an Issue
+
+Before opening an issue, search existing issues to avoid duplicates. Include
+enough context for the maintainers to evaluate the report or suggestion.
+
+For bugs, include:
+
+- A clear description of the issue
+- Steps to reproduce it
+- Expected and actual behavior
+- Relevant environment details
+- Relevant logs or errors, with secrets redacted
+
+For data corrections or suggestions involving tokens, venues, markets, logos,
+metadata, or rankings, include reliable supporting sources. Filing an issue does
+not guarantee that the requested change or listing will be adopted.
+
+For security-sensitive reports, do not open a public issue. Follow
+[SECURITY.md](SECURITY.md).
+
+## Local Development
+
+You may fork and run the project for your own use under the terms of the MIT
+license.
 
 1. Fork and clone the repository.
 
@@ -36,12 +63,6 @@ cp apps/web/.env.example apps/web/.env.local
 bun dev
 ```
 
-6. Create a branch for your work.
-
-```bash
-git checkout -b feature/your-feature-name
-```
-
 ## Project Structure
 
 - `apps/web/`: public website
@@ -65,7 +86,7 @@ git checkout -b feature/your-feature-name
 - Do not treat `apps/admin` as a public anonymous surface. It is an authenticated maintainer tool.
 - Avoid adding vendored third-party assets unless redistribution terms are documented in `THIRD_PARTY_LICENSES.md`.
 
-## Before Submitting
+## Verifying Local Changes
 
 ```bash
 bun run check:repo-hygiene
@@ -80,27 +101,14 @@ If you touched dependency versions or security-sensitive paths, also run:
 bun run audit:deps
 ```
 
-## Pull Requests
+## Pull Request Policy
 
-- Explain what changed and why.
-- Link related issues when applicable.
-- Keep PRs focused and reviewable.
-- Update docs when behavior, setup, or public contracts change.
-- Call out security, auth, proxy, or dependency-risk changes explicitly.
-- Note whether tests or smoke checks were added or updated.
-
-## Bug Reports
-
-Include:
-
-- A clear description of the issue
-- Steps to reproduce
-- Expected vs actual behavior
-- Environment details
-- Relevant logs or errors, with secrets redacted
-
-For security reports, do not open a public issue. Follow [SECURITY.md](SECURITY.md).
+Only maintainer-authored pull requests originating from repositories within the
+`solana-foundation` GitHub organization are accepted. If you believe a change
+belongs in the hosted product, open an issue so the maintainers can evaluate and
+implement it.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+Use, modification, and redistribution of the repository code are governed by
+the MIT License.

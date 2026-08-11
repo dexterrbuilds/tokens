@@ -1,12 +1,14 @@
-# Releasing
+# Releasing (Maintainers)
 
-How changes ship to staging and production, and how to roll back. There is no
-manual version/tag step — `main` is the release branch, and merging is the release.
+This is the internal maintainer workflow for shipping changes to staging and
+production and rolling them back. There is no manual version/tag step — `main`
+is the release branch, and merging is the release.
 
 ## How a change ships
 
-1. Open a PR. CI (`CI`, `Security`, `React Doctor`) runs on the PR; a `terraform/**`
-   change also posts a `terraform plan` comment.
+1. Open a maintainer PR from within the organization. CI (`CI`, `Security`,
+   `React Doctor`) runs on the PR; a `terraform/**` change also posts a
+   `terraform plan` comment.
 2. Merge to `main`. On push to `main`:
    - **`deploy.yml`** deploys the Vercel apps (`tokens-api`, `tokens-app`) to staging,
      runs a staging smoke check, then promotes to production and runs a production
