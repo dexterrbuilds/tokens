@@ -47,6 +47,9 @@ export {
 
 export { getCanonicalFallbackLogoPath } from './canonical-logo-fallbacks';
 
+export type { PreStockListing } from './data/equities';
+export { PRE_STOCKS } from './data/equities';
+
 export type { HubMatch } from './hubs';
 export { getHub, getHubByMint, listHubs } from './hubs';
 

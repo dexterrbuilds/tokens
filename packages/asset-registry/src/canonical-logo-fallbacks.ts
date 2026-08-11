@@ -170,7 +170,7 @@ const CANONICAL_LOGO_BY_ASSET_ID: Record<string, string> = {
     xrp: '/logos/popular/xrp.png',
 };
 
-const PRESTOCK_LOGO_SLUGS = new Set(['anduril', 'anthropic', 'kalshi', 'openai', 'polymarket', 'spacex']);
+const PRESTOCK_LOGO_SLUGS = new Set(['anduril', 'anthropic', 'kalshi', 'openai', 'polymarket', 'spacex', 'xai']);
 
 function toAlnumLower(value: string): string {
     return value.toLowerCase().replace(/[^a-z0-9]/g, '');

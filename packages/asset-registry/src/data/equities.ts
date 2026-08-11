@@ -43,14 +43,33 @@ const SK_HYNIX_XSTOCK_MINT = 'XsnhgGRQwhExfS2bmWzR6EYddKGPRGDEjeJsatkmKqU';
 const TAKE_TWO_BACKPACK_MINT = 'TTWofwAge91oFhZs7kpQdyrVRkmevgM88xijGvQFbKo';
 const NEBIUS_BACKPACK_MINT = 'NBiSF3UaVUFtRzHwAfxyHsBCAZWGEKnMpewAE4oh7BG';
 
+const ANTHROPIC_PRESTOCK_MINT = 'Pren1FvFX6J3E4kXhJuCiAD5aDmGEb7qJRncwA8Lkhw';
+const ANDURIL_PRESTOCK_MINT = 'PresTj4Yc2bAR197Er7wz4UUKSfqt6FryBEdAriBoQB';
+const POLYMARKET_PRESTOCK_MINT = 'Pre8AREmFPtoJFT8mQSXQLh56cwJmM7CFDRuoGBZiUP';
+const KALSHI_PRESTOCK_MINT = 'PreLWGkkeqG1s4HEfFZSy9moCrJ7btsHuUtfcCeoRua';
+const XAI_PRESTOCK_MINT = 'PreC1KtJ1sBPPqaeeqL6Qb15GTLCYVvyYEwxhdfTwfx';
+
 const PRE_STOCK_MINTS: string[] = [
     SPACEX_PRESTOCK_MINT,
     OPENAI_PRESTOCK_MINT,
-    'Pren1FvFX6J3E4kXhJuCiAD5aDmGEb7qJRncwA8Lkhw',
-    'PresTj4Yc2bAR197Er7wz4UUKSfqt6FryBEdAriBoQB',
-    'Pre8AREmFPtoJFT8mQSXQLh56cwJmM7CFDRuoGBZiUP',
-    'PreLWGkkeqG1s4HEfFZSy9moCrJ7btsHuUtfcCeoRua',
+    ANTHROPIC_PRESTOCK_MINT,
+    ANDURIL_PRESTOCK_MINT,
+    POLYMARKET_PRESTOCK_MINT,
+    KALSHI_PRESTOCK_MINT,
+    XAI_PRESTOCK_MINT,
 ];
+
+// Company identity for the standalone PreStocks assets (symbols match the
+// PreStocks reference API, `GET https://prestocks.com/api/<SYMBOL>`).
+// SpaceX and OpenAI PreStocks mints are variants of hand-written canonical
+// assets in `buildSpecialEquityAssets` and are intentionally absent here.
+const PRE_STOCK_METADATA: Record<string, { symbol: string; name: string; aliases: string[] }> = {
+    [ANTHROPIC_PRESTOCK_MINT]: { symbol: 'ANTHROPIC', name: 'Anthropic', aliases: ['anthropic', 'Anthropic PreStocks'] },
+    [ANDURIL_PRESTOCK_MINT]: { symbol: 'ANDURIL', name: 'Anduril', aliases: ['anduril', 'Anduril Industries', 'Anduril PreStocks'] },
+    [POLYMARKET_PRESTOCK_MINT]: { symbol: 'POLYMARKET', name: 'Polymarket', aliases: ['polymarket', 'Polymarket PreStocks'] },
+    [KALSHI_PRESTOCK_MINT]: { symbol: 'KALSHI', name: 'Kalshi', aliases: ['kalshi', 'Kalshi PreStocks'] },
+    [XAI_PRESTOCK_MINT]: { symbol: 'XAI', name: 'xAI', aliases: ['xai', 'x.ai', 'xAI PreStocks'] },
+};
 
 const UNLISTED_STOCK_MINTS: string[] = [
     'B5KufqHkskgGYwMXtL8FSHgREAkMQvE3ykhH5Kmondo',
@@ -557,24 +576,52 @@ function buildSpecialEquityAssets(): CanonicalAsset[] {
 function buildPreStockAssets(existingMints: ReadonlySet<string>): CanonicalAsset[] {
     return PRE_STOCK_MINTS.filter(mint => !existingMints.has(mint) && !SPECIAL_EQUITY_MINTS.has(mint)).map(mint => {
         const assetId = preStockAssetId(mint);
+        const metadata = PRE_STOCK_METADATA[mint];
 
         return {
             assetId,
+            ...(metadata ? { name: metadata.name, symbol: metadata.symbol } : {}),
             category: 'equity',
-            aliases: uniqueStrings([assetId, mint]),
+            aliases: uniqueStrings([assetId, mint, ...(metadata?.aliases ?? [])]),
             variants: [
                 {
                     variantId: `${assetId}:mint`,
                     mint,
+                    ...(metadata ? { symbol: metadata.symbol, name: `${metadata.name} PreStocks` } : {}),
                     kind: 'tokenized_equity',
+                    issuer: 'PreStocks',
+                    issuerUrl: 'https://prestocks.com/',
                     trustTier: defaultTrustTier(),
-                    tags: ['curated:stocks'],
+                    tags: ['PreStocks', 'curated:stocks'],
+                    label: 'PreStocks',
                     stockVariantTier: 'not_redeemable',
                 },
             ],
         } satisfies CanonicalAsset;
     });
 }
+
+export interface PreStockListing {
+    /** Solana mint of the PreStocks token. */
+    mint: string;
+    /** Symbol used by the PreStocks reference API (`GET https://prestocks.com/api/<SYMBOL>`). */
+    symbol: string;
+    name: string;
+    /** Canonical asset the mint belongs to (`spacex`/`openai` for variant mints, `pre-*` otherwise). */
+    assetId: string;
+}
+
+/** All PreStocks mints with their reference-API symbols, for the PreStocks price pipeline. */
+export const PRE_STOCKS: readonly PreStockListing[] = [
+    { mint: SPACEX_PRESTOCK_MINT, symbol: 'SPACEX', name: 'SpaceX', assetId: 'spacex' },
+    { mint: OPENAI_PRESTOCK_MINT, symbol: 'OPENAI', name: 'OpenAI', assetId: 'openai' },
+    ...Object.entries(PRE_STOCK_METADATA).map(([mint, metadata]) => ({
+        mint,
+        symbol: metadata.symbol,
+        name: metadata.name,
+        assetId: preStockAssetId(mint),
+    })),
+];
 
 function unlistedStockAssetId(mint: string): string {
     return `stock-${mint.slice(0, 8).toLowerCase()}`;
