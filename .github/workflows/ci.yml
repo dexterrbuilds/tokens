@@ -15,6 +15,7 @@ jobs:
       CLERK_JWT_ISSUER_DOMAIN: https://clerk.example.com
       CLERK_AUTHORIZED_PARTIES: http://localhost:3000
       TOKENS_ADMIN_CLERK_USER_IDS: user_test_admin
+      TOKENS_ADMIN_EMAILS: admin@example.com
       TOKENS_API_ORIGIN: https://api.example.com
       TOKENS_PLATFORM_API_KEY: test_platform_key
       TOKENS_CACHE_WARM_SECRET: test_cache_warm_secret

@@ -168,6 +168,28 @@ export interface ServerDeps {
     cacheWarmDeps?: CacheWarmDeps;
     adminActionsDeps?: AdminActionsDeps;
     verifyOidc?: VerifyOidc;
+    /**
+     * When set, RPC routes also accept a Google OIDC ID token (audience/SA
+     * pinned to the Vercel admin invoker) as the bearer, alongside the shared
+     * authToken used by apps/api.
+     */
+    rpcVerifyOidc?: VerifyOidc;
+}
+
+export async function isAuthorizedRpcCaller(
+    authHeader: string | undefined,
+    deps: Pick<ServerDeps, 'authToken' | 'rpcVerifyOidc'>,
+): Promise<boolean> {
+    if (isValidBearerToken(authHeader, deps.authToken)) return true;
+    if (!deps.rpcVerifyOidc) return false;
+    const token = parseBearer(authHeader);
+    if (!token) return false;
+    try {
+        await deps.rpcVerifyOidc(token);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 type Handler = (args: unknown, identity: CallerIdentity | null) => Promise<unknown>;
@@ -208,15 +230,19 @@ function decodeIdentityHeader(raw: string | undefined): CallerIdentity | null | 
     if (typeof parsed !== 'object' || parsed === null) {
         return new InvalidArgsError('x-tokens-identity payload must be an object');
     }
-    const p = parsed as { clerkUserId?: unknown; projectId?: unknown };
+    const p = parsed as { clerkUserId?: unknown; projectId?: unknown; email?: unknown };
     if (typeof p.clerkUserId !== 'string' || p.clerkUserId.length === 0) {
         return new InvalidArgsError('x-tokens-identity.clerkUserId must be a non-empty string');
     }
     if (p.projectId !== undefined && typeof p.projectId !== 'string') {
         return new InvalidArgsError('x-tokens-identity.projectId must be a string when present');
     }
+    if (p.email !== undefined && typeof p.email !== 'string') {
+        return new InvalidArgsError('x-tokens-identity.email must be a string when present');
+    }
     const out: CallerIdentity = { clerkUserId: p.clerkUserId };
     if (typeof p.projectId === 'string') out.projectId = p.projectId;
+    if (typeof p.email === 'string' && p.email.trim()) out.email = p.email.trim();
     return out;
 }
 
@@ -348,7 +374,8 @@ export function createApp(deps: ServerDeps) {
     // Admin curated-token actions (port of convex/adminCuratedTokensActions.ts),
     // called by the apps/admin proxy with a Clerk-verified x-tokens-identity
     // header. Registered only when the cron deps are wired; every handler
-    // enforces the TOKENS_ADMIN_CLERK_USER_IDS allowlist (401/403).
+    // enforces the admin allowlist (TOKENS_ADMIN_CLERK_USER_IDS ∪
+    // TOKENS_ADMIN_EMAILS) with 401/403.
     const adminActionsDeps = deps.adminActionsDeps;
     if (adminActionsDeps) {
         mutations.adminCheckVariantMintForCanonical = (args, identity) =>
@@ -364,7 +391,7 @@ export function createApp(deps: ServerDeps) {
 
     const dispatch = (kind: 'query' | 'mutation', table: Record<string, Handler>) =>
         async (c: Context) => {
-            if (!isValidBearerToken(c.req.header('authorization'), deps.authToken)) {
+            if (!(await isAuthorizedRpcCaller(c.req.header('authorization'), deps))) {
                 return c.json({ error: 'unauthorized' }, 401);
             }
             const identityResult = decodeIdentityHeader(c.req.header(IDENTITY_HEADER));

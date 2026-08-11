@@ -15,3 +15,15 @@ variable "env" {
   description = "Environment name (dev / stg / prd)."
   default     = "prd"
 }
+
+variable "vercel_team_slug" {
+  type        = string
+  description = "Vercel team slug for the admin app's OIDC issuer (https://oidc.vercel.com/<team-slug>)."
+  default     = "solana-foundation"
+}
+
+variable "vercel_admin_project_id" {
+  type        = string
+  description = "Vercel project id (prj_...) of tokens-admin. Empty disables the Vercel WIF module until the id is known."
+  default     = ""
+}

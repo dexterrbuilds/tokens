@@ -1,6 +1,8 @@
 import { Hono, type Context } from 'hono';
 import { isValidBearerToken } from '@tokens/cloudrun-shutdown';
 
+import type { AdminAllowlist } from './adminAuth';
+import { parseBearer, type VerifyOidc } from './oidc';
 import { registerGcpLogsRoute, type GcpLogsHookDeps } from './hooks';
 
 import * as curatedTokens from './handlers/curatedTokens';
@@ -30,9 +32,31 @@ export interface ServerDeps {
     hardDelete: HardDeleteRepo;
     /** GCS signed-PUT signer for logo uploads; absent → uploads unavailable. */
     logoSigner?: LogoUploadSigner;
-    /** Clerk user ids allowed to call admin endpoints (TOKENS_ADMIN_CLERK_USER_IDS). */
-    adminClerkUserIds: ReadonlySet<string>;
+    /** Admin allowlist (TOKENS_ADMIN_CLERK_USER_IDS ∪ TOKENS_ADMIN_EMAILS). */
+    adminAllowlist: AdminAllowlist;
     authToken: string;
+    /**
+     * When set, RPC routes also accept a Google OIDC ID token (audience/SA
+     * pinned) as the bearer — the Vercel admin app's WIF-minted token. The
+     * shared authToken stays accepted for local dev.
+     */
+    rpcVerifyOidc?: VerifyOidc;
+}
+
+export async function isAuthorizedRpcCaller(
+    authHeader: string | undefined,
+    deps: Pick<ServerDeps, 'authToken' | 'rpcVerifyOidc'>,
+): Promise<boolean> {
+    if (isValidBearerToken(authHeader, deps.authToken)) return true;
+    if (!deps.rpcVerifyOidc) return false;
+    const token = parseBearer(authHeader);
+    if (!token) return false;
+    try {
+        await deps.rpcVerifyOidc(token);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 type Handler = (args: unknown, identity: CallerIdentity | null) => Promise<unknown>;
@@ -76,19 +100,19 @@ export function createApp(deps: ServerDeps) {
 
     const categoriesDeps: curatedTokens.CuratedTokensDeps = {
         repo: deps.repo,
-        adminClerkUserIds: deps.adminClerkUserIds,
+        adminAllowlist: deps.adminAllowlist,
     };
     const readsDeps: reads.AdminReadsDeps = {
         repo: deps.reads,
-        adminClerkUserIds: deps.adminClerkUserIds,
+        adminAllowlist: deps.adminAllowlist,
     };
     const mutationsDeps: mutationsHandlers.AdminMutationsDeps = {
         repo: deps.mutations,
-        adminClerkUserIds: deps.adminClerkUserIds,
+        adminAllowlist: deps.adminAllowlist,
     };
     const hardDeleteDeps: hardDeleteHandlers.HardDeleteDeps = {
         repo: deps.hardDelete,
-        adminClerkUserIds: deps.adminClerkUserIds,
+        adminAllowlist: deps.adminAllowlist,
     };
 
     // Every handler (queries and mutations alike) calls requireAdmin(identity)
@@ -121,7 +145,7 @@ export function createApp(deps: ServerDeps) {
     mutations.hardDeleteAsset = (args, identity) => hardDeleteHandlers.hardDeleteAsset(hardDeleteDeps, args, identity);
     const logoUploadsDeps: logoUploadsHandlers.LogoUploadsDeps = {
         ...(deps.logoSigner ? { signer: deps.logoSigner } : {}),
-        adminClerkUserIds: deps.adminClerkUserIds,
+        adminAllowlist: deps.adminAllowlist,
     };
     mutations.generateCanonicalLogoUploadUrl = (args, identity) =>
         logoUploadsHandlers.generateCanonicalLogoUploadUrl(logoUploadsDeps, args, identity);
@@ -130,7 +154,7 @@ export function createApp(deps: ServerDeps) {
     registerGcpLogsRoute(app, deps.gcpLogs ?? {});
 
     const dispatch = (registry: Record<string, Handler>, kind: 'query' | 'mutation') => async (c: Context) => {
-        if (!isValidBearerToken(c.req.header('authorization'), deps.authToken)) {
+        if (!(await isAuthorizedRpcCaller(c.req.header('authorization'), deps))) {
             return c.json({ error: 'unauthorized' }, 401);
         }
         const name = c.req.param('name') ?? '';

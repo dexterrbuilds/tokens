@@ -4,18 +4,12 @@ import { auth } from '@clerk/nextjs/server';
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 
-import { isAdminClerkUserId } from '@/lib/admin-auth';
+import { resolveAdmin } from '@/lib/admin-auth';
 import { ADMIN_FNS } from '@/lib/admin-fns';
 import { callCloudRun, CloudRunCallError } from '@/lib/cloudrun';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-
-function getSessionEmail(session: Awaited<ReturnType<typeof auth>>): string | undefined {
-    const claims = session.sessionClaims as Record<string, unknown> | null | undefined;
-    const raw = claims?.email ?? claims?.primary_email ?? claims?.primaryEmail;
-    return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
-}
 
 export async function POST(request: NextRequest, ctx: { params: Promise<{ name: string }> }) {
     const { name } = await ctx.params;
@@ -28,7 +22,8 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ name: 
     if (!session.userId) {
         return NextResponse.json({ error: { message: 'Unauthorized' } }, { status: 401 });
     }
-    if (!isAdminClerkUserId(session.userId)) {
+    const { isAdmin, email } = await resolveAdmin(session.userId);
+    if (!isAdmin) {
         return NextResponse.json({ error: { message: 'Forbidden' } }, { status: 403 });
     }
 
@@ -41,7 +36,8 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ name: 
     }
 
     try {
-        const email = getSessionEmail(session);
+        // Only the Clerk-verified, allowlist-matched email is forwarded; the
+        // backend allowlists trust this header solely because this proxy set it.
         const result = await callCloudRun(
             spec.service,
             spec.kind,

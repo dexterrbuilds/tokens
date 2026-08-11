@@ -7,9 +7,10 @@
  * `refreshAssetMarket`).
  *
  * Semantics notes vs Convex:
- * - Auth: `requireAdmin` reads the injected `TOKENS_ADMIN_CLERK_USER_IDS`
- *   allowlist and maps to 401 (no identity) / 403 (not allowlisted) instead of
- *   Convex's generic `Error('Unauthorized')`.
+ * - Auth: `requireAdmin` reads the injected admin allowlist
+ *   (`TOKENS_ADMIN_CLERK_USER_IDS` ∪ `TOKENS_ADMIN_EMAILS`) and maps to 401
+ *   (no identity) / 403 (not allowlisted) instead of Convex's generic
+ *   `Error('Unauthorized')`.
  * - User-facing validation/conflict errors are thrown as `InvalidArgsError` so
  *   the dispatcher returns the message with a 400 instead of an opaque 500
  *   (`handler_error` drops the message). The messages themselves mirror Convex.
@@ -25,7 +26,7 @@
 
 import { getVariantByMint } from '@tokens/asset-registry';
 
-import { requireAdmin } from '../adminAuth';
+import { requireAdmin, type AdminAllowlist } from '../adminAuth';
 import { InvalidArgsError, type CallerIdentity } from './assets';
 import {
     refreshCuratedOhlcv,
@@ -194,7 +195,7 @@ export interface AdminActionsRepo {
 }
 
 export interface AdminActionsDeps {
-    adminClerkUserIds: ReadonlySet<string>;
+    adminAllowlist: AdminAllowlist;
     repo: AdminActionsRepo;
     seedRepo: SeedRepo;
     cron: CronDeps;
@@ -873,7 +874,7 @@ export async function adminCheckVariantMintForCanonical(
     rawArgs: unknown,
     identity: CallerIdentity | null,
 ): Promise<CheckedVariantPreview> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
 
     const args = asObject(rawArgs);
     const assetId = readRequiredString(args, 'assetId').trim();
@@ -969,7 +970,7 @@ export async function adminAddCheckedVariant(
     rawArgs: unknown,
     identity: CallerIdentity | null,
 ): Promise<{ assetId: string; mint: string; variantId: string; scheduled: string[] }> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
 
     const args = asObject(rawArgs);
     const preview = parseCheckedPreview(args.checkedPreview);
@@ -1065,7 +1066,7 @@ export async function adminSeedAsset(
     rank?: number;
     seededAt: number;
 }> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
 
     const args = asObject(rawArgs);
     const mint = readRequiredString(args, 'mint').trim();
@@ -1216,7 +1217,7 @@ export async function adminRefreshChartData(
     rawArgs: unknown,
     identity: CallerIdentity | null,
 ): Promise<{ mint: string; scheduled: string[] }> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
 
     const args = asObject(rawArgs);
     const mint = readRequiredString(args, 'mint').trim();

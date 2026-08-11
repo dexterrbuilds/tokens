@@ -1,5 +1,5 @@
 import { CURATED_CATEGORY_SLUGS, asArgsObject, type CuratedCategorySlug } from './shared';
-import { requireAdmin } from '../adminAuth';
+import { requireAdmin, type AdminAllowlist } from '../adminAuth';
 import type { CallerIdentity } from '../server';
 
 export { CURATED_CATEGORY_SLUGS, type CuratedCategorySlug };
@@ -26,7 +26,7 @@ export interface AdminRepo {
 
 export interface CuratedTokensDeps {
     repo: AdminRepo;
-    adminClerkUserIds: ReadonlySet<string>;
+    adminAllowlist: AdminAllowlist;
 }
 
 export async function listCategories(
@@ -34,7 +34,7 @@ export async function listCategories(
     args: unknown,
     identity: CallerIdentity | null,
 ): Promise<CategorySummary[]> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
     asArgsObject(args);
     const summaries = await deps.repo.listCategorySummaries(CURATED_CATEGORY_SLUGS);
     const bySlug = new Map(summaries.map(s => [s.id, s]));

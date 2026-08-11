@@ -32,7 +32,7 @@ import {
     type LogoSource,
     type StoredTrustTier,
 } from './shared';
-import { requireAdmin } from '../adminAuth';
+import { requireAdmin, type AdminAllowlist } from '../adminAuth';
 import type { CallerIdentity } from '../server';
 
 /* ------------------------------------------------------------------------- *
@@ -108,7 +108,7 @@ export interface AdminReadsRepo {
 
 export interface AdminReadsDeps {
     repo: AdminReadsRepo;
-    adminClerkUserIds: ReadonlySet<string>;
+    adminAllowlist: AdminAllowlist;
 }
 
 /* ------------------------------------------------------------------------- *
@@ -220,7 +220,7 @@ export async function listCanonicalAssets(
     args: unknown,
     identity: CallerIdentity | null,
 ): Promise<CanonicalAssetListRow[]> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
     const obj = asArgsObject(args);
     const includeInactive = optionalBoolean(obj, 'includeInactive') ?? true;
 
@@ -304,7 +304,7 @@ export async function listVariantsByAssetIds(
     args: unknown,
     identity: CallerIdentity | null,
 ): Promise<Array<{ assetId: string; variants: AdminVariantRow[] }>> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
     const obj = asArgsObject(args);
     const rawAssetIds = requireStringArray(obj, 'assetIds');
     const assetIds = uniqueStrings(rawAssetIds.map(assetId => assetId.trim()).filter(Boolean)).slice(
@@ -355,7 +355,7 @@ export async function getCanonicalEditor(
     args: unknown,
     identity: CallerIdentity | null,
 ): Promise<CanonicalEditorResult | null> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
     const obj = asArgsObject(args);
     const assetId = requireString(obj, 'assetId').trim();
     if (!assetId) return null;
@@ -438,7 +438,7 @@ export async function getVariantEditor(
     args: unknown,
     identity: CallerIdentity | null,
 ): Promise<VariantEditorResult | null> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
     const obj = asArgsObject(args);
     const mint = requireString(obj, 'mint').trim();
     if (!mint) return null;
@@ -489,7 +489,7 @@ export async function searchCanonicalAssets(
     args: unknown,
     identity: CallerIdentity | null,
 ): Promise<Array<{ assetId: string; name?: string; symbol?: string; category: string }>> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
     const obj = asArgsObject(args);
     const queryText = requireString(obj, 'query').trim().toLowerCase();
     const limit = Math.min(Math.max(optionalNumber(obj, 'limit') ?? 25, 1), 100);
@@ -523,7 +523,7 @@ export async function previewMint(
     args: unknown,
     identity: CallerIdentity | null,
 ): Promise<PreviewMintResult | null> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
     const obj = asArgsObject(args);
     const mint = requireString(obj, 'mint').trim();
     if (!mint || !looksLikeSolanaMintAddress(mint)) return null;

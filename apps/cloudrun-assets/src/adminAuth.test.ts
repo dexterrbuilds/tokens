@@ -7,7 +7,7 @@ import {
     requireAdmin,
     type AdminAllowlist,
 } from './adminAuth';
-import { IdentityRequiredError, UnauthorizedError } from './handlers/errors';
+import { IdentityRequiredError, UnauthorizedError } from './handlers/assets';
 
 const NO_EMAILS = new Set<string>();
 

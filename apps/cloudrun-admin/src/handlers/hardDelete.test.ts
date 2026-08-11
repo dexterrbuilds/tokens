@@ -47,7 +47,7 @@ function makeRepo(result: HardDeleteCounters | null): { repo: HardDeleteRepo; ca
 describe('hardDeleteAsset handler', () => {
     it('requires identity (401) and admin allowlist (403)', async () => {
         const { repo } = makeRepo(COUNTERS);
-        const deps = { repo, adminClerkUserIds: ADMIN_IDS };
+        const deps = { repo, adminAllowlist: { clerkUserIds: ADMIN_IDS, emails: new Set<string>() } };
         await expect(hardDeleteAsset(deps, { assetId: 'bitcoin' }, null)).rejects.toBeInstanceOf(
             IdentityRequiredError,
         );
@@ -58,7 +58,7 @@ describe('hardDeleteAsset handler', () => {
 
     it('mirrors Convex validation errors', async () => {
         const { repo } = makeRepo(null);
-        const deps = { repo, adminClerkUserIds: ADMIN_IDS };
+        const deps = { repo, adminAllowlist: { clerkUserIds: ADMIN_IDS, emails: new Set<string>() } };
         await expect(hardDeleteAsset(deps, { assetId: '  ' }, ADMIN)).rejects.toThrow('assetId is required');
         await expect(hardDeleteAsset(deps, { assetId: 'ghost' }, ADMIN)).rejects.toThrow('Asset not found');
         await expect(hardDeleteAsset(deps, { assetId: 'ghost' }, ADMIN)).rejects.toBeInstanceOf(InvalidArgsError);
@@ -66,7 +66,7 @@ describe('hardDeleteAsset handler', () => {
 
     it('returns the exact Convex counter shape with deleted:true / pendingOhlcvDelete:false', async () => {
         const { repo, calls } = makeRepo(COUNTERS);
-        const deps = { repo, adminClerkUserIds: ADMIN_IDS, now: () => 1_750_000_000_000 };
+        const deps = { repo, adminAllowlist: { clerkUserIds: ADMIN_IDS, emails: new Set<string>() }, now: () => 1_750_000_000_000 };
         const result = await hardDeleteAsset(deps, { assetId: ' bitcoin ' }, ADMIN);
         expect(calls[0]).toEqual({ assetId: 'bitcoin', nowMs: 1_750_000_000_000 });
         expect(result).toEqual({

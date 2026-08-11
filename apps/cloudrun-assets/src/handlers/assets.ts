@@ -98,6 +98,8 @@ export interface AssetsRepo {
 export interface CallerIdentity {
     clerkUserId: string;
     projectId?: string;
+    /** Clerk-verified email forwarded by the admin proxy; used by the admin allowlist. */
+    email?: string;
 }
 
 export class IdentityRequiredError extends Error {

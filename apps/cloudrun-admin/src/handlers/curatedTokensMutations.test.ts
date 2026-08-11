@@ -78,7 +78,7 @@ function makeDeps(state: RepoState = {}): { deps: AdminMutationsDeps; calls: Rec
             return state.removeFromCategory ?? true;
         },
     };
-    return { deps: { repo, adminClerkUserIds: ADMIN_IDS, now: () => NOW }, calls };
+    return { deps: { repo, adminAllowlist: { clerkUserIds: ADMIN_IDS, emails: new Set<string>() }, now: () => NOW }, calls };
 }
 
 describe('authz (mutations)', () => {

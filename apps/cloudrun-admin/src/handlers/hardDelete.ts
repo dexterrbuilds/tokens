@@ -9,7 +9,7 @@
 
 import { InvalidArgsError } from './errors';
 import { asArgsObject, requireString, uniqueStrings } from './shared';
-import { requireAdmin } from '../adminAuth';
+import { requireAdmin, type AdminAllowlist } from '../adminAuth';
 import type { CallerIdentity } from '../server';
 
 export type TombstoneKind = 'assetId' | 'alias' | 'name' | 'symbol' | 'coingeckoId' | 'mint' | 'singletonAssetId';
@@ -102,7 +102,7 @@ export interface HardDeleteRepo {
 
 export interface HardDeleteDeps {
     repo: HardDeleteRepo;
-    adminClerkUserIds: ReadonlySet<string>;
+    adminAllowlist: AdminAllowlist;
     now?: () => number;
 }
 
@@ -117,7 +117,7 @@ export async function hardDeleteAsset(
     args: unknown,
     identity: CallerIdentity | null,
 ): Promise<HardDeleteResult> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
     const obj = asArgsObject(args);
     const assetId = requireString(obj, 'assetId').trim();
     if (!assetId) throw new InvalidArgsError('assetId is required');

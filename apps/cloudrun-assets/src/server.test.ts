@@ -3416,7 +3416,7 @@ describe('admin mutations dispatch', () => {
         // The cron/misc/seed deps are never reached by these dispatch tests
         // (they all fail during auth or validation first).
         return {
-            adminClerkUserIds: new Set(['user_admin']),
+            adminAllowlist: { clerkUserIds: new Set(['user_admin']), emails: new Set<string>() },
             repo,
             seedRepo: {} as AdminActionsDeps['seedRepo'],
             cron: {} as AdminActionsDeps['cron'],

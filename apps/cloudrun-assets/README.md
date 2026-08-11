@@ -25,7 +25,10 @@ The remaining `assets.*`, `assetVariants.*`, `assetMarkets.*` etc. land in follo
 | `PORT` | no | Defaults to 8080 (Cloud Run's default) |
 | `PG_POOL_MAX` | no | postgres-js connection pool size, default 10 |
 | `PG_IDLE_TIMEOUT` | no | seconds, default 30 |
-| `TOKENS_ADMIN_CLERK_USER_IDS` | no | Comma-separated Clerk user id allowlist for the `/mutation/admin*` endpoints; when empty every admin call is rejected (403) |
+| `TOKENS_ADMIN_CLERK_USER_IDS` | no | Comma-separated Clerk user id allowlist for the `/mutation/admin*` endpoints |
+| `TOKENS_ADMIN_EMAILS` | no | Comma-separated verified-email allowlist (case-insensitive) for the `/mutation/admin*` endpoints, unioned with the user-id list; when both lists are empty every admin call is rejected (403) |
+| `TOKENS_RPC_INVOKER_SA` | no | Service-account email whose Google OIDC ID tokens are accepted on `/query`/`/mutation` (the Vercel admin app's WIF invoker); unset ⇒ shared bearer only |
+| `TOKENS_RPC_OIDC_AUDIENCE` | no | Expected `aud` of those ID tokens (this service's run.app URL); recommended whenever `TOKENS_RPC_INVOKER_SA` is set |
 
 ## Local dev
 

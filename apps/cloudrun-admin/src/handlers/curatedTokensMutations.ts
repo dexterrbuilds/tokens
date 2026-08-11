@@ -37,7 +37,7 @@ import {
     type CuratedCategorySlug,
     type StoredTrustTier,
 } from './shared';
-import { requireAdmin } from '../adminAuth';
+import { requireAdmin, type AdminAllowlist } from '../adminAuth';
 import type { CallerIdentity } from '../server';
 
 /** Alias priorities per kind (mirrors Convex `replaceAliasesForKind*` call sites). */
@@ -146,7 +146,7 @@ export interface AdminMutationsRepo {
 
 export interface AdminMutationsDeps {
     repo: AdminMutationsRepo;
-    adminClerkUserIds: ReadonlySet<string>;
+    adminAllowlist: AdminAllowlist;
     now?: () => number;
 }
 
@@ -163,7 +163,7 @@ export async function createCanonicalAsset(
     args: unknown,
     identity: CallerIdentity | null,
 ): Promise<{ assetId: string; created: boolean }> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
     const obj = asArgsObject(args);
     const assetId = requireString(obj, 'assetId').trim();
     if (!assetId) throw new InvalidArgsError('assetId is required');
@@ -196,7 +196,7 @@ export async function updateCanonicalAsset(
     args: unknown,
     identity: CallerIdentity | null,
 ): Promise<{ assetId: string; updated: boolean }> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
     const obj = asArgsObject(args);
     const assetId = requireString(obj, 'assetId').trim();
     if (!assetId) throw new InvalidArgsError('assetId is required');
@@ -244,7 +244,7 @@ export async function deleteCanonicalAsset(
     args: unknown,
     identity: CallerIdentity | null,
 ): Promise<{ assetId: string; deleted: boolean }> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
     const obj = asArgsObject(args);
     const assetId = requireString(obj, 'assetId').trim();
     if (!assetId) throw new InvalidArgsError('assetId is required');
@@ -266,7 +266,7 @@ export async function createVariant(
     args: unknown,
     identity: CallerIdentity | null,
 ): Promise<{ assetId: string; mint: string; created: boolean }> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
     const obj = asArgsObject(args);
     const assetId = requireString(obj, 'assetId').trim();
     const mint = requireString(obj, 'mint').trim();
@@ -324,7 +324,7 @@ export async function updateVariant(
     args: unknown,
     identity: CallerIdentity | null,
 ): Promise<{ mint: string; updated: boolean }> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
     const obj = asArgsObject(args);
     const mint = requireString(obj, 'mint').trim();
     if (!mint) throw new InvalidArgsError('mint is required');
@@ -385,7 +385,7 @@ export async function deleteVariant(
     args: unknown,
     identity: CallerIdentity | null,
 ): Promise<{ mint: string; deleted: boolean }> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
     const obj = asArgsObject(args);
     const mint = requireString(obj, 'mint').trim();
     if (!mint) throw new InvalidArgsError('mint is required');
@@ -400,7 +400,7 @@ export async function deactivateVariant(
     args: unknown,
     identity: CallerIdentity | null,
 ): Promise<{ mint: string; isActive: boolean; updated: boolean }> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
     const obj = asArgsObject(args);
     const mint = requireString(obj, 'mint').trim();
     if (!mint) throw new InvalidArgsError('mint is required');
@@ -416,7 +416,7 @@ export async function moveVariantToCanonical(
     args: unknown,
     identity: CallerIdentity | null,
 ): Promise<{ mint: string; fromAssetId: string; toAssetId: string; moved: boolean }> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
     const obj = asArgsObject(args);
     const mint = requireString(obj, 'mint').trim();
     const toAssetId = requireString(obj, 'assetId').trim();
@@ -446,7 +446,7 @@ export async function removeFromCategory(
     args: unknown,
     identity: CallerIdentity | null,
 ): Promise<{ removed: boolean }> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
     const obj = asArgsObject(args);
     const slug = requireEnum(obj, 'slug', CURATED_CATEGORY_SLUGS);
     const assetId = requireString(obj, 'assetId').trim();

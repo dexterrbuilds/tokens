@@ -142,3 +142,29 @@ output "cloudrun_auth_token_value" {
 output "database_url_secret_id" {
   value = module.env.database_url_secret_id
 }
+
+# Vercel OIDC → WIF for the admin app (see modules/vercel_oidc). Created only
+# once the Vercel project id is provided; the admin Cloud Run service stays
+# IAM-gated either way.
+module "vercel_oidc" {
+  count  = var.vercel_admin_project_id == "" ? 0 : 1
+  source = "../../modules/vercel_oidc"
+
+  project_id         = data.google_project.this.project_id
+  project_number     = data.google_project.this.number
+  env                = var.env
+  region             = var.region
+  vercel_team_slug   = var.vercel_team_slug
+  vercel_project_id  = var.vercel_admin_project_id
+  admin_service_name = "tokens-admin-${var.env}-us"
+}
+
+output "vercel_wif_audience" {
+  value       = try(module.vercel_oidc[0].wif_audience, null)
+  description = "Set as GCP_WIF_AUDIENCE on the Vercel tokens-admin project."
+}
+
+output "vercel_admin_invoker_sa_email" {
+  value       = try(module.vercel_oidc[0].invoker_sa_email, null)
+  description = "Set as GCP_ADMIN_INVOKER_SA on Vercel and TOKENS_RPC_INVOKER_SA on the Cloud Run services."
+}

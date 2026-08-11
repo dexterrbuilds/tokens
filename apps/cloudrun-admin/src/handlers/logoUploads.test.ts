@@ -16,7 +16,7 @@ function makeDeps(overrides: Partial<LogoUploadsDeps> = {}): { deps: LogoUploads
         },
         publicUrl: objectName => `https://storage.googleapis.com/tokens-asset-logos-test/${objectName}`,
     };
-    return { deps: { signer, adminClerkUserIds: ADMINS, now: () => NOW, ...overrides }, signed };
+    return { deps: { signer, adminAllowlist: { clerkUserIds: ADMINS, emails: new Set<string>() }, now: () => NOW, ...overrides }, signed };
 }
 
 describe('generateCanonicalLogoUploadUrl', () => {

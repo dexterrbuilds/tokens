@@ -10,7 +10,7 @@ import {
     makeSanctumClient,
     makeWebacyClient,
 } from './clients';
-import { parseAdminClerkUserIds } from './adminAuth';
+import { parseAdminClerkUserIds, parseAdminEmails } from './adminAuth';
 import {
     getSql,
     makePostgresAdminActionsRepo,
@@ -234,17 +234,28 @@ if (cronDeps && miscCronDeps && seedCronDeps) {
     console.warn('[cloudrun-assets] cron deps not fully set — /mutation/cacheWarm* endpoints disabled');
 }
 
-const adminClerkUserIds = parseAdminClerkUserIds(process.env.TOKENS_ADMIN_CLERK_USER_IDS);
-if (adminClerkUserIds.size === 0) {
+// Accept WIF-minted Google ID tokens from the Vercel admin app on RPC routes
+// (pinned to the invoker SA, and to this service's URL when provided).
+const rpcInvokerSa = process.env.TOKENS_RPC_INVOKER_SA?.trim();
+const rpcOidcAudience = process.env.TOKENS_RPC_OIDC_AUDIENCE?.trim();
+const rpcVerifyOidc = rpcInvokerSa
+    ? makeGoogleOidcVerifier({ invokerEmail: rpcInvokerSa, ...(rpcOidcAudience ? { audience: rpcOidcAudience } : {}) })
+    : undefined;
+
+const adminAllowlist = {
+    clerkUserIds: parseAdminClerkUserIds(process.env.TOKENS_ADMIN_CLERK_USER_IDS),
+    emails: parseAdminEmails(process.env.TOKENS_ADMIN_EMAILS),
+};
+if (adminAllowlist.clerkUserIds.size === 0 && adminAllowlist.emails.size === 0) {
     console.warn(
-        '[cloudrun-assets] TOKENS_ADMIN_CLERK_USER_IDS is empty — /mutation/admin* endpoints will reject all callers',
+        '[cloudrun-assets] TOKENS_ADMIN_CLERK_USER_IDS and TOKENS_ADMIN_EMAILS are both empty — /mutation/admin* endpoints will reject all callers',
     );
 }
 
 let adminActionsDeps: AdminActionsDeps | undefined;
 if (cronDeps && miscCronDeps && seedCronDeps) {
     adminActionsDeps = {
-        adminClerkUserIds,
+        adminAllowlist,
         repo: makePostgresAdminActionsRepo(sql),
         seedRepo: seedCronDeps.repo,
         cron: cronDeps,
@@ -272,6 +283,7 @@ const app = createApp({
     ohlcvReadsRepo: makePostgresOhlcvReadsRepo(sql),
     authToken,
     ...(cronDeps && verifyOidc ? { cronDeps, verifyOidc } : {}),
+    ...(rpcVerifyOidc ? { rpcVerifyOidc } : {}),
     ...(miscCronDeps ? { miscCronDeps } : {}),
     ...(assetVariantsCronDeps ? { assetVariantsCronDeps } : {}),
     ...(seedCronDeps ? { seedCronDeps } : {}),

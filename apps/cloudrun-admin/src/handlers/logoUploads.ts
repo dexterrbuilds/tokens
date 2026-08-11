@@ -8,7 +8,7 @@
  * match) and then persist `publicUrl` as `imageUrl` on the asset.
  */
 
-import { requireAdmin } from '../adminAuth';
+import { requireAdmin, type AdminAllowlist } from '../adminAuth';
 import type { CallerIdentity } from '../server';
 import { InvalidArgsError } from './errors';
 import { asArgsObject, requireString } from './shared';
@@ -29,7 +29,7 @@ export interface LogoUploadSigner {
 
 export interface LogoUploadsDeps {
     signer?: LogoUploadSigner;
-    adminClerkUserIds: ReadonlySet<string>;
+    adminAllowlist: AdminAllowlist;
     now?: () => number;
 }
 
@@ -45,7 +45,7 @@ export async function generateCanonicalLogoUploadUrl(
     args: unknown,
     identity: CallerIdentity | null,
 ): Promise<LogoUploadUrlResult> {
-    requireAdmin(deps.adminClerkUserIds, identity);
+    requireAdmin(deps.adminAllowlist, identity);
     const a = asArgsObject(args);
 
     const assetId = requireString(a, 'assetId').trim();

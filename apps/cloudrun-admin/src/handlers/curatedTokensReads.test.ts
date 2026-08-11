@@ -98,7 +98,7 @@ function makeRepo(state: FakeState = {}): { repo: AdminReadsRepo; calls: Record<
 
 function makeDeps(state: FakeState = {}): { deps: AdminReadsDeps; calls: Record<string, unknown[]> } {
     const { repo, calls } = makeRepo(state);
-    return { deps: { repo, adminClerkUserIds: ADMIN_IDS }, calls };
+    return { deps: { repo, adminAllowlist: { clerkUserIds: ADMIN_IDS, emails: new Set<string>() } }, calls };
 }
 
 describe('authz (reads)', () => {

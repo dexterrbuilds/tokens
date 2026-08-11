@@ -1,5 +1,5 @@
 import { registerGracefulShutdown, wrapFetchWithShutdownGuard } from '@tokens/cloudrun-shutdown';
-import { parseAdminClerkUserIds } from './adminAuth';
+import { parseAdminClerkUserIds, parseAdminEmails } from './adminAuth';
 import { getSql, makePostgresAdminRepo } from './db';
 import { makePostgresAdminMutationsRepo } from './db/curatedTokensMutations';
 import { makePostgresAdminReadsRepo } from './db/curatedTokensReads';
@@ -14,15 +14,28 @@ if (!authToken) {
     process.exit(1);
 }
 
-const adminClerkUserIds = parseAdminClerkUserIds(process.env.TOKENS_ADMIN_CLERK_USER_IDS);
-if (adminClerkUserIds.size === 0) {
-    console.warn('TOKENS_ADMIN_CLERK_USER_IDS is empty — every admin endpoint will return 403');
+const adminAllowlist = {
+    clerkUserIds: parseAdminClerkUserIds(process.env.TOKENS_ADMIN_CLERK_USER_IDS),
+    emails: parseAdminEmails(process.env.TOKENS_ADMIN_EMAILS),
+};
+if (adminAllowlist.clerkUserIds.size === 0 && adminAllowlist.emails.size === 0) {
+    console.warn(
+        'TOKENS_ADMIN_CLERK_USER_IDS and TOKENS_ADMIN_EMAILS are both empty — every admin endpoint will return 403',
+    );
 }
 
 const gcsLogoBucket = process.env.GCS_LOGO_BUCKET?.trim();
 if (!gcsLogoBucket) {
     console.warn('GCS_LOGO_BUCKET is not set — logo uploads will be unavailable');
 }
+
+// Accept WIF-minted Google ID tokens from the Vercel admin app on RPC routes
+// (pinned to the invoker SA, and to this service's URL when provided).
+const rpcInvokerSa = process.env.TOKENS_RPC_INVOKER_SA?.trim();
+const rpcOidcAudience = process.env.TOKENS_RPC_OIDC_AUDIENCE?.trim();
+const rpcVerifyOidc = rpcInvokerSa
+    ? makeGoogleOidcVerifier({ invokerEmail: rpcInvokerSa, ...(rpcOidcAudience ? { audience: rpcOidcAudience } : {}) })
+    : undefined;
 
 const port = Number(process.env.PORT) || 8080;
 const sql = getSql();
@@ -34,8 +47,9 @@ const app = createApp({
     ...(gcsLogoBucket
         ? { logoSigner: makeGcsLogoSigner(gcsLogoBucket, process.env.GCS_LOGO_PUBLIC_BASE_URL?.trim()) }
         : {}),
-    adminClerkUserIds,
+    adminAllowlist,
     authToken,
+    ...(rpcVerifyOidc ? { rpcVerifyOidc } : {}),
     gcpLogs: {
         ...(process.env.LOKI_PUSH_URL?.trim() ? { lokiPushUrl: process.env.LOKI_PUSH_URL.trim() } : {}),
         ...(process.env.LOKI_PUSH_AUTH?.trim() ? { lokiPushAuth: process.env.LOKI_PUSH_AUTH.trim() } : {}),

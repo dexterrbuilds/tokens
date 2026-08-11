@@ -10,7 +10,7 @@ The names match the corresponding Convex export names (e.g. `listCategories`) so
 
 ### Caller identity
 
-Every endpoint except `/health` requires the Clerk-session-verified caller forwarded in the `x-tokens-identity` header (base64 JSON `{ clerkUserId, projectId?, email? }`). Each handler calls `requireAdmin(identity)` against the `TOKENS_ADMIN_CLERK_USER_IDS` allowlist first — defense in depth on top of the Next.js proxy's own admin check.
+Every endpoint except `/health` requires the Clerk-session-verified caller forwarded in the `x-tokens-identity` header (base64 JSON `{ clerkUserId, projectId?, email? }`). Each handler calls `requireAdmin(identity)` against the admin allowlist (`TOKENS_ADMIN_CLERK_USER_IDS` user IDs unioned with `TOKENS_ADMIN_EMAILS` verified emails) first — defense in depth on top of the Next.js proxy's own admin check.
 
 - missing identity → `401 {"error":"identity_required"}`
 - non-allowlisted caller → `403 {"error":"unauthorized"}`
@@ -49,7 +49,10 @@ Postgres differences from Convex kept deliberately:
 | --- | --- | --- |
 | `DATABASE_URL` | yes | Cloud SQL Postgres connection string |
 | `TOKENS_CLOUDRUN_AUTH_TOKEN` | yes | Shared bearer token with the `CloudRunClient` caller |
-| `TOKENS_ADMIN_CLERK_USER_IDS` | yes | Comma-separated Clerk user ids allowed to call admin endpoints (empty ⇒ everything 403s) |
+| `TOKENS_ADMIN_CLERK_USER_IDS` | no* | Comma-separated Clerk user ids allowed to call admin endpoints |
+| `TOKENS_ADMIN_EMAILS` | no* | Comma-separated verified-email allowlist (case-insensitive), unioned with the user-id list. *Both lists empty ⇒ everything 403s |
+| `TOKENS_RPC_INVOKER_SA` | no | Service-account email whose Google OIDC ID tokens are accepted on `/query`/`/mutation` (the Vercel admin app's WIF invoker); unset ⇒ shared bearer only |
+| `TOKENS_RPC_OIDC_AUDIENCE` | no | Expected `aud` of those ID tokens (this service's run.app URL); recommended whenever `TOKENS_RPC_INVOKER_SA` is set |
 | `PORT` | no | Defaults to 8080 (Cloud Run's default) |
 | `PG_POOL_MAX` | no | postgres-js connection pool size, default 10 |
 | `PG_IDLE_TIMEOUT` | no | seconds, default 30 |

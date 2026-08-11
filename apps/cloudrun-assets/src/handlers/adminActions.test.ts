@@ -346,7 +346,7 @@ function makeMiscDeps(state: FakeState, base: CronDeps): MiscCronDeps {
 function makeDeps(state: FakeState): AdminActionsDeps {
     const cron = makeCronDeps(state);
     return {
-        adminClerkUserIds: ADMIN_IDS,
+        adminAllowlist: { clerkUserIds: ADMIN_IDS, emails: new Set<string>() },
         repo: makeAdminRepo(state),
         seedRepo: makeSeedRepo(state),
         cron,
@@ -421,7 +421,7 @@ describe('adminActions authz', () => {
     }
 
     it('rejects every caller when the allowlist is empty', async () => {
-        const deps = { ...makeDeps(makeState()), adminClerkUserIds: new Set<string>() };
+        const deps = { ...makeDeps(makeState()), adminAllowlist: { clerkUserIds: new Set<string>(), emails: new Set<string>() } };
         await expect(adminRefreshChartData(deps, { mint: MINT }, ADMIN)).rejects.toBeInstanceOf(UnauthorizedError);
     });
 });
