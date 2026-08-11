@@ -10,6 +10,7 @@ import type { AssetsApiRepo } from './handlers/assetsApi';
 import type { CoingeckoReadsRepo } from './handlers/coingeckoReads';
 import type { StockReadsRepo } from './handlers/stockReads';
 import type { OhlcvReadsRepo } from './handlers/ohlcvReads';
+import type { PrestocksReadsRepo } from './handlers/prestocksReads';
 import type { TokensReadsRepo } from './handlers/tokensReads';
 import type { TrendingReadsRepo } from './handlers/trendingReads';
 import type { FillQualityReadsRepo } from './handlers/fillQualityReads';
@@ -77,6 +78,9 @@ const noopOhlcvReadsRepo: OhlcvReadsRepo = {
     async getBoundsByAddressAndInterval() { return { minTime: null, maxTime: null }; },
     async listByAssetIdAndInterval() { return []; },
 };
+const noopPrestocksReadsRepo: PrestocksReadsRepo = {
+    async findLatestByMints() { return []; },
+};
 const noopTokensReadsRepo: TokensReadsRepo = {
     async findTokenByAddress() { return null; },
     async findTokensByAddresses() { return []; },
@@ -107,6 +111,7 @@ const baseDeps = {
     coingeckoReadsRepo: noopCoingeckoReadsRepo,
     stockReadsRepo: noopStockReadsRepo,
     ohlcvReadsRepo: noopOhlcvReadsRepo,
+    prestocksReadsRepo: noopPrestocksReadsRepo,
     tokensReadsRepo: noopTokensReadsRepo,
     trendingReadsRepo: noopTrendingReadsRepo,
     fillQualityReadsRepo: noopFillQualityReadsRepo,

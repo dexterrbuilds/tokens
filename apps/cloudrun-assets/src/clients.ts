@@ -27,6 +27,7 @@ import type {
     ClickhouseStockSnapshot,
 } from './handlers/crons.clickhouse';
 import type { BirdeyeMarketsClient, TokenMarketEntry } from './handlers/crons.misc';
+import type { PreStocksApiSnapshot, PreStocksClient } from './handlers/crons.prestocks';
 
 interface MakeBirdeyeOptions {
     apiKey: string;
@@ -1009,6 +1010,71 @@ export function makeRwaXyzClient(opts: MakeRwaXyzOptions): RwaXyzClient {
             if (!assetRaw) return { token: tokenSnapshot, asset: null };
             const assetSnapshot = buildRwaXyzAssetSnapshot(assetRaw, JSON.stringify(assetRaw));
             return { token: tokenSnapshot, asset: assetSnapshot };
+        },
+    };
+}
+
+interface MakePreStocksOptions {
+    baseUrl?: string;
+    fetchImpl?: typeof fetch;
+}
+
+const PRESTOCKS_TIMEOUT_MS = 10_000;
+
+function preStocksFiniteNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function preStocksNonEmptyString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+export function makePreStocksClient(opts: MakePreStocksOptions = {}): PreStocksClient {
+    const baseUrl = (opts.baseUrl ?? 'https://prestocks.com').replace(/\/+$/, '');
+    const fetchImpl = opts.fetchImpl ?? fetch;
+
+    return {
+        async fetchBySymbol(symbol: string): Promise<PreStocksApiSnapshot | null> {
+            const cleaned = symbol.trim().toUpperCase();
+            if (!/^[A-Z0-9]+$/.test(cleaned)) return null;
+            const url = `${baseUrl}/api/${cleaned}`;
+            const res = await withExternalTiming('prestocks', url, () =>
+                fetchImpl(url, {
+                    headers: { Accept: 'application/json' },
+                    signal: AbortSignal.timeout(PRESTOCKS_TIMEOUT_MS),
+                }),
+            );
+            if (res.status === 404) return null;
+            const text = await res.text().catch(() => '');
+            if (!res.ok || !text) {
+                throw new Error(`PreStocks request failed: HTTP ${res.status} ${res.statusText}`);
+            }
+            // Descriptions contain raw control characters, which strict JSON
+            // rejects — replace them before parsing.
+            let json: unknown;
+            try {
+                // eslint-disable-next-line no-control-regex
+                json = JSON.parse(text.replace(/[\u0000-\u001f]/g, ' '));
+            } catch {
+                throw new Error(`PreStocks response is not valid JSON for ${cleaned}`);
+            }
+            if (typeof json !== 'object' || json === null) return null;
+            const raw = json as Record<string, unknown>;
+            const mint = preStocksNonEmptyString(raw.contract_address);
+            const symbolOut = preStocksNonEmptyString(raw.symbol);
+            if (!mint || !symbolOut) return null;
+            return {
+                symbol: symbolOut,
+                name: preStocksNonEmptyString(raw.name),
+                mint,
+                markPriceUsd: preStocksFiniteNumber(raw.markPrice),
+                markValuationUsd: preStocksFiniteNumber(raw.markValuation),
+                tokenPriceUsd: preStocksFiniteNumber(raw.tokenPrice),
+                impliedValuationUsd: preStocksFiniteNumber(raw.impliedValuation),
+                supply: preStocksFiniteNumber(raw.supply),
+                imageUrl: preStocksNonEmptyString(raw.image),
+                externalUrl: preStocksNonEmptyString(raw.external_url),
+            };
         },
     };
 }

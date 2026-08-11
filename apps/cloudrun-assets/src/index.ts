@@ -6,6 +6,7 @@ import {
     makeBirdeyeOhlcvClient,
     makeClickhouseClient,
     makeCoingeckoClient,
+    makePreStocksClient,
     makeRwaXyzClient,
     makeSanctumClient,
     makeWebacyClient,
@@ -36,6 +37,8 @@ import {
     makePostgresTrendingReadsRepo,
     makePostgresTrendingRepo,
     makePostgresClickhouseExtrasRepo,
+    makePostgresPrestocksReadsRepo,
+    makePostgresPrestocksRepo,
     makePostgresStockReadsRepo,
     makePostgresVariantMarketsRepo,
 } from './db';
@@ -48,6 +51,7 @@ import type { AssetVariantsCronDeps } from './handlers/crons.assetVariants';
 import type { SeedCronDeps } from './handlers/crons.seed';
 import type { TrendingCronDeps } from './handlers/crons.trending';
 import type { ClickhouseExtrasCronDeps } from './handlers/crons.clickhouse.extras';
+import type { PrestocksCronDeps } from './handlers/crons.prestocks';
 import { makeGoogleOidcVerifier } from './oidc';
 import { createApp } from './server';
 
@@ -79,6 +83,7 @@ let assetVariantsCronDeps: AssetVariantsCronDeps | undefined;
 let seedCronDeps: SeedCronDeps | undefined;
 let trendingCronDeps: TrendingCronDeps | undefined;
 let clickhouseExtrasCronDeps: ClickhouseExtrasCronDeps | undefined;
+let prestocksCronDeps: PrestocksCronDeps | undefined;
 let verifyOidc: ReturnType<typeof makeGoogleOidcVerifier> | undefined;
 if (birdeyeApiKey) {
     if (!cronAudience && !cronInvokerSa) {
@@ -158,6 +163,12 @@ if (birdeyeApiKey) {
     });
     trendingCronDeps = {
         repo: makePostgresTrendingRepo(sql),
+        now: () => Date.now(),
+    };
+    // PreStocks needs no API key — the reference endpoint is unauthenticated.
+    prestocksCronDeps = {
+        prestocks: makePreStocksClient(),
+        repo: makePostgresPrestocksRepo(sql),
         now: () => Date.now(),
     };
     if (clickhouseUrl && clickhouseUser && clickhousePassword && clickhouseDatabase) {
@@ -270,6 +281,7 @@ const app = createApp({
     coingeckoReadsRepo: makePostgresCoingeckoReadsRepo(sql),
     stockReadsRepo: makePostgresStockReadsRepo(sql),
     ohlcvReadsRepo: makePostgresOhlcvReadsRepo(sql),
+    prestocksReadsRepo: makePostgresPrestocksReadsRepo(sql),
     authToken,
     ...(cronDeps && verifyOidc ? { cronDeps, verifyOidc } : {}),
     ...(miscCronDeps ? { miscCronDeps } : {}),
@@ -277,6 +289,7 @@ const app = createApp({
     ...(seedCronDeps ? { seedCronDeps } : {}),
     ...(trendingCronDeps ? { trendingCronDeps } : {}),
     ...(clickhouseExtrasCronDeps ? { clickhouseExtrasCronDeps } : {}),
+    ...(prestocksCronDeps ? { prestocksCronDeps } : {}),
     ...(cacheWarmDeps ? { cacheWarmDeps } : {}),
     ...(adminActionsDeps ? { adminActionsDeps } : {}),
 });

@@ -29,6 +29,7 @@ import type {
     StockReadsRepo,
 } from './handlers/stockReads';
 import type { OhlcvCandleRow, OhlcvReadsRepo } from './handlers/ohlcvReads';
+import type { PrestocksReadsRepo } from './handlers/prestocksReads';
 import type {
     AssetsApiAssetMarketRow,
     AssetsApiAssetRow,
@@ -192,6 +193,12 @@ function emptyStockReadsRepo(): StockReadsRepo {
     };
 }
 
+function emptyPrestocksReadsRepo(): PrestocksReadsRepo {
+    return {
+        async findLatestByMints() { return []; },
+    };
+}
+
 function emptyOhlcvReadsRepo(): OhlcvReadsRepo {
     return {
         async listByAddressAndInterval() { return []; },
@@ -272,6 +279,7 @@ function deps(overrides: Partial<ServerDeps> = {}): ServerDeps {
         coingeckoReadsRepo: overrides.coingeckoReadsRepo ?? emptyCoingeckoReadsRepo(),
         stockReadsRepo: overrides.stockReadsRepo ?? emptyStockReadsRepo(),
         ohlcvReadsRepo: overrides.ohlcvReadsRepo ?? emptyOhlcvReadsRepo(),
+        prestocksReadsRepo: overrides.prestocksReadsRepo ?? emptyPrestocksReadsRepo(),
         tokensReadsRepo: overrides.tokensReadsRepo ?? emptyTokensReadsRepo(),
         trendingReadsRepo: overrides.trendingReadsRepo ?? emptyTrendingReadsRepo(),
         fillQualityReadsRepo: overrides.fillQualityReadsRepo ?? emptyFillQualityReadsRepo(),

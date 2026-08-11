@@ -92,6 +92,10 @@ import {
     type OhlcvReadsRepo,
 } from './handlers/ohlcvReads';
 import {
+    getLatestByMints as prestocksGetLatestByMints,
+    type PrestocksReadsRepo,
+} from './handlers/prestocksReads';
+import {
     InvalidArgsError as CronInvalidArgsError,
     pruneApiRequestEvents,
     refreshCuratedAssetMarkets,
@@ -113,6 +117,7 @@ import {
     type AssetVariantsJobHandler,
 } from './handlers/crons.assetVariants';
 import { seedJobs, type SeedCronDeps, type SeedJobHandler } from './handlers/crons.seed';
+import { prestocksJobs, type PrestocksCronDeps, type PrestocksJobHandler } from './handlers/crons.prestocks';
 import { trendingJobs, type TrendingCronDeps, type TrendingJobHandler } from './handlers/crons.trending';
 import {
     clickhouseExtrasJobs,
@@ -158,6 +163,7 @@ export interface ServerDeps {
     coingeckoReadsRepo: CoingeckoReadsRepo;
     stockReadsRepo: StockReadsRepo;
     ohlcvReadsRepo: OhlcvReadsRepo;
+    prestocksReadsRepo: PrestocksReadsRepo;
     authToken: string;
     cronDeps?: CronDeps & Partial<ClickhouseCronDeps>;
     miscCronDeps?: MiscCronDeps;
@@ -165,6 +171,7 @@ export interface ServerDeps {
     seedCronDeps?: SeedCronDeps;
     trendingCronDeps?: TrendingCronDeps;
     clickhouseExtrasCronDeps?: ClickhouseExtrasCronDeps;
+    prestocksCronDeps?: PrestocksCronDeps;
     cacheWarmDeps?: CacheWarmDeps;
     adminActionsDeps?: AdminActionsDeps;
     verifyOidc?: VerifyOidc;
@@ -318,6 +325,7 @@ export function createApp(deps: ServerDeps) {
         stockGetPriceLatestByAssetId(deps.stockReadsRepo, args);
     queries.stockPricesGetLatestByAssetIds = args =>
         stockGetPriceLatestByAssetIds(deps.stockReadsRepo, args);
+    queries.prestocksGetLatestByMints = args => prestocksGetLatestByMints(deps.prestocksReadsRepo, args);
     queries.stockOhlcvList = args => listStockOhlcv(deps.ohlcvReadsRepo, args);
     queries.ohlcvBounds = args => getOhlcvBounds(deps.ohlcvReadsRepo, args);
     queries.ohlcvList = args => listOhlcv(deps.ohlcvReadsRepo, args);
@@ -424,6 +432,7 @@ export function createApp(deps: ServerDeps) {
     const seedJobsTable: Record<string, SeedJobHandler> = { ...seedJobs };
     const trendingJobsTable: Record<string, TrendingJobHandler> = { ...trendingJobs };
     const clickhouseExtrasJobsTable: Record<string, ClickhouseExtrasJobHandler> = { ...clickhouseExtrasJobs };
+    const prestocksJobsTable: Record<string, PrestocksJobHandler> = { ...prestocksJobs };
 
     app.post('/jobs/:name', async (c: Context) => {
         const cronDeps = deps.cronDeps;
@@ -533,6 +542,22 @@ export function createApp(deps: ServerDeps) {
             const handler = clickhouseExtrasJobsTable[name]!;
             try {
                 return c.json(await handler(clickhouseExtrasCronDeps, args));
+            } catch (err) {
+                if (err instanceof CronInvalidArgsError) {
+                    return c.json({ error: 'invalid_args', message: err.message }, 400);
+                }
+                console.error(`[cloudrun-assets] job ${name} threw`, err);
+                return c.json({ error: 'handler_error' }, 500);
+            }
+        }
+        if (Object.hasOwn(prestocksJobsTable, name)) {
+            const prestocksCronDeps = deps.prestocksCronDeps;
+            if (!prestocksCronDeps) {
+                return c.json({ error: 'jobs_disabled' }, 404);
+            }
+            const handler = prestocksJobsTable[name]!;
+            try {
+                return c.json(await handler(prestocksCronDeps, args));
             } catch (err) {
                 if (err instanceof CronInvalidArgsError) {
                     return c.json({ error: 'invalid_args', message: err.message }, 400);
