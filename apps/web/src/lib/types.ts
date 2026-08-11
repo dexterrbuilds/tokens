@@ -8,7 +8,7 @@ export interface Token {
     assetId?: string;
     coingeckoId?: string;
     category?: string;
-    canonicalMarketSource?: 'coingecko' | 'clickhouse_stock';
+    canonicalMarketSource?: 'coingecko' | 'clickhouse_stock' | 'prestocks';
     source?: 'birdeye' | 'rwa_xyz' | 'clickhouse_trades';
     metricsSource?: 'birdeye' | 'rwa_xyz' | 'clickhouse_trades';
     address: string;

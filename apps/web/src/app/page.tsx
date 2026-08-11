@@ -86,6 +86,23 @@ type CanonicalMarketSnapshot =
           lastFetchedAt: number | null;
           providerLastUpdatedAt: number | null;
           asOf: number | null;
+      }
+    | {
+          source: 'prestocks';
+          symbol: string;
+          mint: string;
+          price: number | null;
+          /** Implied company valuation — NOT the tokenized float value. */
+          marketCap: number | null;
+          markPriceUsd: number | null;
+          markValuationUsd: number | null;
+          impliedValuationUsd: number | null;
+          premiumToMarkPercent: number | null;
+          volume24hUSD: number | null;
+          priceChange24hPercent: number | null;
+          lastFetchedAt: number | null;
+          providerLastUpdatedAt: number | null;
+          asOf: number | null;
       };
 
 interface AssetSearchResult {

@@ -104,7 +104,34 @@ type CanonicalMarketSnapshot =
           lastFetchedAt: number | null;
           providerLastUpdatedAt: number | null;
           asOf: number | null;
+      }
+    | {
+          source: 'prestocks';
+          symbol: string;
+          mint: string;
+          price: number | null;
+          /** Implied company valuation — NOT the tokenized float value. */
+          marketCap: number | null;
+          markPriceUsd: number | null;
+          markValuationUsd: number | null;
+          impliedValuationUsd: number | null;
+          premiumToMarkPercent: number | null;
+          volume24hUSD: number | null;
+          priceChange24hPercent: number | null;
+          lastFetchedAt: number | null;
+          providerLastUpdatedAt: number | null;
+          asOf: number | null;
       };
+
+/** PreStocks reference block attached to variants whose mint is a PreStocks token. */
+interface PreStocksVariantSnapshot {
+    symbol?: string;
+    markPriceUsd: number | null;
+    markValuationUsd: number | null;
+    impliedValuationUsd: number | null;
+    premiumToMarkPercent: number | null;
+    lastFetchedAt?: number | null;
+}
 
 interface AssetStatsSnapshot {
     price: number | null;
@@ -132,6 +159,7 @@ type ApiAssetVariant = AssetVariant & {
     market?: MarketSnapshot & { lastFetchedAt?: number; source?: string };
     executionQuality?: VariantExecutionQualitySnapshot | null;
     rank?: number;
+    preStocks?: PreStocksVariantSnapshot | null;
 };
 
 interface AssetIncludeOk<T> {
@@ -164,6 +192,7 @@ interface AssetsV1AssetResponse {
                   market?: MarketSnapshot & { lastFetchedAt?: number; source?: string };
                   executionQuality?: VariantExecutionQualitySnapshot | null;
                   rank?: number;
+                  preStocks?: PreStocksVariantSnapshot | null;
               })
             | null;
         variantGroups: Partial<
@@ -545,6 +574,28 @@ function buildCanonicalStatsMarket(
         };
     }
 
+    if (canonicalMarket?.source === 'prestocks') {
+        // Tokenized pre-IPO exposure: `marketCap` stays the on-chain token
+        // float; the implied company valuation and premium-to-mark render from
+        // the dedicated `preStocks` block.
+        return {
+            price: pickFiniteNumber(stats?.price, canonicalMarket.price),
+            liquidity: pickFiniteNumber(stats?.liquidity, null),
+            volume24hUSD: pickFiniteNumber(stats?.volume24hUSD, null),
+            marketCap: pickFiniteNumber(stats?.marketCap, null),
+            fdv: pickFiniteNumber(stats?.fdv, null),
+            totalSupply: pickFiniteNumber(stats?.totalSupply, null),
+            circulatingSupply: pickFiniteNumber(stats?.circulatingSupply, null),
+            priceChange24hPercent: pickFiniteNumber(stats?.priceChange24hPercent, null),
+            preStocks: {
+                markPriceUsd: canonicalMarket.markPriceUsd,
+                markValuationUsd: canonicalMarket.markValuationUsd,
+                impliedValuationUsd: canonicalMarket.impliedValuationUsd,
+                premiumToMarkPercent: canonicalMarket.premiumToMarkPercent,
+            },
+        };
+    }
+
     const showCanonicalVolumePill = shouldShowCanonicalVolumePill(category, canonicalMarket);
     const underlyingVolume24hUSD =
         showCanonicalVolumePill && canonicalMarket ? pickFiniteNumber(canonicalMarket.volume24hUSD, null) : null;
@@ -827,11 +878,14 @@ async function loadAssetPageModel({ asset, requestedName, requestedMint }: Asset
     const apiAsset = await fetchApiAppJsonOrNull<AssetsV1AssetResponse>(apiAssetUrl, {
         next: { revalidate: 60 },
     });
+    const preStocksByMint = new Map<string, PreStocksVariantSnapshot>();
     if (apiAsset) {
         const primary = apiAsset.asset.primaryVariant;
         if (primary?.market) tokenByMint.set(primary.mint, primary.market);
+        if (primary?.preStocks) preStocksByMint.set(primary.mint, primary.preStocks);
 
         for (const variant of getApiVariantRows(apiAsset.asset.variantGroups)) {
+            if (variant.preStocks) preStocksByMint.set(variant.mint, variant.preStocks);
             if (!variant.market) continue;
             tokenByMint.set(variant.mint, variant.market);
         }
@@ -912,6 +966,25 @@ async function loadAssetPageModel({ asset, requestedName, requestedMint }: Asset
         canonicalMarket,
         effectiveAsset.category,
     );
+    // Variant view: merge the variant's PreStocks reference block into its
+    // market snapshot so the stats section renders the same premium/implied
+    // valuation treatment as the canonical view.
+    const activePreStocks = active ? (preStocksByMint.get(active.mint) ?? null) : null;
+    const variantStatsMarket: ComponentProps<typeof AssetStatsSection>['market'] = active?.market
+        ? {
+              ...active.market,
+              ...(activePreStocks
+                  ? {
+                        preStocks: {
+                            markPriceUsd: activePreStocks.markPriceUsd,
+                            markValuationUsd: activePreStocks.markValuationUsd,
+                            impliedValuationUsd: activePreStocks.impliedValuationUsd,
+                            premiumToMarkPercent: activePreStocks.premiumToMarkPercent,
+                        },
+                    }
+                  : {}),
+          }
+        : null;
 
     const displayNameRaw =
         pickFirstDisplayName(
@@ -967,6 +1040,7 @@ async function loadAssetPageModel({ asset, requestedName, requestedMint }: Asset
         shouldUseCanonicalMarket,
         shouldEnableRealtimePrice,
         canonicalStatsMarket,
+        variantStatsMarket,
         displayName,
         displaySymbol,
         canonicalSymbolForRealtime,
@@ -992,6 +1066,7 @@ async function AssetPageContent(props: AssetPageProps) {
         shouldUseCanonicalMarket,
         shouldEnableRealtimePrice,
         canonicalStatsMarket,
+        variantStatsMarket,
         displayName,
         displaySymbol,
         canonicalSymbolForRealtime,
@@ -1135,7 +1210,7 @@ async function AssetPageContent(props: AssetPageProps) {
                 coingeckoId={coingeckoId ?? null}
                 enableCoinGeckoFallback={!isVariantView}
                 mode={isVariantView ? 'variant' : 'canonical'}
-                market={isVariantView ? (active?.market ?? null) : canonicalStatsMarket}
+                market={isVariantView ? variantStatsMarket : canonicalStatsMarket}
             />
 
             {!isVariantView && <AssetMarketsOverviewSection assetId={canonicalAssetId} />}
