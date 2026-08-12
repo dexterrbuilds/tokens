@@ -1,5 +1,8 @@
 import 'server-only';
 
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
 /**
  * Minimal Cloud Run client for the admin app (admin + assets services).
  *
@@ -12,6 +15,12 @@ import 'server-only';
  *    `GCP_ADMIN_INVOKER_SA`.
  * 2. Legacy shared bearer (`TOKENS_CLOUDRUN_AUTH_TOKEN`) — local dev only; the
  *    shared bearer must not be configured on the deployed Vercel project.
+ *
+ * Local development may set `TOKENS_CLOUDRUN_LOCAL_GCLOUD_AUTH=true` to put a
+ * short-lived gcloud user identity token in `x-serverless-authorization` for
+ * the Cloud Run IAM layer while retaining the shared bearer in `authorization`
+ * for the application layer. This lets the local Next.js app use the deployed
+ * services (and their Cloud SQL database) without copying DATABASE_URL.
  *
  * Either way the Clerk-session-verified caller travels in the base64
  * `x-tokens-identity` header (same wire contract as apps/api's client).
@@ -28,6 +37,7 @@ const SERVICE_URL_ENV: Record<'admin' | 'assets', string> = {
 };
 
 const STS_URL = 'https://sts.googleapis.com/v1/token';
+const execFileAsync = promisify(execFile);
 
 export class CloudRunCallError extends Error {
     constructor(
@@ -59,6 +69,10 @@ const idTokenCache = new Map<string, CachedIdToken>();
 
 function isWifConfigured(): boolean {
     return Boolean(process.env.GCP_WIF_AUDIENCE?.trim() && process.env.GCP_ADMIN_INVOKER_SA?.trim());
+}
+
+function isLocalGcloudAuthConfigured(): boolean {
+    return process.env.TOKENS_CLOUDRUN_LOCAL_GCLOUD_AUTH?.trim().toLowerCase() === 'true';
 }
 
 async function fetchJson(url: string, init: RequestInit, context: string): Promise<Record<string, unknown>> {
@@ -124,11 +138,47 @@ async function mintGoogleIdToken(audience: string): Promise<string> {
     return idToken;
 }
 
-async function buildAuthorizationHeader(baseUrl: string): Promise<string> {
-    if (isWifConfigured()) {
-        return `Bearer ${await mintGoogleIdToken(baseUrl)}`;
+async function mintLocalGcloudIdToken(): Promise<string> {
+    if (process.env.NODE_ENV === 'production') {
+        throw new Error('CloudRun client: local gcloud auth is disabled in production');
     }
-    return `Bearer ${requireEnv('TOKENS_CLOUDRUN_AUTH_TOKEN')}`;
+
+    const now = Date.now();
+    const cacheKey = 'local-gcloud-user';
+    const cached = idTokenCache.get(cacheKey);
+    if (cached && cached.expiresAtMs > now) return cached.token;
+
+    let stdout: string;
+    try {
+        const result = await execFileAsync('gcloud', ['auth', 'print-identity-token'], {
+            encoding: 'utf8',
+            timeout: 20_000,
+        });
+        stdout = result.stdout;
+    } catch (error) {
+        throw new Error(
+            `CloudRun client: local gcloud identity-token mint failed; run \`gcloud auth login\` and verify Cloud Run invoker access (${String(error)})`,
+        );
+    }
+
+    const idToken = stdout.trim();
+    if (!idToken) throw new Error('CloudRun client: gcloud returned no identity token');
+
+    idTokenCache.set(cacheKey, { token: idToken, expiresAtMs: now + ID_TOKEN_TTL_MS });
+    return idToken;
+}
+
+async function buildAuthHeaders(baseUrl: string): Promise<Record<string, string>> {
+    if (isWifConfigured()) {
+        return { authorization: `Bearer ${await mintGoogleIdToken(baseUrl)}` };
+    }
+    if (isLocalGcloudAuthConfigured()) {
+        return {
+            authorization: `Bearer ${requireEnv('TOKENS_CLOUDRUN_AUTH_TOKEN')}`,
+            'x-serverless-authorization': `Bearer ${await mintLocalGcloudIdToken()}`,
+        };
+    }
+    return { authorization: `Bearer ${requireEnv('TOKENS_CLOUDRUN_AUTH_TOKEN')}` };
 }
 
 export async function callCloudRun<T>(
@@ -141,9 +191,9 @@ export async function callCloudRun<T>(
 ): Promise<T> {
     const base = requireEnv(SERVICE_URL_ENV[service]).replace(/\/$/, '');
 
-    let authorization: string;
+    let authHeaders: Record<string, string>;
     try {
-        authorization = await buildAuthorizationHeader(base);
+        authHeaders = await buildAuthHeaders(base);
     } catch (err) {
         throw new CloudRunCallError(`CloudRun ${kind} ${service}.${name} auth failed: ${String(err)}`, service, name);
     }
@@ -156,7 +206,7 @@ export async function callCloudRun<T>(
             signal: controller.signal,
             headers: {
                 'content-type': 'application/json',
-                authorization,
+                ...authHeaders,
                 'x-tokens-identity': Buffer.from(JSON.stringify(identity), 'utf8').toString('base64'),
             },
             body: JSON.stringify(args),
