@@ -52,7 +52,7 @@ function createDeletedRefChecker(cache: Map<string, boolean>) {
 
             const deletedRefs = yield* Effect.tryPromise(() =>
                 listDeletedRefs({ refs: [normalizedRef] }),
-            ).pipe(Effect.catchAll(() => Effect.succeed([] as string[])));
+            ).pipe(Effect.catch(() => Effect.succeed([] as string[])));
             const isDeleted = deletedRefs.includes(normalizedRef);
             cache.set(normalizedRef, isDeleted);
             return isDeleted;
@@ -67,7 +67,7 @@ function resolveKnownMintRef(
 ) {
     return Effect.gen(function* () {
         const variant = yield* Effect.tryPromise(() => assetVariantsGetByMint({ mint })).pipe(
-            Effect.catchAll(() => Effect.succeed(null)),
+            Effect.catch(() => Effect.succeed(null)),
         );
         if (variant) {
             if (looksLikeSolanaMintAddress(variant.assetId)) {

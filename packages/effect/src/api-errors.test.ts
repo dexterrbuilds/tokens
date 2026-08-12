@@ -11,14 +11,14 @@ class FakeDownstreamError extends Error {
 }
 
 describe('toApiErrorInfo', () => {
-    it('unwraps the cause from UnknownException', async () => {
+    it('unwraps the cause from UnknownError', async () => {
         const wrapped = await Effect.runPromise(
             Effect.tryPromise(() => Promise.reject(new Error('write CONNECTION_CLOSED 172.20.2.3:5432'))).pipe(
                 Effect.flip,
             ),
         );
         const info = toApiErrorInfo(wrapped);
-        expect(info._tag).toBe('UnknownException');
+        expect(info._tag).toBe('UnknownError');
         expect(info.message).toBe('write CONNECTION_CLOSED 172.20.2.3:5432');
     });
 
@@ -48,34 +48,34 @@ describe('toApiErrorInfo', () => {
 
     it('surfaces the Error subclass name as the causeTag when unwrapping', () => {
         const original = new FakeDownstreamError('downstream timed out after 4000ms');
-        const wrapped = new Cause.UnknownException(original);
+        const wrapped = new Cause.UnknownError(original, 'An unknown error occurred');
 
         const info = toApiErrorInfo(wrapped);
-        expect(info._tag).toBe('UnknownException');
+        expect(info._tag).toBe('UnknownError');
         expect(info.message).toBe('downstream timed out after 4000ms');
         expect(info.details).toEqual({ causeTag: 'FakeDownstreamError' });
     });
 
-    it('surfaces the innermost message through nested UnknownException chains', () => {
+    it('surfaces the innermost message through nested UnknownError chains', () => {
         const original = new FakeDownstreamError('inner failure');
-        const wrapped = new Cause.UnknownException(new Cause.UnknownException(original));
+        const wrapped = new Cause.UnknownError(new Cause.UnknownError(original, 'An unknown error occurred'), 'An unknown error occurred');
 
         const info = toApiErrorInfo(wrapped);
-        expect(info._tag).toBe('UnknownException');
+        expect(info._tag).toBe('UnknownError');
         expect(info.message).toBe('inner failure');
     });
 
-    it('unwraps UnknownException wrapping a non-Error value', () => {
-        const wrapped = new Cause.UnknownException('plain string reason');
+    it('unwraps UnknownError wrapping a non-Error value', () => {
+        const wrapped = new Cause.UnknownError('plain string reason', 'An unknown error occurred');
         const info = toApiErrorInfo(wrapped);
-        expect(info._tag).toBe('UnknownException');
+        expect(info._tag).toBe('UnknownError');
         expect(info.message).toBe('plain string reason');
     });
 
-    it('keeps the generic message when UnknownException wraps nothing useful', () => {
-        const wrapped = new Cause.UnknownException(undefined);
+    it('keeps the generic message when UnknownError wraps nothing useful', () => {
+        const wrapped = new Cause.UnknownError(undefined, 'An unknown error occurred');
         const info = toApiErrorInfo(wrapped);
-        expect(info._tag).toBe('UnknownException');
+        expect(info._tag).toBe('UnknownError');
         expect(info.message).toBe('An unknown error occurred');
     });
 
@@ -99,15 +99,15 @@ describe('toApiErrorInfo', () => {
 
 describe('httpStatusForError', () => {
     it('maps wrapped downstream errors to 500', () => {
-        const wrapped = new Cause.UnknownException(new FakeDownstreamError('timeout'));
+        const wrapped = new Cause.UnknownError(new FakeDownstreamError('timeout'), 'An unknown error occurred');
         expect(httpStatusForError(wrapped)).toBe(500);
     });
 
-    it('keeps 500 for UnknownException regardless of the inner tag', () => {
+    it('keeps 500 for UnknownError regardless of the inner tag', () => {
         // Unwrapping surfaces the cause in message/details but does not re-map
         // the outer tag — a promise-thrown typed error is still a defect-shaped
         // failure, not a deliberate typed failure.
-        const wrapped = new Cause.UnknownException({ _tag: 'BadRequestError', message: 'bad input' });
+        const wrapped = new Cause.UnknownError({ _tag: 'BadRequestError', message: 'bad input' }, 'An unknown error occurred');
         expect(httpStatusForError(wrapped)).toBe(500);
     });
 });

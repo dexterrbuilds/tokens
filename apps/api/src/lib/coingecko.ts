@@ -136,7 +136,7 @@ async function getGlobalTokenStatsImpl(coingeckoId: string): Promise<GlobalToken
                     links: extractLinks(links),
                 } satisfies GlobalTokenStats;
             }),
-            Effect.catchAll(error => {
+            Effect.catch(error => {
                 if (error instanceof UpstreamHttpError && error.status === 404) {
                     console.warn('CoinGecko coin not found', { coingeckoId });
                     return Effect.succeed(null);

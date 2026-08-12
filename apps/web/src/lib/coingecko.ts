@@ -149,7 +149,7 @@ async function getGlobalTokenStatsImpl(coingeckoId: string): Promise<GlobalToken
                     links: extractLinks(links),
                 } satisfies GlobalTokenStats;
             }),
-            Effect.catchAll(error => {
+            Effect.catch(error => {
                 // Missing CoinGecko IDs are expected for some registry entries; don't spam the console.
                 if (error instanceof UpstreamHttpError && error.status === 404) {
                     return Effect.succeed(null);

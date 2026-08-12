@@ -118,7 +118,7 @@ export function fetchJson<T = unknown>(
                             message: `Failed to read ${args.service} response body`,
                             cause: error instanceof Error ? error.message : String(error),
                         }),
-                }).pipe(Effect.catchAll(() => Effect.succeed('')));
+                }).pipe(Effect.catch(() => Effect.succeed('')));
 
                 return bodyEffect.pipe(
                     Effect.flatMap(body =>
@@ -148,20 +148,19 @@ export function fetchJson<T = unknown>(
 }
 
 export function fetchJsonWithRetry<T = unknown>(
-    args: FetchJsonArgs & { maxRetries?: number; baseDelay?: Duration.DurationInput },
+    args: FetchJsonArgs & { maxRetries?: number; baseDelay?: Duration.Input },
 ): Effect.Effect<T, RateLimitedError | UpstreamHttpError | FetchFailedError | JsonParseError> {
     const maxRetries = Math.max(0, args.maxRetries ?? 3);
     const baseDelay = args.baseDelay ?? '200 millis';
 
-    const schedule = Schedule.whileInput(
-        Schedule.intersect(Schedule.exponential(baseDelay), Schedule.recurs(maxRetries)),
-        isRetryableFetchError,
-    );
-
     const started = Date.now();
     const endpoint = extractEndpoint(args.url);
 
-    return Effect.retry(fetchJson<T>(args), schedule).pipe(
+    return Effect.retry(fetchJson<T>(args), {
+        while: isRetryableFetchError,
+        times: maxRetries,
+        schedule: Schedule.exponential(baseDelay),
+    }).pipe(
         Effect.tap(() =>
             Effect.sync(() => emitExternalCall({
                 provider: args.service,

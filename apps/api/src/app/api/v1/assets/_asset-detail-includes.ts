@@ -188,7 +188,7 @@ export function loadProfileInclude(params: {
             ...(description ? { description } : {}),
             ...(links ? { links } : {}),
         } satisfies GlobalTokenStats);
-    }).pipe(Effect.catchAll(error => Effect.succeed(includeError('error', toMessage(error)))));
+    }).pipe(Effect.catch(error => Effect.succeed(includeError('error', toMessage(error)))));
 }
 
 export function loadRiskInclude(params: {
@@ -258,7 +258,7 @@ export function loadMarketsInclude(
             offset,
             limit,
         } satisfies AssetMarketsInclude);
-    }).pipe(Effect.catchAll(error => Effect.succeed(includeError('error', toMessage(error)))));
+    }).pipe(Effect.catch(error => Effect.succeed(includeError('error', toMessage(error)))));
 }
 
 export function loadOhlcvInclude(
@@ -339,7 +339,7 @@ export function loadOhlcvInclude(
         }
 
         return includeOk(candles);
-    }).pipe(Effect.catchAll(error => Effect.succeed(includeError('error', toMessage(error)))));
+    }).pipe(Effect.catch(error => Effect.succeed(includeError('error', toMessage(error)))));
 }
 
 export function loadStockOhlcvInclude(params: {
@@ -391,5 +391,5 @@ export function loadStockOhlcvInclude(params: {
         }
 
         return includeOk(candles);
-    }).pipe(Effect.catchAll(error => Effect.succeed(includeError('error', toMessage(error)))));
+    }).pipe(Effect.catch(error => Effect.succeed(includeError('error', toMessage(error)))));
 }

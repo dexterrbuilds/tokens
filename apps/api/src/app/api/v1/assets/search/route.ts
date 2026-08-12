@@ -376,7 +376,7 @@ export const GET = route(
                     coingeckoIdsToFetch.map(id =>
                         Effect.tryPromise(() => coingeckoGetCoinById({ id })).pipe(
                             Effect.map(coin => [id, coin] as const),
-                            Effect.catchAll(() => Effect.succeed([id, null] as const)),
+                            Effect.catch(() => Effect.succeed([id, null] as const)),
                         ),
                     ),
                     // Avoid bursting Convex queries at scale.

@@ -62,7 +62,7 @@ export const GET = route(
 
                     const deletedRefs = yield* Effect.tryPromise(() =>
                         listDeletedRefs({ refs: [normalizedRef] }),
-                    ).pipe(Effect.catchAll(() => Effect.succeed([] as string[])));
+                    ).pipe(Effect.catch(() => Effect.succeed([] as string[])));
                     const isDeleted = deletedRefs.includes(normalizedRef);
                     deletedRefCache.set(normalizedRef, isDeleted);
                     return isDeleted;

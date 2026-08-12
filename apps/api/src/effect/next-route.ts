@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { Cause, Chunk, Effect } from 'effect';
+import { Cause, Effect } from 'effect';
 import { after, NextResponse } from 'next/server';
 
 import { authenticateApiKey, logApiRequest } from '@/lib/cloudrun';
@@ -156,7 +156,7 @@ function requirePlatformAuth(request: Request) {
         if (rawKey) {
             const keyHash = yield* Effect.tryPromise(() => sha256Hex(rawKey));
             const cachedAuth = yield* Effect.tryPromise(() => getCachedPlatformAuth(keyHash)).pipe(
-                Effect.catchAll(() => Effect.succeed(null)),
+                Effect.catch(() => Effect.succeed(null)),
             );
             if (cachedAuth) return cachedAuth;
 
@@ -175,7 +175,7 @@ function requirePlatformAuth(request: Request) {
             } satisfies PlatformAuthContext;
 
             yield* Effect.tryPromise(() => cachePlatformAuth(keyHash, authContext)).pipe(
-                Effect.catchAll(() => Effect.succeed(undefined)),
+                Effect.catch(() => Effect.succeed(undefined)),
             );
 
             return authContext;
@@ -477,7 +477,7 @@ export function route<T, Ctx = unknown>(
                           // Fail open: only RateLimitedError (a real 429) blocks the request.
                           // Any other failure (Redis down, missing env, timeout) is logged as a
                           // degradation metric and the request proceeds without limit metadata.
-                          Effect.catchAll(error =>
+                          Effect.catch(error =>
                               error instanceof RateLimitedError
                                   ? Effect.fail(error)
                                   : Effect.sync(() => {
@@ -557,7 +557,7 @@ export function route<T, Ctx = unknown>(
             return res;
         }
 
-        const failures = Chunk.toArray(Cause.failures(exit.cause));
+        const failures = exit.cause.reasons.filter(Cause.isFailReason).map(reason => reason.error);
         const firstFailure = failures[0];
 
         if (firstFailure !== undefined) {

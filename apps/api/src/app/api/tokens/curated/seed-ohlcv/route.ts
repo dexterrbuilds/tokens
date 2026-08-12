@@ -143,7 +143,7 @@ export const POST = route((request: Request) =>
 
                 return { address, ok: true, stats };
             }).pipe(
-                Effect.catchAll(() =>
+                Effect.catch(() =>
                     Effect.succeed({
                         address,
                         ok: false,

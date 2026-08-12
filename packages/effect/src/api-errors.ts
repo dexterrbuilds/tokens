@@ -101,9 +101,9 @@ export function toApiErrorInfo(error: unknown): ApiErrorInfo {
         const details = 'details' in error ? error.details : undefined;
 
         if (tag && message) {
-            // Effect.tryPromise wraps thrown errors in UnknownException with a
+            // Effect.tryPromise wraps thrown errors in Cause.UnknownError with a
             // generic message; surface the underlying cause or the log is useless.
-            if (tag === 'UnknownException') {
+            if (tag === 'UnknownError') {
                 const cause = 'error' in error ? error.error : 'cause' in error ? error.cause : undefined;
                 if (cause !== undefined && cause !== error) {
                     const causeInfo = toApiErrorInfo(cause);

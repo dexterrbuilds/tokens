@@ -75,7 +75,7 @@ async function webacyGetJson<T>(url: string, apiKey: string): Promise<WebacyApiR
             maxRetries: 2,
         }).pipe(
             Effect.map(data => ({ ok: true, data }) as const),
-            Effect.catchAll(error => Effect.succeed(toWebacyApiError(error))),
+            Effect.catch(error => Effect.succeed(toWebacyApiError(error))),
         ),
     );
 }

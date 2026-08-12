@@ -134,7 +134,7 @@ export function withStaleFallback<A extends Record<string, unknown>, E, R>(
     type Out = A | (A & { stale: true; staleCachedAt: number });
 
     const readStale = Effect.tryPromise(() => readLastGood(options)).pipe(
-        Effect.catchAll(() => Effect.succeed(null)),
+        Effect.catch(() => Effect.succeed(null)),
     );
 
     const asStale = (envelope: StaleEnvelope): Out => ({
@@ -166,7 +166,7 @@ export function withStaleFallback<A extends Record<string, unknown>, E, R>(
             }
 
             return Effect.tryPromise(() => writeLastGood(options, payload)).pipe(
-                Effect.catchAll(error => {
+                Effect.catch(error => {
                     console.error('Stale-response cache: write failed', {
                         operation: options.operation,
                         cacheKey: options.cacheKey,
@@ -177,7 +177,7 @@ export function withStaleFallback<A extends Record<string, unknown>, E, R>(
                 Effect.as(payload),
             );
         }),
-        Effect.catchAll(error => {
+        Effect.catch(error => {
             // Never mask client errors (4xx) with stale data — only degrade on
             // server-side failures.
             if (httpStatusForError(error) < 500) return Effect.fail(error);

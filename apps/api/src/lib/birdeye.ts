@@ -446,7 +446,7 @@ export async function getTokensByAddresses(addresses: readonly string[]): Promis
             uniqueAddresses.map(address =>
                 fetchTokenOverview(apiKey, address).pipe(
                     Effect.ensuring(Effect.sleep('200 millis')),
-                    Effect.catchAll(() => Effect.succeed(null)),
+                    Effect.catch(() => Effect.succeed(null)),
                     Effect.map(overview => (overview ? tokenOverviewToToken(overview) : null)),
                 ),
             ),

@@ -119,7 +119,7 @@ export function apiJson<T = unknown>(
                         message: 'Failed to read API response body',
                         cause: error instanceof Error ? error.message : String(error),
                     }),
-            }).pipe(Effect.catchAll(() => Effect.succeed('')));
+            }).pipe(Effect.catch(() => Effect.succeed('')));
 
             return bodyTextEffect.pipe(
                 Effect.flatMap(bodyText => {

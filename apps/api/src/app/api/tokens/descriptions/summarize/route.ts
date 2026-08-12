@@ -239,7 +239,7 @@ export const POST = route((request: Request) =>
 
                 return resultOk(address, summary);
             }).pipe(
-                Effect.catchAll(error =>
+                Effect.catch(error =>
                     Effect.succeed(resultError(address, error instanceof Error ? error.message : String(error))),
                 ),
             );

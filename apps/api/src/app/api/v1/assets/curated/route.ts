@@ -293,7 +293,7 @@ export const GET = route(
                         : {}),
                 }),
             ).pipe(
-                Effect.retry(Schedule.intersect(Schedule.exponential('250 millis'), Schedule.recurs(1))),
+                Effect.retry({ schedule: Schedule.exponential('250 millis'), times: 1 }),
                 tapErrorAndDefault<CuratedPrefetchResult | null>('assets.curated.composite', null, { listId }),
             );
 
@@ -316,7 +316,7 @@ export const GET = route(
                         chunkArray(rawAssetIds, 500).map(chunk =>
                             Effect.tryPromise(() =>
                                 listDeletedRefs({ refs: chunk }),
-                            ).pipe(Effect.catchAll(() => Effect.succeed([] as string[]))),
+                            ).pipe(Effect.catch(() => Effect.succeed([] as string[]))),
                         ),
                         { concurrency: 2 },
                     )).flat()

@@ -673,7 +673,7 @@ export const GET = route(
                         tokenMarketChunks.map(chunk =>
                             Effect.tryPromise(() =>
                                 tokenMarketsGetTopMarketsByMints({ mints: chunk }),
-                            ).pipe(Effect.catchAll(() => Effect.succeed([] as TokenMarketTopRow[]))),
+                            ).pipe(Effect.catch(() => Effect.succeed([] as TokenMarketTopRow[]))),
                         ),
                         { concurrency: CLOUDRUN_BULK_QUERY_CONCURRENCY },
                     );

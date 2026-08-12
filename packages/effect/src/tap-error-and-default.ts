@@ -13,7 +13,7 @@ export function tapErrorAndDefault<A>(
 ): <B, R>(effect: Effect.Effect<B, unknown, R>) => Effect.Effect<B | A, never, R> {
     return <B, R>(effect: Effect.Effect<B, unknown, R>) =>
         effect.pipe(
-            Effect.catchAll(error => {
+            Effect.catch(error => {
                 if (shouldEscalate(error)) return Effect.die(error);
 
                 const info = toApiErrorInfo(error);
