@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { Effect } from 'effect';
 
 import type { RedisClient, RedisPipeline } from '@/lib/redis';
 import { SLIDING_WINDOW_LIMIT_SCRIPT } from '@/lib/redis/lua';
@@ -63,13 +64,13 @@ describe('slidingWindowLimit', () => {
             onCall: () => [10, 100] as [number, number],
         });
 
-        const result = await slidingWindowLimit({
+        const result = await Effect.runPromise(slidingWindowLimit({
             redis,
             identifier: 'key:abc',
             tokens: 100,
             windowSeconds: 10,
             now: 30_000, // currentWindow = 30000/10000 = 3
-        });
+        }));
 
         expect(calls.length).toBe(1);
         const call = calls[0]!;
@@ -103,13 +104,13 @@ describe('slidingWindowLimit', () => {
             },
         });
 
-        const result = await slidingWindowLimit({
+        const result = await Effect.runPromise(slidingWindowLimit({
             redis,
             identifier: 'key:zzz',
             tokens: 50,
             windowSeconds: 1,
             now: 5_500,
-        });
+        }));
 
         expect(calls.length).toBe(2);
         expect(calls[0]!.method).toBe('evalsha');
@@ -125,13 +126,13 @@ describe('slidingWindowLimit', () => {
             onCall: () => [-1, 10] as [number, number],
         });
 
-        const result = await slidingWindowLimit({
+        const result = await Effect.runPromise(slidingWindowLimit({
             redis,
             identifier: 'key:x',
             tokens: 10,
             windowSeconds: 5,
             now: 1_000,
-        });
+        }));
 
         expect(result.success).toBe(false);
         expect(result.remaining).toBe(0); // clamped to >= 0
@@ -146,15 +147,18 @@ describe('slidingWindowLimit', () => {
 
         let threw = false;
         try {
-            await slidingWindowLimit({
+            await Effect.runPromise(slidingWindowLimit({
                 redis,
                 identifier: 'key:y',
                 tokens: 1,
                 windowSeconds: 1,
-            });
+            }));
         } catch (err) {
             threw = true;
-            expect((err as Error).message).toBe('ECONNREFUSED');
+            const redisError = err as { _tag: string; command: string; cause?: string };
+            expect(redisError._tag).toBe('RedisCommandError');
+            expect(redisError.command).toBe('evalsha');
+            expect(redisError.cause).toBe('ECONNREFUSED');
         }
         expect(threw).toBe(true);
         expect(calls.length).toBe(1); // single EVALSHA attempt, no EVAL fallback

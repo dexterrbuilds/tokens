@@ -1,4 +1,7 @@
-import { getCloudRunClient } from './client';
+import { Effect } from 'effect';
+
+import { cloudRunMutation, cloudRunQuery } from './client';
+import type { CloudRunError } from './errors';
 
 /**
  * Platform API-key auth + usage logging on the authenticated `/v1` hot path
@@ -19,8 +22,10 @@ export interface AuthenticateApiKeyResult {
     };
 }
 
-export async function authenticateApiKey(keyHash: string): Promise<AuthenticateApiKeyResult | null> {
-    return getCloudRunClient().query<AuthenticateApiKeyResult | null>('usage', 'apiKeysAuthenticate', {
+export function authenticateApiKey(
+    keyHash: string,
+): Effect.Effect<AuthenticateApiKeyResult | null, CloudRunError> {
+    return cloudRunQuery<AuthenticateApiKeyResult | null>('usage', 'apiKeysAuthenticate', {
         keyHash,
     });
 }
@@ -38,6 +43,6 @@ export interface LogApiRequestArgs {
     errorTag?: string;
 }
 
-export async function logApiRequest(args: LogApiRequestArgs): Promise<void> {
-    await getCloudRunClient().mutation('usage', 'logApiRequest', { ...args });
+export function logApiRequest(args: LogApiRequestArgs): Effect.Effect<void, CloudRunError> {
+    return cloudRunMutation('usage', 'logApiRequest', { ...args }).pipe(Effect.asVoid);
 }

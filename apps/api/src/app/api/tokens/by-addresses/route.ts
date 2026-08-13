@@ -53,9 +53,7 @@ export const GET = route(
 
             if (addresses.length === 0) return { tokens: [] satisfies TokenByAddressResult[] };
 
-            const rows = yield* Effect.tryPromise(() =>
-                variantMarketsGetLatestByMints({ mints: addresses }),
-            );
+            const rows = yield* variantMarketsGetLatestByMints({ mints: addresses });
             const marketByMint = new Map<string, (typeof rows)[number]['market']>();
             for (const row of rows) marketByMint.set(row.mint, row.market);
 

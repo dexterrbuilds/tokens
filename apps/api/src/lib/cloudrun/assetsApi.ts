@@ -1,6 +1,9 @@
 import type { LoadAssetBaseForApiResult as HandlerLoadAssetBaseForApiResult } from '../../../../cloudrun-assets/src/handlers/assetsApi';
 
-import { getCloudRunClient } from './client';
+import type { Effect } from 'effect';
+
+import { cloudRunQuery } from './client';
+import type { CloudRunError } from './errors';
 
 export type LoadAssetBaseForApiArgs = {
     assetId: string;
@@ -16,10 +19,10 @@ export type LoadAssetBaseForApiArgs = {
 
 export type LoadAssetBaseForApiResult = HandlerLoadAssetBaseForApiResult;
 
-export async function loadAssetBaseForApi(
+export function loadAssetBaseForApi(
     args: LoadAssetBaseForApiArgs,
-): Promise<LoadAssetBaseForApiResult> {
-    return getCloudRunClient().query<LoadAssetBaseForApiResult>(
+): Effect.Effect<LoadAssetBaseForApiResult, CloudRunError> {
+    return cloudRunQuery<LoadAssetBaseForApiResult>(
         'assets',
         'assetsApiLoadAssetBaseForApi',
         { ...args },

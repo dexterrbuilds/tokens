@@ -1,3 +1,6 @@
+import { Effect } from 'effect';
+import { isShuttingDown } from '@tokens/cloudrun-shutdown';
+import { runJobPool } from '@tokens/effect/job-runner';
 import type { CronDeps, CronResult } from './crons';
 import { InvalidArgsError, parseExplicitTargets } from './crons';
 
@@ -70,11 +73,6 @@ export interface MiscCronDeps {
 }
 
 export type MiscJobHandler = (deps: MiscCronDeps, args: unknown) => Promise<CronResult>;
-
-function sleep(ms: number): Promise<void> {
-    if (ms <= 0) return Promise.resolve();
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
 
 function asObject(raw: unknown): Record<string, unknown> {
     if (raw === undefined || raw === null) return {};
@@ -164,62 +162,57 @@ export async function refreshStaleTokens(deps: MiscCronDeps, rawArgs: unknown): 
     const minAgeMs = clampInt(args.minAgeMs, 60_000, 10_000, 24 * 60 * 60_000);
     const concurrency = clampInt(args.concurrency, 2, 1, 5);
     const delayMs = clampInt(args.delayMs, 200, 0, 5_000);
+    const budgetMs = clampInt(args.budgetMs, 0, 0, 3_600_000);
 
     const start = deps.base.now();
     const beforeLastFetchedAt = start - minAgeMs;
     const addresses = await deps.repo.listStaleTokenAddresses(beforeLastFetchedAt, maxTokens);
 
     let refreshed = 0;
-    let failed = 0;
+    let softFailed = 0;
 
     if (addresses.length === 0) {
-        return { ok: true, processed: 0, durationMs: deps.base.now() - start, refreshed, failed };
+        return { ok: true, processed: 0, durationMs: deps.base.now() - start, refreshed, failed: 0 };
     }
 
-    let nextIndex = 0;
-    async function worker(): Promise<void> {
-        while (true) {
-            const idx = nextIndex;
-            if (idx >= addresses.length) return;
-            nextIndex += 1;
-            const address = addresses[idx]!;
-            try {
-                const overview = await deps.base.birdeye.fetchTokenOverview(address);
-                if (!overview) {
-                    failed += 1;
-                    continue;
-                }
-                const upsert = birdeyeOverviewToTokenUpsert(
-                    address,
-                    overview as unknown as Record<string, unknown>,
-                    start,
-                );
-                if (!upsert) {
-                    failed += 1;
-                    continue;
-                }
-                await deps.repo.upsertTokenFromBirdeye(upsert);
-                refreshed += 1;
-            } catch (err) {
-                failed += 1;
-                console.error(
-                    `[refreshStaleTokens] address=${address}`,
-                    err instanceof Error ? err.message : String(err),
-                );
-            } finally {
-                await sleep(delayMs);
-            }
-        }
-    }
+    const summary = await Effect.runPromise(
+        runJobPool({
+            label: 'refreshStaleTokens',
+            items: addresses,
+            concurrency,
+            delayMs,
+            ...(budgetMs > 0 ? { budgetMs } : {}),
+            shouldStop: isShuttingDown,
+            process: address =>
+                Effect.tryPromise(async () => {
+                    const overview = await deps.base.birdeye.fetchTokenOverview(address);
+                    if (!overview) {
+                        softFailed += 1;
+                        return;
+                    }
+                    const upsert = birdeyeOverviewToTokenUpsert(
+                        address,
+                        overview as unknown as Record<string, unknown>,
+                        start,
+                    );
+                    if (!upsert) {
+                        softFailed += 1;
+                        return;
+                    }
+                    await deps.repo.upsertTokenFromBirdeye(upsert);
+                    refreshed += 1;
+                }),
+        }),
+    );
 
-    await Promise.all(Array.from({ length: Math.min(concurrency, addresses.length) }, () => worker()));
-
+    const failed = softFailed + summary.failed;
     return {
-        ok: true,
+        ok: !(summary.attempted > 0 && refreshed === 0 && failed >= summary.attempted),
         processed: addresses.length,
         durationMs: deps.base.now() - start,
         refreshed,
         failed,
+        ...(summary.partial ? { partial: true } : {}),
     };
 }
 
@@ -232,6 +225,7 @@ export async function refreshCuratedTokenMarkets(deps: MiscCronDeps, rawArgs: un
     const delayMs = clampInt(args.delayMs, 200, 0, 5_000);
     const maxMarketsPerMint = clampInt(args.maxMarketsPerMint, 20, 1, 20);
     const selectionWindowMs = clampInt(args.selectionWindowMs, 60_000, 10_000, 24 * 60 * 60_000);
+    const budgetMs = clampInt(args.budgetMs, 0, 0, 3_600_000);
 
     const explicitMints = parseExplicitTargets(args.mints, 'mints');
 
@@ -248,57 +242,46 @@ export async function refreshCuratedTokenMarkets(deps: MiscCronDeps, rawArgs: un
 
     let refreshed = 0;
     let skipped = 0;
-    let failed = 0;
 
     if (mints.length === 0) {
-        return { ok: true, processed: 0, durationMs: deps.base.now() - start, refreshed, skipped, failed };
+        return { ok: true, processed: 0, durationMs: deps.base.now() - start, refreshed, skipped, failed: 0 };
     }
 
-    let nextIndex = 0;
-    async function worker(): Promise<void> {
-        while (true) {
-            const idx = nextIndex;
-            if (idx >= mints.length) return;
-            nextIndex += 1;
-            const mint = mints[idx]!;
-            try {
-                const last = await deps.repo.getTokenMarketsLastFetchedAtByMint(mint);
-                if (last !== null && start - last < minAgeMs) {
-                    skipped += 1;
-                    continue;
-                }
-                const markets = await deps.birdeyeMarkets.fetchTokenMarkets({
-                    address: mint,
-                    limit: maxMarketsPerMint,
-                });
-                await deps.repo.upsertTokenMarketsLatest({ mint, markets, lastFetchedAt: start });
-                refreshed += 1;
-            } catch (err) {
-                failed += 1;
-                console.error(
-                    `[refreshCuratedTokenMarkets] mint=${mint}`,
-                    err instanceof Error ? err.message : String(err),
-                );
-                try {
-                    await deps.repo.touchTokenMarketsLatest(mint, start);
-                } catch {
-                    void 0;
-                }
-            } finally {
-                await sleep(delayMs);
-            }
-        }
-    }
-
-    await Promise.all(Array.from({ length: Math.min(concurrency, mints.length) }, () => worker()));
+    const summary = await Effect.runPromise(
+        runJobPool({
+            label: 'refreshCuratedTokenMarkets',
+            items: mints,
+            concurrency,
+            delayMs,
+            ...(budgetMs > 0 ? { budgetMs } : {}),
+            shouldStop: isShuttingDown,
+            process: mint =>
+                Effect.tryPromise(async () => {
+                    const last = await deps.repo.getTokenMarketsLastFetchedAtByMint(mint);
+                    if (last !== null && start - last < minAgeMs) {
+                        skipped += 1;
+                        return;
+                    }
+                    const markets = await deps.birdeyeMarkets.fetchTokenMarkets({
+                        address: mint,
+                        limit: maxMarketsPerMint,
+                    });
+                    await deps.repo.upsertTokenMarketsLatest({ mint, markets, lastFetchedAt: start });
+                    refreshed += 1;
+                }),
+            onItemError: mint =>
+                Effect.tryPromise(() => deps.repo.touchTokenMarketsLatest(mint, start)),
+        }),
+    );
 
     return {
-        ok: true,
+        ok: !(summary.attempted > 0 && refreshed === 0 && skipped === 0 && summary.failed >= summary.attempted),
         processed: mints.length,
         durationMs: deps.base.now() - start,
         refreshed,
         skipped,
-        failed,
+        failed: summary.failed,
+        ...(summary.partial ? { partial: true } : {}),
     };
 }
 

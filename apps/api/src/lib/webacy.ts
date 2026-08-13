@@ -1,3 +1,4 @@
+import { loadEnv } from './env';
 import { Effect } from 'effect';
 
 import { fetchJsonWithRetry } from '@tokens/effect';
@@ -180,7 +181,7 @@ export async function getWebacyToken(
     tokenAddress: string,
     chain: string = 'sol',
 ): Promise<WebacyApiResult<WebacyTokenResponse>> {
-    const apiKey = process.env.DD_API_KEY;
+    const apiKey = loadEnv().ddApiKey;
 
     if (!apiKey) {
         return {
@@ -261,7 +262,7 @@ export async function getWebacyHolderAnalysis(
     tokenAddress: string,
     chain: string = 'sol',
 ): Promise<WebacyApiResult<WebacyHolderAnalysisResponse>> {
-    const apiKey = process.env.DD_API_KEY;
+    const apiKey = loadEnv().ddApiKey;
 
     if (!apiKey) {
         return {
@@ -312,7 +313,7 @@ export async function getWebacyTradingLite(
     tokenAddress: string,
     chain: string = 'sol',
 ): Promise<WebacyApiResult<WebacyTradingLiteResponse>> {
-    const apiKey = process.env.DD_API_KEY;
+    const apiKey = loadEnv().ddApiKey;
 
     if (!apiKey) {
         return {

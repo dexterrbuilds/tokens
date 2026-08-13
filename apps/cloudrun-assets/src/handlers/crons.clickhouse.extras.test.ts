@@ -397,7 +397,7 @@ describe('refreshClickhouseVariantMarketMetrics', () => {
         expect(calls[0]!.lastFetchedAt).toBe(1_780_000_000_000);
     });
 
-    it('counts failed chunks without throwing', async () => {
+    it('counts failed chunks without throwing; total failure reports ok=false', async () => {
         const clickhouse = makeClickhouse({
             mintSnapshots: () => {
                 throw new Error('clickhouse-api HTTP 500');
@@ -407,7 +407,10 @@ describe('refreshClickhouseVariantMarketMetrics', () => {
             makeDeps(env, { clickhouse, curated: [SOL, USDC] }),
             { delayMs: 0 },
         );
-        expect(res.ok).toBe(true);
+        // Every chunk failed and nothing was updated -> total failure -> 500
+        // so Cloud Scheduler records the run as failed (retry_count is 0 for
+        // this 1-minute job; the next tick is the retry).
+        expect(res.ok).toBe(false);
         expect(res.updated).toBe(0);
         expect(res.failed).toBe(2);
     });
