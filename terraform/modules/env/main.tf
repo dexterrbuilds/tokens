@@ -213,7 +213,7 @@ module "scheduler_jobs" {
       attempt_deadline = "540s"
       # High-frequency job: the next scheduled tick is the retry; a 500 must not
       # stack scheduler retries on top of a 1-5 minute cadence.
-      retry_count      = 0
+      retry_count = 0
     },
     {
       name      = "refresh-stale-asset-variant-markets"
@@ -281,7 +281,7 @@ module "scheduler_jobs" {
       attempt_deadline = "300s"
       # High-frequency job: the next scheduled tick is the retry; a 500 must not
       # stack scheduler retries on top of a 1-5 minute cadence.
-      retry_count      = 0
+      retry_count = 0
     },
     {
       name      = "refresh-clickhouse-variant-market-metrics"
@@ -297,7 +297,7 @@ module "scheduler_jobs" {
       attempt_deadline = "180s"
       # High-frequency job: the next scheduled tick is the retry; a 500 must not
       # stack scheduler retries on top of a 1-5 minute cadence.
-      retry_count      = 0
+      retry_count = 0
     },
     {
       name      = "refresh-solana-clickhouse-trending-markets"
