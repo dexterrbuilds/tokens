@@ -1,9 +1,12 @@
 import 'server-only';
 
+import { Effect, Schedule } from 'effect';
 import { NextResponse } from 'next/server';
+import { FetchFailedError, mergeSignals, toApiErrorInfo } from '@tokens/effect';
 
 type NextFetchInit = RequestInit & { next?: { revalidate?: number } };
 const LOCAL_API_ORIGIN = 'http://localhost:3002';
+const PROXY_TIMEOUT = '20 seconds';
 
 function normalizeOrigin(origin: string): string {
     return origin.trim().replace(/\/$/, '');
@@ -87,6 +90,8 @@ export async function proxyPlatformRequest(
     init?: NextFetchInit,
     cacheSeconds?: ProxyCacheSeconds,
 ): Promise<Response> {
+    // Env misconfiguration keeps throwing synchronously — the route-level
+    // try/catch maps it to the same 500 envelope it always did.
     const apiOrigin = getApiOrigin(request.url);
     const platformKey = requirePlatformServiceKey();
 
@@ -101,30 +106,70 @@ export async function proxyPlatformRequest(
     const method = request.method.toUpperCase();
     const body = method === 'GET' || method === 'HEAD' ? undefined : await request.arrayBuffer();
 
-    const upstreamRes = await fetch(upstreamUrl, {
-        method,
-        headers,
-        body,
-        redirect: 'manual',
-        ...init,
-    });
+    const attempt = Effect.tryPromise({
+        try: (signal: AbortSignal) => {
+            const merged = mergeSignals(signal, request.signal);
+            return fetch(upstreamUrl, {
+                method,
+                headers,
+                body,
+                redirect: 'manual',
+                ...init,
+                signal: merged.signal,
+            }).finally(merged.cleanup);
+        },
+        catch: error =>
+            new FetchFailedError({
+                service: 'platform-proxy',
+                message: `Failed to proxy ${method} ${url.pathname}`,
+                cause: error instanceof Error ? error.message : String(error),
+            }),
+    }).pipe(
+        Effect.flatMap(upstreamRes => {
+            const responseHeaders = new Headers(upstreamRes.headers);
+            stripUnsupportedUpstreamHeaders(responseHeaders);
+            stripProxyUnsafeResponseHeaders(responseHeaders);
+            applyProxyCacheControl(
+                responseHeaders,
+                method,
+                upstreamRes.status,
+                cacheSeconds ?? (init?.cache === 'no-store' ? 'no-store' : init?.next?.revalidate),
+            );
 
-    const responseHeaders = new Headers(upstreamRes.headers);
-    stripUnsupportedUpstreamHeaders(responseHeaders);
-    stripProxyUnsafeResponseHeaders(responseHeaders);
-    applyProxyCacheControl(
-        responseHeaders,
-        method,
-        upstreamRes.status,
-        cacheSeconds ?? (init?.cache === 'no-store' ? 'no-store' : init?.next?.revalidate),
+            return Effect.tryPromise({
+                try: () => upstreamRes.arrayBuffer(),
+                catch: error =>
+                    new FetchFailedError({
+                        service: 'platform-proxy',
+                        message: `Failed to read upstream body for ${method} ${url.pathname}`,
+                        cause: error instanceof Error ? error.message : String(error),
+                    }),
+            }).pipe(
+                Effect.map(
+                    bodyBytes =>
+                        new Response(bodyBytes, {
+                            status: upstreamRes.status,
+                            headers: responseHeaders,
+                        }),
+                ),
+            );
+        }),
+        // A hung upstream previously hung this route indefinitely.
+        Effect.timeout(PROXY_TIMEOUT),
     );
 
-    const bodyBytes = await upstreamRes.arrayBuffer();
+    // GETs are replay-safe: retry once on network failure only — HTTP error
+    // statuses must pass through verbatim, and mutations are never replayed.
+    const withRetry =
+        method === 'GET'
+            ? Effect.retry(attempt, {
+                  while: error => error._tag === 'FetchFailedError',
+                  times: 1,
+                  schedule: Schedule.exponential('100 millis').pipe(Schedule.jittered),
+              })
+            : attempt;
 
-    return new Response(bodyBytes, {
-        status: upstreamRes.status,
-        headers: responseHeaders,
-    });
+    return Effect.runPromise(withRetry);
 }
 
 export function proxyPlatformGet(request: Request): Promise<Response> {
@@ -153,7 +198,8 @@ export function proxyPlatformGet(request: Request): Promise<Response> {
 }
 
 export function proxyPlatformError(error: unknown): Response {
-    console.error('Platform proxy failed', error);
+    const info = toApiErrorInfo(error);
+    console.error('Platform proxy failed', JSON.stringify({ tag: info._tag, message: info.message }));
     return NextResponse.json(
         {
             error: {

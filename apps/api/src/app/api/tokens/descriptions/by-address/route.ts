@@ -11,7 +11,7 @@ export const GET = route(
             const rawAddress = (url.searchParams.get('address') ?? '').trim();
             const address = yield* decodeUnknownOrBadRequest(SolanaAddress, rawAddress, 'Invalid address');
 
-            return yield* Effect.tryPromise(() => tokenDescriptionSummariesGetByAddress({ address }));
+            return yield* tokenDescriptionSummariesGetByAddress({ address });
         }),
     { platform: { requiredScopes: ['internal:read'] } },
 );

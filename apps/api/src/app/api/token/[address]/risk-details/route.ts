@@ -61,9 +61,7 @@ export const GET = route(
             const { address: rawAddress } = yield* Effect.tryPromise(() => ctx.params);
             const address = yield* decodeUnknownOrBadRequest(SolanaAddress, rawAddress, 'Invalid address');
 
-            const rows = yield* Effect.tryPromise(() =>
-                variantMarketsGetLatestByMints({ mints: [address] }),
-            );
+            const rows = yield* variantMarketsGetLatestByMints({ mints: [address] });
             const market = rows[0]?.market ?? null;
 
             const isStale = market ? Date.now() - market.lastFetchedAt > 60 * 60_000 : true;

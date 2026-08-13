@@ -46,7 +46,7 @@ export const GET = route(
             const results = yield* Effect.tryPromise(() =>
                 Promise.all(
                     ids.map(async id => {
-                        const doc = await coingeckoGetCoinById({ id });
+                        const doc = await Effect.runPromise(coingeckoGetCoinById({ id }));
                         const md = doc?.coin?.market_data;
 
                         const price = md?.current_price?.usd;

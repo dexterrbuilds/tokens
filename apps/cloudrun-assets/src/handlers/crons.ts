@@ -16,12 +16,8 @@ export interface CronResult {
     [extra: string]: unknown;
 }
 
-export class InvalidArgsError extends Error {
-    constructor(message: string) {
-        super(message);
-        this.name = 'InvalidArgsError';
-    }
-}
+export { InvalidArgsError } from '@tokens/cloudrun-shutdown/http-errors';
+import { InvalidArgsError } from '@tokens/cloudrun-shutdown/http-errors';
 
 export interface VariantMarketUpsertFromBirdeye {
     mint: string;
@@ -463,11 +459,6 @@ export interface CronDeps {
     rwaXyz?: RwaXyzClient;
     now: () => number;
     computeMarketScore?: (input: ComputedAssetRisk['marketScoreInput']) => unknown;
-}
-
-function sleep(ms: number): Promise<void> {
-    if (ms <= 0) return Promise.resolve();
-    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function asObject(raw: unknown): Record<string, unknown> {
@@ -1074,15 +1065,12 @@ export async function refreshCuratedAssetMarkets(deps: CronDeps, rawArgs: unknow
             refreshed += 1;
         } catch (err) {
             failed += 1;
-            console.error(
-                `[refreshCuratedAssetMarkets] asset=${assetId}`,
-                err instanceof Error ? err.message : String(err),
-            );
+            console.error(`[refreshCuratedAssetMarkets] asset=${assetId}`, err);
         }
     }
 
     return {
-        ok: true,
+        ok: !(staleAssetIds.length > 0 && refreshed === 0 && failed >= staleAssetIds.length),
         processed: staleAssetIds.length,
         durationMs: deps.now() - start,
         refreshed,
@@ -1394,6 +1382,7 @@ export async function refreshCuratedAssetRisk(deps: CronDeps, rawArgs: unknown):
     const concurrency = clampInt(args.concurrency, 2, 1, 5);
     const delayMs = clampInt(args.delayMs, 250, 0, 5_000);
     const selectionWindowMs = clampInt(args.selectionWindowMs, 6 * 60 * 60_000, 10_000, 24 * 60 * 60_000);
+    const budgetMs = clampInt(args.budgetMs, 0, 0, 3_600_000);
 
     const start = deps.now();
     if (!deps.webacy.isConfigured()) {
@@ -1417,29 +1406,30 @@ export async function refreshCuratedAssetRisk(deps: CronDeps, rawArgs: unknown):
 
     let refreshed = 0;
     let skipped = 0;
-    let failed = 0;
+    let softFailed = 0;
 
     if (mints.length === 0) {
-        return { ok: true, processed: 0, durationMs: deps.now() - start, refreshed, skipped, failed };
+        return { ok: true, processed: 0, durationMs: deps.now() - start, refreshed, skipped, failed: 0 };
     }
 
-    let nextIndex = 0;
-    async function worker(): Promise<void> {
-        while (true) {
-            const idx = nextIndex;
-            if (idx >= mints.length) return;
-            nextIndex += 1;
-            const mint = mints[idx]!;
-            try {
+    const summary = await Effect.runPromise(
+        runJobPool({
+            label: 'refreshCuratedAssetRisk',
+            items: mints,
+            concurrency,
+            delayMs,
+            ...(budgetMs > 0 ? { budgetMs } : {}),
+            shouldStop: isShuttingDown,
+            process: mint =>
+                Effect.tryPromise(async () => {
                 const variant = await deps.repo.findVariantByMint(mint);
                 if (!variant) {
                     skipped += 1;
-                    continue;
+                    return;
                 }
                 const last = await deps.repo.getAssetRiskLastFetchedAtByMint(mint);
                 if (minAgeMs > 0 && last !== null && start - last < minAgeMs) {
-                    skipped += 1;
-                    continue;
+                    return void (skipped += 1);
                 }
                 const all = await deps.webacy.fetchAll(mint);
 
@@ -1500,8 +1490,8 @@ export async function refreshCuratedAssetRisk(deps: CronDeps, rawArgs: unknown):
                             'all upstreams failed',
                         lastFetchedAt: start,
                     });
-                    failed += 1;
-                    continue;
+                    softFailed += 1;
+                    return;
                 }
 
                 const market = await deps.repo.findVariantMarketForRiskByMint(mint);
@@ -1532,27 +1522,19 @@ export async function refreshCuratedAssetRisk(deps: CronDeps, rawArgs: unknown):
                     lastFetchedAt: start,
                 });
                 refreshed += 1;
-            } catch (err) {
-                failed += 1;
-                console.error(
-                    `[refreshCuratedAssetRisk] mint=${mint}`,
-                    err instanceof Error ? err.message : String(err),
-                );
-            } finally {
-                await sleep(delayMs);
-            }
-        }
-    }
+                }),
+        }),
+    );
 
-    await Promise.all(Array.from({ length: Math.min(concurrency, mints.length) }, () => worker()));
-
+    const failed = softFailed + summary.failed;
     return {
-        ok: true,
+        ok: !(summary.attempted > 0 && refreshed === 0 && skipped === 0 && failed >= summary.attempted),
         processed: mints.length,
         durationMs: deps.now() - start,
         refreshed,
         skipped,
         failed,
+        ...(summary.partial ? { partial: true } : {}),
     };
 }
 
@@ -1824,6 +1806,7 @@ export async function refreshCuratedOhlcv(deps: CronDeps, rawArgs: unknown): Pro
     const delayMs = clampInt(args.delayMs, 200, 0, 5_000);
     const selectionWindowMs = clampInt(args.selectionWindowMs, 60_000, 10_000, 24 * 60 * 60_000);
     const upsertChunkSize = clampInt(args.upsertChunkSize, 500, 50, 2_000);
+    const budgetMs = clampInt(args.budgetMs, 0, 0, 3_600_000);
 
     const explicitMints = parseExplicitTargets(args.mints, 'mints');
 
@@ -1839,7 +1822,6 @@ export async function refreshCuratedOhlcv(deps: CronDeps, rawArgs: unknown): Pro
     }
 
     let refreshed = 0;
-    let failed = 0;
     let inserted = 0;
     let updated = 0;
     let skipped = 0;
@@ -1851,7 +1833,7 @@ export async function refreshCuratedOhlcv(deps: CronDeps, rawArgs: unknown): Pro
             durationMs: deps.now() - start,
             interval,
             refreshed,
-            failed,
+            failed: 0,
             inserted,
             updated,
             skipped,
@@ -1862,14 +1844,16 @@ export async function refreshCuratedOhlcv(deps: CronDeps, rawArgs: unknown): Pro
     const requestedFrom = Math.floor(start / 1000) - days * 24 * 60 * 60;
     const requestedTo = Math.floor(start / 1000);
 
-    let nextIndex = 0;
-    async function worker(): Promise<void> {
-        while (true) {
-            const idx = nextIndex;
-            if (idx >= mints.length) return;
-            nextIndex += 1;
-            const address = mints[idx]!;
-            try {
+    const summary = await Effect.runPromise(
+        runJobPool({
+            label: `refreshCuratedOhlcv:${interval}`,
+            items: mints,
+            concurrency,
+            delayMs,
+            ...(budgetMs > 0 ? { budgetMs } : {}),
+            shouldStop: isShuttingDown,
+            process: address =>
+                Effect.tryPromise(async () => {
                 const bounds = await deps.repo.getOhlcvBounds(address, interval);
                 const segments: Array<{ from: number; to: number }> = [];
                 if (bounds.minTime === null || bounds.maxTime === null) {
@@ -1884,7 +1868,7 @@ export async function refreshCuratedOhlcv(deps: CronDeps, rawArgs: unknown): Pro
                 }
                 if (segments.length === 0) {
                     skipped += 1;
-                    continue;
+                    return;
                 }
                 for (const segment of segments) {
                     const candles = await deps.birdeyeOhlcv.fetchOhlcv({
@@ -1901,30 +1885,21 @@ export async function refreshCuratedOhlcv(deps: CronDeps, rawArgs: unknown): Pro
                     }
                 }
                 refreshed += 1;
-            } catch (err) {
-                failed += 1;
-                console.error(
-                    `[refreshCuratedOhlcv] interval=${interval} address=${address}`,
-                    err instanceof Error ? err.message : String(err),
-                );
-            } finally {
-                await sleep(delayMs);
-            }
-        }
-    }
-
-    await Promise.all(Array.from({ length: Math.min(concurrency, mints.length) }, () => worker()));
+                }),
+        }),
+    );
 
     return {
-        ok: true,
+        ok: !(summary.attempted > 0 && refreshed === 0 && skipped === 0 && summary.failed >= summary.attempted),
         processed: mints.length,
         durationMs: deps.now() - start,
         interval,
         refreshed,
-        failed,
+        failed: summary.failed,
         inserted,
         updated,
         skipped,
+        ...(summary.partial ? { partial: true } : {}),
     };
 }
 

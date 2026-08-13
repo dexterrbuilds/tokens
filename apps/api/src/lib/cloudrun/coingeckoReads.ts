@@ -7,20 +7,23 @@ import type {
     CoingeckoTickersResult,
 } from '../../../../cloudrun-assets/src/handlers/coingeckoReads';
 
-import { getCloudRunClient } from './client';
+import type { Effect } from 'effect';
+
+import { cloudRunQuery } from './client';
+import type { CloudRunError } from './errors';
 
 export type GetCoinByIdArgs = { id: string };
 export type GetCoinByIdResult = CoingeckoCoinResult | null;
 
-export async function getCoinById(args: GetCoinByIdArgs): Promise<GetCoinByIdResult> {
-    return getCloudRunClient().query<GetCoinByIdResult>('assets', 'coingeckoReadsGetCoinById', { ...args });
+export function getCoinById(args: GetCoinByIdArgs): Effect.Effect<GetCoinByIdResult, CloudRunError> {
+    return cloudRunQuery<GetCoinByIdResult>('assets', 'coingeckoReadsGetCoinById', { ...args });
 }
 
 export type SearchCoinsArgs = { query: string; limit?: number };
 export type SearchCoinsResult = CoingeckoCoinSearchResult[];
 
-export async function searchCoins(args: SearchCoinsArgs): Promise<SearchCoinsResult> {
-    return getCloudRunClient().query<SearchCoinsResult>('assets', 'coingeckoReadsSearchCoins', { ...args });
+export function searchCoins(args: SearchCoinsArgs): Effect.Effect<SearchCoinsResult, CloudRunError> {
+    return cloudRunQuery<SearchCoinsResult>('assets', 'coingeckoReadsSearchCoins', { ...args });
 }
 
 export type OhlcvInterval = '1m' | '5m' | '15m' | '1H' | '4H' | '1D' | '1W';
@@ -33,17 +36,17 @@ export type ListOhlcvArgs = {
 };
 export type ListOhlcvResult = CoingeckoOhlcvRow[];
 
-export async function listOhlcv(args: ListOhlcvArgs): Promise<ListOhlcvResult> {
-    return getCloudRunClient().query<ListOhlcvResult>('assets', 'coingeckoReadsListOhlcv', { ...args });
+export function listOhlcv(args: ListOhlcvArgs): Effect.Effect<ListOhlcvResult, CloudRunError> {
+    return cloudRunQuery<ListOhlcvResult>('assets', 'coingeckoReadsListOhlcv', { ...args });
 }
 
 export type GetPriceLatestByCoinIdArgs = { coinId: string };
 export type GetPriceLatestByCoinIdResult = CoingeckoPriceSnapshot | null;
 
-export async function getPriceLatestByCoinId(
+export function getPriceLatestByCoinId(
     args: GetPriceLatestByCoinIdArgs,
-): Promise<GetPriceLatestByCoinIdResult> {
-    return getCloudRunClient().query<GetPriceLatestByCoinIdResult>(
+): Effect.Effect<GetPriceLatestByCoinIdResult, CloudRunError> {
+    return cloudRunQuery<GetPriceLatestByCoinIdResult>(
         'assets',
         'coingeckoReadsGetPriceLatestByCoinId',
         { ...args },
@@ -53,10 +56,10 @@ export async function getPriceLatestByCoinId(
 export type GetPriceLatestByCoinIdsArgs = { coinIds: string[] };
 export type GetPriceLatestByCoinIdsResult = CoingeckoPriceBatchEntry[];
 
-export async function getPriceLatestByCoinIds(
+export function getPriceLatestByCoinIds(
     args: GetPriceLatestByCoinIdsArgs,
-): Promise<GetPriceLatestByCoinIdsResult> {
-    return getCloudRunClient().query<GetPriceLatestByCoinIdsResult>(
+): Effect.Effect<GetPriceLatestByCoinIdsResult, CloudRunError> {
+    return cloudRunQuery<GetPriceLatestByCoinIdsResult>(
         'assets',
         'coingeckoReadsGetPriceLatestByCoinIds',
         { ...args },
@@ -66,10 +69,10 @@ export async function getPriceLatestByCoinIds(
 export type GetTickersLatestByCoinIdArgs = { coinId: string };
 export type GetTickersLatestByCoinIdResult = CoingeckoTickersResult | null;
 
-export async function getTickersLatestByCoinId(
+export function getTickersLatestByCoinId(
     args: GetTickersLatestByCoinIdArgs,
-): Promise<GetTickersLatestByCoinIdResult> {
-    return getCloudRunClient().query<GetTickersLatestByCoinIdResult>(
+): Effect.Effect<GetTickersLatestByCoinIdResult, CloudRunError> {
+    return cloudRunQuery<GetTickersLatestByCoinIdResult>(
         'assets',
         'coingeckoReadsGetTickersLatestByCoinId',
         { ...args },
