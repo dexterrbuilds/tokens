@@ -159,7 +159,7 @@ export function loadProfileInclude(params: {
         const id = (params.coingeckoId ?? '').trim();
         if (!id) return includeError('not_available', 'Profile not available for this asset');
 
-        const coinDoc = yield* Effect.tryPromise(() => coingeckoGetCoinById({ id }));
+        const coinDoc = yield* coingeckoGetCoinById({ id });
         if (!coinDoc || !coinDoc.coin) {
             yield* scheduleCoinMetadataWarm({ coinId: id });
             return includeError('not_found', 'Profile not available in cache');
@@ -272,14 +272,12 @@ export function loadOhlcvInclude(
     },
 ): Effect.Effect<AssetIncludeResult<OHLCVData[]>, never> {
     return Effect.gen(function* () {
-        const candles = yield* Effect.tryPromise(() =>
-            ohlcvList({
+        const candles = yield* ohlcvList({
                 address: params.primaryMint,
                 interval: params.interval,
                 from: params.from,
                 to: params.to,
-            }),
-        );
+            });
 
         const intervalSeconds = intervalToSeconds(params.interval);
         const expectedCount = Math.max(1, Math.floor((params.to - params.from) / Math.max(intervalSeconds, 1)) + 1);
@@ -302,14 +300,12 @@ export function loadOhlcvInclude(
                 const requestedDays = Math.max(1, Math.ceil((params.to - params.from) / (24 * 60 * 60)));
                 yield* scheduleCoingeckoOhlcvWarm({ coinId, interval: params.interval, days: requestedDays });
 
-                const cgCandles = yield* Effect.tryPromise(() =>
-                    coingeckoListOhlcv({
+                const cgCandles = yield* coingeckoListOhlcv({
                         coinId,
                         interval: params.interval,
                         from: params.from,
                         to: params.to,
-                    }),
-                );
+                    });
 
                 if (params.allowUnhealthyCoingeckoFallback === true) {
                     const shouldUseFallback = shouldUseCanonicalFallbackForUnhealthyVariant({
@@ -348,14 +344,12 @@ export function loadStockOhlcvInclude(params: {
     coingeckoId?: string;
 }): Effect.Effect<AssetIncludeResult<OHLCVData[]>, never> {
     return Effect.gen(function* () {
-        const candles = yield* Effect.tryPromise(() =>
-            stockOhlcvList({
+        const candles = yield* stockOhlcvList({
                 assetId: params.assetId,
                 interval: params.interval,
                 from: params.from,
                 to: params.to,
-            }),
-        );
+            });
 
         const intervalSeconds = intervalToSeconds(params.interval);
         const latestTime = candles.length > 0 ? (candles[candles.length - 1]?.time ?? null) : null;
@@ -372,14 +366,12 @@ export function loadStockOhlcvInclude(params: {
         if (candles.length === 0) {
             const coinId = (params.coingeckoId ?? '').trim();
             if (coinId) {
-                const cgCandles = yield* Effect.tryPromise(() =>
-                    coingeckoListOhlcv({
+                const cgCandles = yield* coingeckoListOhlcv({
                         coinId,
                         interval: params.interval,
                         from: params.from,
                         to: params.to,
-                    }),
-                );
+                    });
                 if (cgCandles.length > 0) {
                     const requestedDays = Math.max(1, Math.ceil((params.to - params.from) / (24 * 60 * 60)));
                     yield* scheduleCoingeckoOhlcvWarm({ coinId, interval: params.interval, days: requestedDays });

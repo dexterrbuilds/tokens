@@ -68,7 +68,7 @@ export const GET = route(
                 );
             }
 
-            const doc = yield* Effect.tryPromise(() => coingeckoGetTickersLatestByCoinId({ coinId }));
+            const doc = yield* coingeckoGetTickersLatestByCoinId({ coinId });
             const isStale = doc ? Date.now() - doc.lastFetchedAt > 6 * 60 * 60_000 : true;
             if (!doc || isStale) {
                 yield* scheduleTickersWarm(coinId);

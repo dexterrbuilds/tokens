@@ -110,7 +110,7 @@ async function loadExecutionQualityByMints(mints: string[]): Promise<Map<string,
 
     const out = new Map<string, VariantExecutionQualitySnapshot>();
     for (const chunk of Arr.chunksOf(uniqueMints, 250)) {
-        const rows = await variantFillQualityGetLatestByMints({ mints: chunk });
+        const rows = await Effect.runPromise(variantFillQualityGetLatestByMints({ mints: chunk }));
         for (const row of rows) {
             const snapshot = executionQualitySnapshotFromConvexFillQuality(row.fillQuality);
             if (snapshot) out.set(row.mint, snapshot);

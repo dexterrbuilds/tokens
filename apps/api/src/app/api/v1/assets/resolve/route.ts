@@ -60,9 +60,7 @@ export const GET = route(
                     const cached = deletedRefCache.get(normalizedRef);
                     if (cached !== undefined) return cached;
 
-                    const deletedRefs = yield* Effect.tryPromise(() =>
-                        listDeletedRefs({ refs: [normalizedRef] }),
-                    ).pipe(Effect.catch(() => Effect.succeed([] as string[])));
+                    const deletedRefs = yield* listDeletedRefs({ refs: [normalizedRef] }).pipe(Effect.catch(() => Effect.succeed([] as string[])));
                     const isDeleted = deletedRefs.includes(normalizedRef);
                     deletedRefCache.set(normalizedRef, isDeleted);
                     return isDeleted;
@@ -177,9 +175,7 @@ export const GET = route(
 
                 const stockInstrument =
                     assetDoc.category === 'equity'
-                        ? yield* Effect.tryPromise(() =>
-                              stockInstrumentsGetByAssetId({ assetId: assetDoc.assetId }),
-                          ).pipe(
+                        ? yield* stockInstrumentsGetByAssetId({ assetId: assetDoc.assetId }).pipe(
                               tapErrorAndDefault('assets.resolve.stockInstrument', null, {
                                   assetId: assetDoc.assetId,
                               }),
@@ -342,9 +338,7 @@ export const GET = route(
 
             const stockInstrument =
                 assetDoc.category === 'equity'
-                    ? yield* Effect.tryPromise(() =>
-                          stockInstrumentsGetByAssetId({ assetId: assetDoc.assetId }),
-                      ).pipe(tapErrorAndDefault('assets.resolve.stockInstrument', null, { assetId: assetDoc.assetId }))
+                    ? yield* stockInstrumentsGetByAssetId({ assetId: assetDoc.assetId }).pipe(tapErrorAndDefault('assets.resolve.stockInstrument', null, { assetId: assetDoc.assetId }))
                     : null;
 
             const marketRows = yield* variantMarketsGetLatestByMints({ mints: [variant.mint] }).pipe(tapErrorAndDefault('assets.resolve.variantMarket', [], { mint: variant.mint }));
