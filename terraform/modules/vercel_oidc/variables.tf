@@ -24,6 +24,16 @@ variable "vercel_project_id" {
   description = "Vercel project id (prj_...) of the admin app; only its tokens may federate."
 }
 
+variable "vercel_environment" {
+  type        = string
+  description = "Vercel OIDC environment claim allowed to federate (preview or production)."
+
+  validation {
+    condition     = contains(["preview", "production"], var.vercel_environment)
+    error_message = "vercel_environment must be either preview or production."
+  }
+}
+
 variable "admin_service_name" {
   type        = string
   description = "Cloud Run service name of the admin backend (e.g. tokens-admin-stg-us)."

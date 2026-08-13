@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { getVercelOidcToken } from '@vercel/oidc';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -8,7 +9,7 @@ import { promisify } from 'node:util';
  *
  * Auth for the hop to Cloud Run, in order of preference:
  * 1. Vercel OIDC → GCP Workload Identity Federation: exchange the request-time
- *    `VERCEL_OIDC_TOKEN` for a Google ID token minted as the dedicated invoker
+ *    Vercel OIDC token for a Google ID token minted as the dedicated invoker
  *    SA, with the target service URL as audience. Cloud Run IAM verifies it on
  *    the IAM-gated admin service; cloudrun-assets verifies it in-app against
  *    the same audience/SA pinning (`oidc.ts`). Requires `GCP_WIF_AUDIENCE` and
@@ -85,17 +86,19 @@ async function fetchJson(url: string, init: RequestInit, context: string): Promi
 }
 
 /**
- * VERCEL_OIDC_TOKEN → STS federated access token → SA-minted Google ID token
- * with the target service's URL as audience.
+ * Vercel request OIDC token → STS federated access token → SA-minted Google ID
+ * token with the target service's URL as audience. `getVercelOidcToken()` reads
+ * the request-context `x-vercel-oidc-token` header in Vercel Functions and the
+ * environment variable only in builds/local development.
  */
 async function mintGoogleIdToken(audience: string): Promise<string> {
     const now = Date.now();
     const cached = idTokenCache.get(audience);
     if (cached && cached.expiresAtMs > now) return cached.token;
 
-    const vercelOidcToken = process.env.VERCEL_OIDC_TOKEN?.trim();
+    const vercelOidcToken = (await getVercelOidcToken())?.trim();
     if (!vercelOidcToken) {
-        throw new Error('CloudRun client: VERCEL_OIDC_TOKEN is not available (enable Vercel OIDC on the project)');
+        throw new Error('CloudRun client: Vercel OIDC token is not available (enable Vercel OIDC on the project)');
     }
     const wifAudience = requireEnv('GCP_WIF_AUDIENCE');
     const invokerSa = requireEnv('GCP_ADMIN_INVOKER_SA');

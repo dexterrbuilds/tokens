@@ -26,8 +26,9 @@ resource "google_iam_workload_identity_pool_provider" "vercel" {
     "attribute.environment" = "assertion.environment"
   }
 
-  # Only tokens minted for the admin project may federate.
-  attribute_condition = "assertion.project_id == \"${var.vercel_project_id}\""
+  # Pin both project and environment: a preview deployment from the same
+  # Vercel project must never be able to federate into the production pool.
+  attribute_condition = "assertion.project_id == \"${var.vercel_project_id}\" && assertion.environment == \"${var.vercel_environment}\""
 
   oidc {
     issuer_uri        = "https://oidc.vercel.com/${var.vercel_team_slug}"

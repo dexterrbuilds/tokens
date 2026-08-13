@@ -156,6 +156,7 @@ module "vercel_oidc" {
   region             = var.region
   vercel_team_slug   = var.vercel_team_slug
   vercel_project_id  = var.vercel_admin_project_id
+  vercel_environment = "production"
   admin_service_name = "tokens-admin-${var.env}-us"
 }
 
