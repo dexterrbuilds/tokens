@@ -160,7 +160,7 @@ function requirePlatformAuth(request: Request) {
             );
             if (cachedAuth) return cachedAuth;
 
-            const auth = yield* Effect.tryPromise(() => authenticateApiKey(keyHash));
+            const auth = yield* authenticateApiKey(keyHash);
             if (!auth) {
                 return yield* Effect.fail(new UnauthorizedError({ message: 'Invalid API key' }));
             }
@@ -324,7 +324,7 @@ async function tryLogRequest(params: {
     errorTag?: string;
 }): Promise<void> {
     try {
-        await logApiRequest({
+        await Effect.runPromise(logApiRequest({
             projectId: params.platformAuth.projectId,
             apiKeyId: params.platformAuth.apiKeyId,
             keyPrefix: params.platformAuth.keyPrefix,
@@ -335,7 +335,7 @@ async function tryLogRequest(params: {
             latencyMs: params.latencyMs,
             ts: params.ts,
             ...(params.errorTag ? { errorTag: params.errorTag } : {}),
-        });
+        }));
     } catch {
         // Best-effort logging; never fail the API request due to analytics.
     }

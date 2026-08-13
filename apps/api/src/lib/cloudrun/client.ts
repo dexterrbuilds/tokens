@@ -4,8 +4,7 @@
  * The core API is Effect-native: `cloudRunQuery` / `cloudRunMutation` return
  * `Effect<T, CloudRunError>` and run against Effect's runtime abort signal, so
  * a client disconnect (route() runs handlers with `{ signal: request.signal }`)
- * interrupts in-flight backend calls. A deprecated promise shim
- * (`getCloudRunClient`) preserves the old callsite contract during migration.
+ * interrupts in-flight backend calls.
  */
 
 import { Duration, Effect, Schedule } from 'effect';
@@ -300,90 +299,4 @@ export function cloudRunMutation<TResult = unknown>(
 export function __resetCloudRunClientForTesting() {
     cachedConfig = null;
     cachedCaller = null;
-    cachedShim = null;
-}
-
-// -----------------------------------------------------------------------------
-// Deprecated promise shim (removed once all callsites use the Effect API)
-// -----------------------------------------------------------------------------
-
-/** @deprecated Discriminate on the tagged `CloudRunError` union from `./errors` instead. */
-export class CloudRunCallError extends Error {
-    readonly callName: string;
-
-    constructor(
-        message: string,
-        readonly service: CloudRunService,
-        readonly kind: CloudRunCallKind,
-        callName: string,
-        readonly status?: number,
-        readonly body?: string,
-    ) {
-        super(message);
-        this.name = 'CloudRunCallError';
-        this.callName = callName;
-    }
-}
-
-function toCloudRunCallError(
-    err: unknown,
-    service: CloudRunService,
-    kind: CloudRunCallKind,
-    name: string,
-): CloudRunCallError {
-    if (err instanceof CloudRunHttpError) {
-        return new CloudRunCallError(err.message, err.service, err.kind, err.callName, err.status, err.body);
-    }
-    if (err instanceof CloudRunTimeoutError || err instanceof CloudRunTransportError) {
-        return new CloudRunCallError(err.message, err.service, err.kind, err.callName);
-    }
-    if (err instanceof MissingEnvError) {
-        return new CloudRunCallError(err.message, service, kind, name);
-    }
-    return new CloudRunCallError(`CloudRun ${kind} ${service}.${name} threw: ${String(err)}`, service, kind, name);
-}
-
-/** @deprecated Use `cloudRunQuery` / `cloudRunMutation` (Effect API). */
-export class CloudRunClient {
-    private readonly caller: CloudRunCaller;
-
-    constructor(cfg: CloudRunClientConfig) {
-        this.caller = makeCloudRunCaller(cfg);
-    }
-
-    query<TResult = unknown>(
-        service: CloudRunService,
-        name: string,
-        args: Record<string, unknown> = {},
-        options: CloudRunCallOptions = {},
-    ): Promise<TResult> {
-        return Effect.runPromise(this.caller.query<TResult>(service, name, args, options)).catch(err => {
-            throw toCloudRunCallError(err, service, 'query', name);
-        });
-    }
-
-    mutation<TResult = unknown>(
-        service: CloudRunService,
-        name: string,
-        args: Record<string, unknown> = {},
-        options: CloudRunCallOptions = {},
-    ): Promise<TResult> {
-        return Effect.runPromise(this.caller.mutation<TResult>(service, name, args, options)).catch(err => {
-            throw toCloudRunCallError(err, service, 'mutation', name);
-        });
-    }
-}
-
-let cachedShim: CloudRunClient | null = null;
-
-/** @deprecated Use `cloudRunQuery` / `cloudRunMutation` (Effect API). */
-export function getCloudRunClient(): CloudRunClient {
-    if (cachedShim) return cachedShim;
-    // Preserve the historical contract: missing env throws a plain Error
-    // synchronously at first call.
-    const config = readConfigFromEnv();
-    if (config instanceof MissingEnvError) throw new Error(config.message);
-    cachedConfig ??= config;
-    cachedShim = new CloudRunClient(config);
-    return cachedShim;
 }
