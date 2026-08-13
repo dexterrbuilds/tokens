@@ -3,6 +3,7 @@ import { Effect } from 'effect';
 
 import { UpstreamHttpError } from '@tokens/effect';
 import { fetchJsonWithRetry } from '@tokens/effect';
+import { CoinGeckoResponseSchema } from './coingecko.schemas';
 import { buildXProfileUrl } from './social-links';
 
 const COINGECKO_PUBLIC_API_URL = 'https://api.coingecko.com/api/v3';
@@ -117,6 +118,7 @@ async function getGlobalTokenStatsImpl(coingeckoId: string): Promise<GlobalToken
         fetchJsonWithRetry<CoinGeckoResponse>({
             url,
             service: 'coingecko',
+            schema: CoinGeckoResponseSchema,
             init: { headers, next: { revalidate: 300 } }, // Cache for 5 minutes
             maxRetries: 2,
         }).pipe(

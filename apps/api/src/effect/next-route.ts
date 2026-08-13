@@ -25,6 +25,7 @@ import {
     toApiErrorInfo,
     toErrorEnvelope,
     UnauthorizedError,
+    CurrentRequestId,
 } from '@tokens/effect';
 
 export type RouteHandlerEffect<T> = Effect.Effect<T, unknown, never>;
@@ -515,7 +516,10 @@ export function route<T, Ctx = unknown>(
               )
             : handler(request, ctx as Ctx);
 
-        const exit = await Effect.runPromiseExit(effect, { signal: request.signal });
+        const exit = await Effect.runPromiseExit(
+            effect.pipe(Effect.provideService(CurrentRequestId, requestId)),
+            { signal: request.signal },
+        );
 
         const latencyMs = Date.now() - startedAt;
         const url = (() => {
