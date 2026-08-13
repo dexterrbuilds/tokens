@@ -59,7 +59,7 @@ async function getDynamicCappedLstMints(): Promise<string[]> {
 // curated lists without a registry PR; any RPC failure degrades to static-only.
 async function getDbMemberMints(listId: string): Promise<string[]> {
     try {
-        return await assetCollectionsGetMemberMints({ slug: listId, limit: 2000 });
+        return await Effect.runPromise(assetCollectionsGetMemberMints({ slug: listId, limit: 2000 }));
     } catch {
         return [];
     }

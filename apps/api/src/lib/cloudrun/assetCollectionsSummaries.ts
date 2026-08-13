@@ -1,4 +1,7 @@
-import { getCloudRunClient } from './client';
+import type { Effect } from 'effect';
+
+import { cloudRunQuery } from './client';
+import type { CloudRunError } from './errors';
 
 export type AssetCollectionsGetSummariesArgs = { slugs: string[] };
 export type AssetCollectionSummary = {
@@ -8,16 +11,18 @@ export type AssetCollectionSummary = {
     lastAddedAt: number | null;
 };
 
-export async function assetCollectionsGetSummaries(
+export function assetCollectionsGetSummaries(
     args: AssetCollectionsGetSummariesArgs,
-): Promise<AssetCollectionSummary[]> {
-    return getCloudRunClient().query<AssetCollectionSummary[]>('assets', 'assetCollectionsGetSummaries', {
+): Effect.Effect<AssetCollectionSummary[], CloudRunError> {
+    return cloudRunQuery<AssetCollectionSummary[]>('assets', 'assetCollectionsGetSummaries', {
         ...args,
     });
 }
 
 export type AssetCollectionsGetMemberMintsArgs = { slug: string; limit?: number };
 
-export async function assetCollectionsGetMemberMints(args: AssetCollectionsGetMemberMintsArgs): Promise<string[]> {
-    return getCloudRunClient().query<string[]>('assets', 'assetCollectionsGetMemberMints', { ...args });
+export function assetCollectionsGetMemberMints(
+    args: AssetCollectionsGetMemberMintsArgs,
+): Effect.Effect<string[], CloudRunError> {
+    return cloudRunQuery<string[]>('assets', 'assetCollectionsGetMemberMints', { ...args });
 }

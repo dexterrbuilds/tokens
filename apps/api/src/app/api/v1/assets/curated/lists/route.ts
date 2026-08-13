@@ -85,9 +85,9 @@ function buildStaticSummary(id: HomeCategoryId): CuratedListSummary {
  */
 export const GET = route(() =>
     Effect.gen(function* () {
-        const dbSummaries = yield* Effect.tryPromise(() =>
-            assetCollectionsGetSummaries({ slugs: [...HOME_CATEGORY_IDS] }),
-        ).pipe(tapErrorAndDefault('v1.assetsCuratedLists.summaries', null as AssetCollectionSummary[] | null));
+        const dbSummaries = yield* assetCollectionsGetSummaries({ slugs: [...HOME_CATEGORY_IDS] }).pipe(
+            tapErrorAndDefault('v1.assetsCuratedLists.summaries', null as AssetCollectionSummary[] | null),
+        );
 
         const dbBySlug = new Map((dbSummaries ?? []).map(summary => [summary.slug, summary] as const));
         return HOME_CATEGORY_IDS.map(id => {
