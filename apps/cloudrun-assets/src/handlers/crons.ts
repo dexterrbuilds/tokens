@@ -16,12 +16,8 @@ export interface CronResult {
     [extra: string]: unknown;
 }
 
-export class InvalidArgsError extends Error {
-    constructor(message: string) {
-        super(message);
-        this.name = 'InvalidArgsError';
-    }
-}
+export { InvalidArgsError } from '@tokens/cloudrun-shutdown/http-errors';
+import { InvalidArgsError } from '@tokens/cloudrun-shutdown/http-errors';
 
 export interface VariantMarketUpsertFromBirdeye {
     mint: string;
