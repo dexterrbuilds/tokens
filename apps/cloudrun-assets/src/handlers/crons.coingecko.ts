@@ -1,3 +1,6 @@
+import { Effect } from 'effect';
+import { isShuttingDown } from '@tokens/cloudrun-shutdown';
+import { runJobPool } from '@tokens/effect/job-runner';
 import type { CronResult } from './crons';
 import { InvalidArgsError, parseExplicitTargets } from './crons';
 
@@ -630,6 +633,7 @@ export async function refreshCuratedCoingeckoMetadata(
     const concurrency = clampInt(args.concurrency, 2, 1, 5);
     const delayMs = clampInt(args.delayMs, 250, 0, 5_000);
     const selectionWindowMs = clampInt(args.selectionWindowMs, 6 * 60 * 60_000, 10_000, 24 * 60 * 60_000);
+    const budgetMs = clampInt(args.budgetMs, 0, 0, 3_600_000);
     const localization = readOptionalBoolean(args.localization, false);
     const marketData = readOptionalBoolean(args.marketData, true);
     const explicitCoinIds = parseExplicitTargets(args.coinIds, 'coinIds');
@@ -646,10 +650,10 @@ export async function refreshCuratedCoingeckoMetadata(
 
     let refreshed = 0;
     let skipped = 0;
-    let failed = 0;
+    let softFailed = 0;
 
     if (coinIds.length === 0) {
-        return { ok: true, processed: 0, durationMs: deps.now() - start, refreshed, skipped, failed };
+        return { ok: true, processed: 0, durationMs: deps.now() - start, refreshed, skipped, failed: 0 };
     }
 
     const params: Record<string, string> = {
@@ -662,43 +666,44 @@ export async function refreshCuratedCoingeckoMetadata(
         include_categories_details: 'false',
     };
 
-    let nextIndex = 0;
-    async function worker(): Promise<void> {
-        while (true) {
-            const idx = nextIndex;
-            if (idx >= coinIds.length) return;
-            nextIndex += 1;
-            const coinId = coinIds[idx]!;
-            try {
-                const lastFetched = await deps.coingeckoRepo.getCoinMetadataLastFetchedAt(coinId);
-                if (minAgeMs > 0 && lastFetched !== null && start - lastFetched < minAgeMs) {
-                    skipped += 1;
-                    continue;
-                }
-                const raw = await deps.coingecko.fetchCoinById(coinId, params);
-                const parsed = sanitizeCoinMetadata(raw);
-                if (!parsed.ok) {
-                    failed += 1;
-                    console.error(`[refreshCuratedCoingeckoMetadata] ${coinId}: ${parsed.error}`);
-                    continue;
-                }
-                await deps.coingeckoRepo.upsertCoinMetadata({ id: coinId, coin: parsed.coin, fetchedAt: start });
-                refreshed += 1;
-            } catch (err) {
-                failed += 1;
-                console.error(
-                    `[refreshCuratedCoingeckoMetadata] coinId=${coinId}`,
-                    err instanceof Error ? err.message : String(err),
-                );
-            } finally {
-                await sleep(delayMs);
-            }
-        }
-    }
+    const summary = await Effect.runPromise(
+        runJobPool({
+            label: 'refreshCuratedCoingeckoMetadata',
+            items: coinIds,
+            concurrency,
+            delayMs,
+            ...(budgetMs > 0 ? { budgetMs } : {}),
+            shouldStop: isShuttingDown,
+            process: coinId =>
+                Effect.tryPromise(async () => {
+                    const lastFetched = await deps.coingeckoRepo.getCoinMetadataLastFetchedAt(coinId);
+                    if (minAgeMs > 0 && lastFetched !== null && start - lastFetched < minAgeMs) {
+                        skipped += 1;
+                        return;
+                    }
+                    const raw = await deps.coingecko.fetchCoinById(coinId, params);
+                    const parsed = sanitizeCoinMetadata(raw);
+                    if (!parsed.ok) {
+                        softFailed += 1;
+                        console.error(`[refreshCuratedCoingeckoMetadata] ${coinId}: ${parsed.error}`);
+                        return;
+                    }
+                    await deps.coingeckoRepo.upsertCoinMetadata({ id: coinId, coin: parsed.coin, fetchedAt: start });
+                    refreshed += 1;
+                }),
+        }),
+    );
 
-    await Promise.all(Array.from({ length: Math.min(concurrency, coinIds.length) }, () => worker()));
-
-    return { ok: true, processed: coinIds.length, durationMs: deps.now() - start, refreshed, skipped, failed };
+    const failed = softFailed + summary.failed;
+    return {
+        ok: !(summary.attempted > 0 && refreshed === 0 && skipped === 0 && failed >= summary.attempted),
+        processed: coinIds.length,
+        durationMs: deps.now() - start,
+        refreshed,
+        skipped,
+        failed,
+        ...(summary.partial ? { partial: true } : {}),
+    };
 }
 
 export async function refreshCuratedCoingeckoTickers(
@@ -712,6 +717,7 @@ export async function refreshCuratedCoingeckoTickers(
     const concurrency = clampInt(args.concurrency, 2, 1, 5);
     const delayMs = clampInt(args.delayMs, 250, 0, 5_000);
     const selectionWindowMs = clampInt(args.selectionWindowMs, 6 * 60 * 60_000, 10_000, 24 * 60 * 60_000);
+    const budgetMs = clampInt(args.budgetMs, 0, 0, 3_600_000);
     const maxTickers = clampInt(args.maxTickers, 200, 1, 250);
     const explicitCoinIds = parseExplicitTargets(args.coinIds, 'coinIds');
 
@@ -727,28 +733,28 @@ export async function refreshCuratedCoingeckoTickers(
 
     let refreshed = 0;
     let skipped = 0;
-    let failed = 0;
 
     if (coinIds.length === 0) {
-        return { ok: true, processed: 0, durationMs: deps.now() - start, refreshed, skipped, failed };
+        return { ok: true, processed: 0, durationMs: deps.now() - start, refreshed, skipped, failed: 0 };
     }
 
     const TICKERS_PAGE_SIZE = 100;
     const pagesNeeded = Math.max(1, Math.ceil(maxTickers / TICKERS_PAGE_SIZE));
     const pagesToFetch = Math.min(pagesNeeded + 1, 3);
 
-    let nextIndex = 0;
-    async function worker(): Promise<void> {
-        while (true) {
-            const idx = nextIndex;
-            if (idx >= coinIds.length) return;
-            nextIndex += 1;
-            const coinId = coinIds[idx]!;
-            try {
+    const summary = await Effect.runPromise(
+        runJobPool({
+            label: 'refreshCuratedCoingeckoTickers',
+            items: coinIds,
+            concurrency,
+            delayMs,
+            ...(budgetMs > 0 ? { budgetMs } : {}),
+            shouldStop: isShuttingDown,
+            process: coinId =>
+                Effect.tryPromise(async () => {
                 const lastFetched = await deps.coingeckoRepo.getTickersLastFetchedAt(coinId);
                 if (minAgeMs > 0 && lastFetched !== null && start - lastFetched < minAgeMs) {
-                    skipped += 1;
-                    continue;
+                    return void (skipped += 1);
                 }
                 const pageResults = await Promise.all(
                     Array.from({ length: pagesToFetch }, (_, i) => i + 1).map(page =>
@@ -772,26 +778,21 @@ export async function refreshCuratedCoingeckoTickers(
 
                 await deps.coingeckoRepo.upsertTickersLatest(upsert);
                 refreshed += 1;
-            } catch (err) {
-                failed += 1;
-                console.error(
-                    `[refreshCuratedCoingeckoTickers] coinId=${coinId}`,
-                    err instanceof Error ? err.message : String(err),
-                );
-                try {
-                    await deps.coingeckoRepo.touchTickersLatest(coinId, start);
-                } catch {
-                    void 0;
-                }
-            } finally {
-                await sleep(delayMs);
-            }
-        }
-    }
+                }),
+            onItemError: coinId =>
+                Effect.tryPromise(() => deps.coingeckoRepo.touchTickersLatest(coinId, start)),
+        }),
+    );
 
-    await Promise.all(Array.from({ length: Math.min(concurrency, coinIds.length) }, () => worker()));
-
-    return { ok: true, processed: coinIds.length, durationMs: deps.now() - start, refreshed, skipped, failed };
+    return {
+        ok: !(summary.attempted > 0 && refreshed === 0 && skipped === 0 && summary.failed >= summary.attempted),
+        processed: coinIds.length,
+        durationMs: deps.now() - start,
+        refreshed,
+        skipped,
+        failed: summary.failed,
+        ...(summary.partial ? { partial: true } : {}),
+    };
 }
 
 export async function refreshCuratedCoingeckoPrices(
@@ -878,7 +879,14 @@ export async function refreshCuratedCoingeckoPrices(
         }
     }
 
-    return { ok: true, processed: selected.length, durationMs: deps.now() - start, refreshed, skipped, failed };
+    return {
+        ok: !(stale.length > 0 && refreshed === 0 && failed >= stale.length),
+        processed: selected.length,
+        durationMs: deps.now() - start,
+        refreshed,
+        skipped,
+        failed,
+    };
 }
 
 export async function refreshCuratedCoingeckoOhlcv(
@@ -895,6 +903,7 @@ export async function refreshCuratedCoingeckoOhlcv(
     const delayMs = clampInt(args.delayMs, 250, 0, 5_000);
     const selectionWindowMs = clampInt(args.selectionWindowMs, 60_000, 10_000, 24 * 60 * 60_000);
     const upsertChunkSize = clampInt(args.upsertChunkSize, 500, 50, 2_000);
+    const budgetMs = clampInt(args.budgetMs, 0, 0, 3_600_000);
     const explicitCoinIds = parseExplicitTargets(args.coinIds, 'coinIds');
 
     const start = deps.now();
@@ -919,7 +928,6 @@ export async function refreshCuratedCoingeckoOhlcv(
     }
 
     let refreshed = 0;
-    let failed = 0;
     let inserted = 0;
     let updated = 0;
     let skipped = 0;
@@ -931,7 +939,7 @@ export async function refreshCuratedCoingeckoOhlcv(
             durationMs: deps.now() - start,
             interval,
             refreshed,
-            failed,
+            failed: 0,
             inserted,
             updated,
             skipped,
@@ -942,14 +950,16 @@ export async function refreshCuratedCoingeckoOhlcv(
     const requestedFrom = Math.floor(start / 1000) - days * 24 * 60 * 60;
     const requestedTo = Math.floor(start / 1000);
 
-    let nextIndex = 0;
-    async function worker(): Promise<void> {
-        while (true) {
-            const idx = nextIndex;
-            if (idx >= coinIds.length) return;
-            nextIndex += 1;
-            const coinId = coinIds[idx]!;
-            try {
+    const summary = await Effect.runPromise(
+        runJobPool({
+            label: `refreshCuratedCoingeckoOhlcv:${interval}`,
+            items: coinIds,
+            concurrency,
+            delayMs,
+            ...(budgetMs > 0 ? { budgetMs } : {}),
+            shouldStop: isShuttingDown,
+            process: coinId =>
+                Effect.tryPromise(async () => {
                 const bounds = await deps.coingeckoRepo.getOhlcvBounds(coinId, interval);
                 const segments: Array<{ from: number; to: number }> = [];
                 if (bounds.minTime === null || bounds.maxTime === null) {
@@ -964,7 +974,7 @@ export async function refreshCuratedCoingeckoOhlcv(
                 }
                 if (segments.length === 0) {
                     skipped += 1;
-                    continue;
+                    return;
                 }
                 for (const segment of segments) {
                     const range = await deps.coingecko.fetchMarketChartRange({
@@ -981,30 +991,21 @@ export async function refreshCuratedCoingeckoOhlcv(
                     }
                 }
                 refreshed += 1;
-            } catch (err) {
-                failed += 1;
-                console.error(
-                    `[refreshCuratedCoingeckoOhlcv] interval=${interval} coinId=${coinId}`,
-                    err instanceof Error ? err.message : String(err),
-                );
-            } finally {
-                await sleep(delayMs);
-            }
-        }
-    }
-
-    await Promise.all(Array.from({ length: Math.min(concurrency, coinIds.length) }, () => worker()));
+                }),
+        }),
+    );
 
     return {
-        ok: true,
+        ok: !(summary.attempted > 0 && refreshed === 0 && skipped === 0 && summary.failed >= summary.attempted),
         processed: coinIds.length,
         durationMs: deps.now() - start,
         interval,
         refreshed,
-        failed,
+        failed: summary.failed,
         inserted,
         updated,
         skipped,
+        ...(summary.partial ? { partial: true } : {}),
     };
 }
 
