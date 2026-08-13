@@ -12,7 +12,7 @@
  */
 
 import { Effect } from 'effect';
-import { after } from 'next/server';
+import { runAfterResponse } from '@/effect/after-response';
 
 import { tapErrorAndDefault } from '@tokens/effect';
 import type { TimeInterval } from '@/lib/birdeye';
@@ -24,7 +24,7 @@ import { cloudRunMutation } from './client';
  */
 export function deferUntilAfterResponse(effect: Effect.Effect<void, never>): Effect.Effect<void, never> {
     return Effect.sync(() => {
-        after(() => Effect.runPromise(effect).catch(() => undefined));
+        runAfterResponse(effect);
     });
 }
 
