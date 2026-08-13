@@ -12,11 +12,11 @@
  */
 
 import { Effect } from 'effect';
-import { after } from 'next/server';
+import { runAfterResponse } from '@/effect/after-response';
 
 import { tapErrorAndDefault } from '@tokens/effect';
 import type { TimeInterval } from '@/lib/birdeye';
-import { getCloudRunClient } from './client';
+import { cloudRunMutation } from './client';
 
 /**
  * Cache warming is best-effort and must never sit on the response latency
@@ -24,7 +24,7 @@ import { getCloudRunClient } from './client';
  */
 export function deferUntilAfterResponse(effect: Effect.Effect<void, never>): Effect.Effect<void, never> {
     return Effect.sync(() => {
-        after(() => Effect.runPromise(effect).catch(() => undefined));
+        runAfterResponse(effect);
     });
 }
 
@@ -44,7 +44,7 @@ function warmViaCloudRun(
     meta: Record<string, unknown>,
 ): Effect.Effect<void, never> {
     return deferUntilAfterResponse(
-        Effect.tryPromise(() => getCloudRunClient().mutation('assets', name, args)).pipe(
+        cloudRunMutation('assets', name, args).pipe(
             Effect.asVoid,
             tapErrorAndDefault(label, undefined, meta),
         ),

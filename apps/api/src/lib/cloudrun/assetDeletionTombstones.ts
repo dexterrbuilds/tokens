@@ -1,8 +1,11 @@
-import { getCloudRunClient } from './client';
+import type { Effect } from 'effect';
+
+import { cloudRunQuery } from './client';
+import type { CloudRunError } from './errors';
 
 export type ListDeletedRefsArgs = { refs: string[] };
 export type ListDeletedRefsResult = string[];
 
-export async function listDeletedRefs(args: ListDeletedRefsArgs): Promise<ListDeletedRefsResult> {
-    return getCloudRunClient().query<ListDeletedRefsResult>('assets', 'listDeletedRefs', { ...args });
+export function listDeletedRefs(args: ListDeletedRefsArgs): Effect.Effect<ListDeletedRefsResult, CloudRunError> {
+    return cloudRunQuery<ListDeletedRefsResult>('assets', 'listDeletedRefs', { ...args });
 }

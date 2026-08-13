@@ -340,6 +340,38 @@ describe('refreshCuratedVariantMarkets', () => {
             /numeric arg/,
         );
     });
+
+    it('reports ok=false when every attempted mint fails (total failure)', async () => {
+        const { deps } = makeDeps({
+            curatedMints: ['m1', 'm2'],
+            birdeye: {
+                async fetchTokenOverview() {
+                    throw new Error('birdeye down');
+                },
+            },
+        });
+        const res = await refreshCuratedVariantMarkets(deps, { delayMs: 0 });
+        expect(res.ok).toBe(false);
+        expect(res.failed).toBe(2);
+        expect(res.refreshed).toBe(0);
+    });
+
+    it('keeps ok=true on partial failure', async () => {
+        const overview: BirdeyeOverview = { symbol: 'JUP', name: 'Jupiter', decimals: 6 };
+        const { deps } = makeDeps({
+            curatedMints: ['good', 'bad'],
+            birdeye: {
+                async fetchTokenOverview(mint) {
+                    if (mint === 'bad') throw new Error('boom');
+                    return overview;
+                },
+            },
+        });
+        const res = await refreshCuratedVariantMarkets(deps, { delayMs: 0 });
+        expect(res.ok).toBe(true);
+        expect(res.refreshed).toBe(1);
+        expect(res.failed).toBe(1);
+    });
 });
 
 describe('refreshCuratedVariantMarkets explicit mints', () => {

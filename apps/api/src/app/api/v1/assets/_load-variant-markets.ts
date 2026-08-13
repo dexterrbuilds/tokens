@@ -44,9 +44,7 @@ export function loadVariantMarkets(
         const { tokenByMint, marketMetaByMint } = params;
         if (params.mints.length === 0) return;
 
-        const rows = yield* Effect.tryPromise(() =>
-            variantMarketsGetLatestByMints({ mints: params.mints }),
-        );
+        const rows = yield* variantMarketsGetLatestByMints({ mints: params.mints });
 
         const missingMints: string[] = [];
         for (const row of rows) {
@@ -92,9 +90,7 @@ export function loadVariantMarkets(
             }
         }
 
-        const tokenMarketsDocs = yield* Effect.tryPromise(() =>
-            tokenMarketsGetLatestByMints({ mints: uniqueMissing }),
-        );
+        const tokenMarketsDocs = yield* tokenMarketsGetLatestByMints({ mints: uniqueMissing });
 
         for (const { mint, doc } of tokenMarketsDocs) {
             if (!doc) continue;
@@ -116,7 +112,7 @@ export async function loadTokensByMints(mints: string[]): Promise<Map<string, To
     const uniqueMints = Array.from(new Set(mints.map(m => m.trim()).filter(Boolean)));
     if (uniqueMints.length === 0) return new Map();
 
-    const rows = await variantMarketsGetLatestByMints({ mints: uniqueMints });
+    const rows = await Effect.runPromise(variantMarketsGetLatestByMints({ mints: uniqueMints }));
 
     const out = new Map<string, TokenMarketSnapshot>();
     for (const row of rows) {
@@ -135,7 +131,7 @@ export async function loadExecutionQualityByMints(
     const uniqueMints = Array.from(new Set(mints.map(m => m.trim()).filter(Boolean)));
     if (uniqueMints.length === 0) return new Map();
 
-    const rows = await variantFillQualityGetLatestByMints({ mints: uniqueMints });
+    const rows = await Effect.runPromise(variantFillQualityGetLatestByMints({ mints: uniqueMints }));
 
     const out = new Map<string, VariantExecutionQualitySnapshot>();
     for (const row of rows) {

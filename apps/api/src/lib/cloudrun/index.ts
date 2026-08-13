@@ -1,14 +1,24 @@
 export {
-    CloudRunCallError,
-    CloudRunClient,
+    cloudRunMutation,
+    cloudRunQuery,
     encodeCallerIdentity,
-    getCloudRunClient,
+    getCloudRunConfig,
+    makeCloudRunCaller,
+    type CloudRunCaller,
     type CloudRunCallKind,
     type CloudRunCallOptions,
     type CloudRunCallerIdentity,
     type CloudRunClientConfig,
     type CloudRunService,
 } from './client';
+
+export {
+    CloudRunHttpError,
+    CloudRunTimeoutError,
+    CloudRunTransportError,
+    isRetryableCloudRunError,
+    type CloudRunError,
+} from './errors';
 
 export {
     getByAssetId,

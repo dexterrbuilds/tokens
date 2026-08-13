@@ -128,12 +128,12 @@ export const GET = route(
 
             let asset: CanonicalAsset | null = null;
 
-            const assetDoc = yield* Effect.tryPromise(() => cloudRunGetByAssetId({ assetId }));
+            const assetDoc = yield* cloudRunGetByAssetId({ assetId });
             if (!assetDoc) {
                 const singletonMint = singletonAssetIdToMint(assetId);
                 const registryAsset = singletonMint ? null : resolveRegistryAlias(assetId);
                 const resolvedAsset: CanonicalAsset | null = singletonMint
-                    ? yield* Effect.tryPromise(() => tokensGetByAddress({ address: singletonMint }))
+                    ? yield* tokensGetByAddress({ address: singletonMint })
                           .pipe(
                               tapErrorAndDefault('assets.detail.singletonToken', null, {
                                   assetId,
@@ -196,11 +196,9 @@ export const GET = route(
                 // Variants and the CoinGecko coin doc are independent — fetch concurrently.
                 const [variantsRows, coinDoc] = yield* Effect.all(
                     [
-                        Effect.tryPromise(() =>
-                            assetVariantsListByAssetIds({ assetIds: [assetDoc.assetId] }),
-                        ),
+                        assetVariantsListByAssetIds({ assetIds: [assetDoc.assetId] }),
                         coingeckoId && (!registryName || !registrySymbol)
-                            ? Effect.tryPromise(() => coingeckoGetCoinById({ id: coingeckoId })).pipe(
+                            ? coingeckoGetCoinById({ id: coingeckoId }).pipe(
                                   tapErrorAndDefault('assets.detail.coingeckoCoin', null, {
                                       assetId,
                                       coinId: coingeckoId,
@@ -341,31 +339,25 @@ export const GET = route(
                             symbol: canonicalAsset.symbol ?? assetDoc?.symbol ?? null,
                             existingCoinId: normalizedCoinId,
                         }),
-                        Effect.tryPromise(() =>
-                            variantFillQualityGetLatestByMints({
+                        variantFillQualityGetLatestByMints({
                                 mints: canonicalAsset.variants.map(v => v.mint),
-                            }),
-                        ).pipe(
+                            }).pipe(
                             tapErrorAndDefault('assets.detail.variantFillQuality', [], {
                                 assetId: canonicalAsset.assetId,
                             }),
                         ),
-                        Effect.tryPromise(() =>
-                            assetMarketsGetLatestByAssetId({ assetId: canonicalAsset.assetId }),
-                        ),
+                        assetMarketsGetLatestByAssetId({ assetId: canonicalAsset.assetId }),
                         isStockPricedCategory(canonicalAsset.category)
-                            ? Effect.tryPromise(() =>
-                                  stockInstrumentsGetByAssetId({
+                            ? stockInstrumentsGetByAssetId({
                                       assetId: canonicalAsset.assetId,
-                                  }),
-                              ).pipe(
+                                  }).pipe(
                                   tapErrorAndDefault('assets.detail.stockInstrument', null, {
                                       assetId: canonicalAsset.assetId,
                                   }),
                               )
                             : Effect.succeed(null),
                         canonicalAsset.assetId === 'solana'
-                            ? Effect.tryPromise(() => sanctumListActive({ limit: 5000 }))
+                            ? sanctumListActive({ limit: 5000 })
                                   .pipe(
                                       tapErrorAndDefault('assets.detail.sanctumLsts', [], {
                                           assetId: canonicalAsset.assetId,
@@ -378,9 +370,7 @@ export const GET = route(
                                   )
                             : Effect.succeed(null),
                         assetPreStocksMints.length > 0
-                            ? Effect.tryPromise(() =>
-                                  prestocksGetLatestByMints({ mints: assetPreStocksMints }),
-                              ).pipe(
+                            ? prestocksGetLatestByMints({ mints: assetPreStocksMints }).pipe(
                                   tapErrorAndDefault('assets.detail.prestocks', [], {
                                       assetId: canonicalAsset.assetId,
                                   }),
@@ -432,9 +422,7 @@ export const GET = route(
 
             const coinId = resolvedCoinId ?? '';
             const stockSnapshot = stockInstrument
-                ? yield* Effect.tryPromise(() =>
-                      stockPricesGetLatestByAssetId({ assetId: asset.assetId }),
-                  ).pipe(tapErrorAndDefault('assets.detail.stockPrice', null, { assetId: asset.assetId }))
+                ? yield* stockPricesGetLatestByAssetId({ assetId: asset.assetId }).pipe(tapErrorAndDefault('assets.detail.stockPrice', null, { assetId: asset.assetId }))
                 : null;
             const shouldUseStockCanonicalMarket = Boolean(stockInstrument) || isCanonicalPublicEquityAsset(asset);
             if (stockInstrument) {
@@ -539,9 +527,7 @@ export const GET = route(
                     asOf: preStocksCanonicalSnapshot.lastFetchedAt,
                 };
             } else if (coinId) {
-                coinSnapshot = yield* Effect.tryPromise(() =>
-                    coingeckoGetPriceLatestByCoinId({ coinId }),
-                ).pipe(tapErrorAndDefault('assets.detail.coinPrice', null, { assetId: asset.assetId, coinId }));
+                coinSnapshot = yield* coingeckoGetPriceLatestByCoinId({ coinId }).pipe(tapErrorAndDefault('assets.detail.coinPrice', null, { assetId: asset.assetId, coinId }));
 
                 const lastFetchedAt = coinSnapshot?.lastFetchedAt ?? null;
                 const isStale = lastFetchedAt === null || Date.now() - lastFetchedAt > 10 * 60_000;

@@ -176,13 +176,11 @@ export const GET = route(
             const requestedDays = Math.max(1, Math.ceil((to - from) / (24 * 60 * 60)));
             const intervalSeconds = intervalToSeconds(interval);
 
-            const assetDoc = yield* Effect.tryPromise(() => cloudRunGetByAssetId({ assetId }));
+            const assetDoc = yield* cloudRunGetByAssetId({ assetId });
 
             let canonical: CanonicalAsset | null = null;
             if (assetDoc) {
-                const variantsRows = yield* Effect.tryPromise(() =>
-                    assetVariantsListByAssetIds({ assetIds: [assetDoc.assetId] }),
-                );
+                const variantsRows = yield* assetVariantsListByAssetIds({ assetIds: [assetDoc.assetId] });
                 const variants = (variantsRows[0]?.variants ?? []) as AssetVariantRow[];
                 const registryAsset = resolveRegistryAlias(assetDoc.assetId);
 
@@ -198,9 +196,7 @@ export const GET = route(
             } else {
                 const singletonMint = singletonAssetIdToMint(assetId);
                 if (singletonMint) {
-                    const token = yield* Effect.tryPromise(() =>
-                        tokensGetByAddress({ address: singletonMint }),
-                    ).pipe(
+                    const token = yield* tokensGetByAddress({ address: singletonMint }).pipe(
                         tapErrorAndDefault('assets.priceChart.singletonToken', null, {
                             assetId,
                             mint: singletonMint,
@@ -236,22 +232,18 @@ export const GET = route(
                 return yield* Effect.fail(new NotFoundError({ message: 'Asset not found', resource: 'asset' }));
 
             if (isStockPricedCategory(canonical.category)) {
-                const stockInstrument = yield* Effect.tryPromise(() =>
-                    stockInstrumentsGetByAssetId({ assetId: canonical.assetId }),
-                ).pipe(tapErrorAndDefault('assets.priceChart.stockInstrument', null, { assetId: canonical.assetId }));
+                const stockInstrument = yield* stockInstrumentsGetByAssetId({ assetId: canonical.assetId }).pipe(tapErrorAndDefault('assets.priceChart.stockInstrument', null, { assetId: canonical.assetId }));
 
                 // Commodities use the stock chart only once a benchmark instrument mapping exists;
                 // equities additionally qualify via the public-equity heuristic.
                 const shouldUseStockChart = Boolean(stockInstrument) || isCanonicalPublicEquityAsset(canonical);
                 if (shouldUseStockChart) {
-                    const candles = yield* Effect.tryPromise(() =>
-                        stockOhlcvList({
+                    const candles = yield* stockOhlcvList({
                             assetId: canonical.assetId,
                             interval,
                             from,
                             to,
-                        }),
-                    );
+                        });
 
                     const latestTime = candles.length > 0 ? (candles[candles.length - 1]?.time ?? null) : null;
                     const isStale = latestTime === null || to - latestTime > intervalSeconds * 2;
@@ -282,14 +274,12 @@ export const GET = route(
                 });
                 const coinId = resolvedCoinId ?? '';
                 if (coinId) {
-                    const candles = yield* Effect.tryPromise(() =>
-                        coingeckoListOhlcv({
+                    const candles = yield* coingeckoListOhlcv({
                             coinId,
                             interval,
                             from,
                             to,
-                        }),
-                    );
+                        });
 
                     const latestTime = candles.length > 0 ? (candles[candles.length - 1]?.time ?? null) : null;
                     const isStale = latestTime === null || to - latestTime > intervalSeconds * 2;
@@ -331,14 +321,12 @@ export const GET = route(
                 );
             }
 
-            const candles = yield* Effect.tryPromise(() =>
-                ohlcvList({
+            const candles = yield* ohlcvList({
                     address: mint,
                     interval,
                     from,
                     to,
-                }),
-            );
+                });
 
             const latestTime = candles.length > 0 ? (candles[candles.length - 1]?.time ?? null) : null;
             const isStale = latestTime === null || to - latestTime > intervalSeconds * 2;

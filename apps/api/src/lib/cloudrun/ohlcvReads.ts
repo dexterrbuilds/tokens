@@ -4,7 +4,10 @@ import type {
 } from '../../../../cloudrun-assets/src/handlers/ohlcvReads';
 
 import { sanitizeOhlcvWicks } from '../ohlcv-sanitize';
-import { getCloudRunClient } from './client';
+import { Effect } from 'effect';
+
+import { cloudRunQuery } from './client';
+import type { CloudRunError } from './errors';
 
 export type OhlcvListArgs = {
     address: string;
@@ -15,11 +18,12 @@ export type OhlcvListArgs = {
 };
 export type OhlcvListResult = OhlcvCandleResult[];
 
-export async function ohlcvList(args: OhlcvListArgs): Promise<OhlcvListResult> {
-    const candles = await getCloudRunClient().query<OhlcvListResult>('assets', 'ohlcvList', { ...args });
-    // On-chain candles aggregate raw swaps across all pools; dust trades in
-    // illiquid pools poison high/low (see ohlcv-sanitize.ts).
-    return sanitizeOhlcvWicks(candles);
+export function ohlcvList(args: OhlcvListArgs): Effect.Effect<OhlcvListResult, CloudRunError> {
+    return cloudRunQuery<OhlcvListResult>('assets', 'ohlcvList', { ...args }).pipe(
+        // On-chain candles aggregate raw swaps across all pools; dust trades in
+        // illiquid pools poison high/low (see ohlcv-sanitize.ts).
+        Effect.map(candles => sanitizeOhlcvWicks(candles)),
+    );
 }
 
 export type OhlcvBoundsArgs = {
@@ -28,8 +32,8 @@ export type OhlcvBoundsArgs = {
 };
 export type OhlcvBoundsResult = HandlerOhlcvBoundsResult;
 
-export async function ohlcvBounds(args: OhlcvBoundsArgs): Promise<OhlcvBoundsResult> {
-    return getCloudRunClient().query<OhlcvBoundsResult>('assets', 'ohlcvBounds', { ...args });
+export function ohlcvBounds(args: OhlcvBoundsArgs): Effect.Effect<OhlcvBoundsResult, CloudRunError> {
+    return cloudRunQuery<OhlcvBoundsResult>('assets', 'ohlcvBounds', { ...args });
 }
 
 export type StockOhlcvListArgs = {
@@ -41,6 +45,6 @@ export type StockOhlcvListArgs = {
 };
 export type StockOhlcvListResult = OhlcvCandleResult[];
 
-export async function stockOhlcvList(args: StockOhlcvListArgs): Promise<StockOhlcvListResult> {
-    return getCloudRunClient().query<StockOhlcvListResult>('assets', 'stockOhlcvList', { ...args });
+export function stockOhlcvList(args: StockOhlcvListArgs): Effect.Effect<StockOhlcvListResult, CloudRunError> {
+    return cloudRunQuery<StockOhlcvListResult>('assets', 'stockOhlcvList', { ...args });
 }

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Effect } from 'effect';
-import { ApiResponseError, apiJson } from '@/effect/api-client';
+import { apiJson } from '@/effect/api-client';
+import { shouldRetryApiQuery } from '@/effect/query-retry';
 import type { OHLCVData, TimeInterval } from '@/lib/birdeye';
 import { looksLikeSolanaMintAddress } from '@/lib/solana-address';
 import { alignEpochSeconds } from '@/lib/time';
@@ -27,15 +28,6 @@ interface AssetOhlcvResponse {
     includes?: {
         ohlcv?: AssetIncludeResult<OHLCVData[]>;
     };
-}
-
-function shouldRetryAssetOhlcvQuery(failureCount: number, error: unknown): boolean {
-    if (error instanceof ApiResponseError) {
-        // Non-transient for clients; retries amplify global rate limiting during traffic spikes.
-        if ([400, 401, 403, 404, 429].includes(error.status)) return false;
-    }
-
-    return failureCount < 2;
 }
 
 export function useAssetOHLCV(
@@ -75,6 +67,6 @@ export function useAssetOHLCV(
             return include.data;
         },
         enabled: enabled && assetId.trim().length > 0,
-        retry: shouldRetryAssetOhlcvQuery,
+        retry: shouldRetryApiQuery,
     });
 }
