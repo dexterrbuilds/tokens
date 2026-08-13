@@ -73,11 +73,9 @@ export const GET = route(
             // Fallback: if on-chain OHLCV is missing or extremely sparse for this mint, use CoinGecko OHLCV
             // for the canonical asset (when resolvable). This is common for some wrappers.
             if (shouldPreferCoingecko) {
-                const variant = yield* Effect.tryPromise(() =>
-                    assetVariantsGetByMint({ mint: address }),
-                );
+                const variant = yield* assetVariantsGetByMint({ mint: address });
                 const assetDoc = variant
-                    ? yield* Effect.tryPromise(() => cloudRunGetByAssetId({ assetId: variant.assetId }))
+                    ? yield* cloudRunGetByAssetId({ assetId: variant.assetId })
                     : null;
                 const coinId = (assetDoc?.coingeckoId ?? '').trim();
 

@@ -231,9 +231,7 @@ export function loadMarketsInclude(
     },
 ): Effect.Effect<AssetIncludeResult<AssetMarketsInclude>, never> {
     return Effect.gen(function* () {
-        const doc = yield* Effect.tryPromise(() =>
-            tokenMarketsGetLatestByMint({ mint: params.primaryMint }),
-        );
+        const doc = yield* tokenMarketsGetLatestByMint({ mint: params.primaryMint });
         if (!doc) {
             yield* scheduleCacheWarm(request, { mint: params.primaryMint, markets: true, minAgeMs: 0 });
             return includeError('not_found', 'Markets not found in cache');

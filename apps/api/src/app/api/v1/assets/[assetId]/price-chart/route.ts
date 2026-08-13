@@ -176,13 +176,11 @@ export const GET = route(
             const requestedDays = Math.max(1, Math.ceil((to - from) / (24 * 60 * 60)));
             const intervalSeconds = intervalToSeconds(interval);
 
-            const assetDoc = yield* Effect.tryPromise(() => cloudRunGetByAssetId({ assetId }));
+            const assetDoc = yield* cloudRunGetByAssetId({ assetId });
 
             let canonical: CanonicalAsset | null = null;
             if (assetDoc) {
-                const variantsRows = yield* Effect.tryPromise(() =>
-                    assetVariantsListByAssetIds({ assetIds: [assetDoc.assetId] }),
-                );
+                const variantsRows = yield* assetVariantsListByAssetIds({ assetIds: [assetDoc.assetId] });
                 const variants = (variantsRows[0]?.variants ?? []) as AssetVariantRow[];
                 const registryAsset = resolveRegistryAlias(assetDoc.assetId);
 
@@ -198,9 +196,7 @@ export const GET = route(
             } else {
                 const singletonMint = singletonAssetIdToMint(assetId);
                 if (singletonMint) {
-                    const token = yield* Effect.tryPromise(() =>
-                        tokensGetByAddress({ address: singletonMint }),
-                    ).pipe(
+                    const token = yield* tokensGetByAddress({ address: singletonMint }).pipe(
                         tapErrorAndDefault('assets.priceChart.singletonToken', null, {
                             assetId,
                             mint: singletonMint,

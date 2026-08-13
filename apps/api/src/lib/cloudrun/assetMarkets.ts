@@ -3,13 +3,16 @@ import type {
     GetLatestByAssetIdsEntry,
 } from '../../../../cloudrun-assets/src/handlers/assetMarkets';
 
-import { getCloudRunClient } from './client';
+import type { Effect } from 'effect';
+
+import { cloudRunQuery } from './client';
+import type { CloudRunError } from './errors';
 
 export type GetLatestByAssetIdArgs = { assetId: string };
 export type GetLatestByAssetIdResult = AssetMarketAggregate | null;
 
-export async function getLatestByAssetId(args: GetLatestByAssetIdArgs): Promise<GetLatestByAssetIdResult> {
-    return getCloudRunClient().query<GetLatestByAssetIdResult>('assets', 'assetMarketsGetLatestByAssetId', {
+export function getLatestByAssetId(args: GetLatestByAssetIdArgs): Effect.Effect<GetLatestByAssetIdResult, CloudRunError> {
+    return cloudRunQuery<GetLatestByAssetIdResult>('assets', 'assetMarketsGetLatestByAssetId', {
         ...args,
     });
 }
@@ -17,8 +20,8 @@ export async function getLatestByAssetId(args: GetLatestByAssetIdArgs): Promise<
 export type GetLatestByAssetIdsArgs = { assetIds: string[] };
 export type GetLatestByAssetIdsResult = GetLatestByAssetIdsEntry[];
 
-export async function getLatestByAssetIds(args: GetLatestByAssetIdsArgs): Promise<GetLatestByAssetIdsResult> {
-    return getCloudRunClient().query<GetLatestByAssetIdsResult>('assets', 'assetMarketsGetLatestByAssetIds', {
+export function getLatestByAssetIds(args: GetLatestByAssetIdsArgs): Effect.Effect<GetLatestByAssetIdsResult, CloudRunError> {
+    return cloudRunQuery<GetLatestByAssetIdsResult>('assets', 'assetMarketsGetLatestByAssetIds', {
         ...args,
     });
 }

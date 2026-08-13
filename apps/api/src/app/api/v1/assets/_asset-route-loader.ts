@@ -145,14 +145,12 @@ export function loadAssetWithSelectedVariant(
 
         const resolution = yield* resolveAssetRefContext(assetRef);
         const assetId = resolution.assetId;
-        const loaded = yield* Effect.tryPromise(() =>
-            loadAssetBaseForApi({
+        const loaded = yield* loadAssetBaseForApi({
                 assetId,
                 includeVariants: true,
                 includeVariantMarkets: options.loadTokens !== false,
                 includeFillQuality: options.loadTokens !== false,
-            }),
-        );
+            });
         const assetDoc = loaded.asset;
         if (!assetDoc) return yield* Effect.fail(new NotFoundError({ message: 'Asset not found', resource: 'asset' }));
 

@@ -128,12 +128,12 @@ export const GET = route(
 
             let asset: CanonicalAsset | null = null;
 
-            const assetDoc = yield* Effect.tryPromise(() => cloudRunGetByAssetId({ assetId }));
+            const assetDoc = yield* cloudRunGetByAssetId({ assetId });
             if (!assetDoc) {
                 const singletonMint = singletonAssetIdToMint(assetId);
                 const registryAsset = singletonMint ? null : resolveRegistryAlias(assetId);
                 const resolvedAsset: CanonicalAsset | null = singletonMint
-                    ? yield* Effect.tryPromise(() => tokensGetByAddress({ address: singletonMint }))
+                    ? yield* tokensGetByAddress({ address: singletonMint })
                           .pipe(
                               tapErrorAndDefault('assets.detail.singletonToken', null, {
                                   assetId,
@@ -196,9 +196,7 @@ export const GET = route(
                 // Variants and the CoinGecko coin doc are independent — fetch concurrently.
                 const [variantsRows, coinDoc] = yield* Effect.all(
                     [
-                        Effect.tryPromise(() =>
-                            assetVariantsListByAssetIds({ assetIds: [assetDoc.assetId] }),
-                        ),
+                        assetVariantsListByAssetIds({ assetIds: [assetDoc.assetId] }),
                         coingeckoId && (!registryName || !registrySymbol)
                             ? Effect.tryPromise(() => coingeckoGetCoinById({ id: coingeckoId })).pipe(
                                   tapErrorAndDefault('assets.detail.coingeckoCoin', null, {
@@ -350,9 +348,7 @@ export const GET = route(
                                 assetId: canonicalAsset.assetId,
                             }),
                         ),
-                        Effect.tryPromise(() =>
-                            assetMarketsGetLatestByAssetId({ assetId: canonicalAsset.assetId }),
-                        ),
+                        assetMarketsGetLatestByAssetId({ assetId: canonicalAsset.assetId }),
                         isStockPricedCategory(canonicalAsset.category)
                             ? Effect.tryPromise(() =>
                                   stockInstrumentsGetByAssetId({

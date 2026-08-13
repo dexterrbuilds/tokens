@@ -80,7 +80,7 @@ export function loadAssetRisk(
 ): Effect.Effect<AssetRiskPayload, unknown> {
     return Effect.gen(function* () {
         const mint = context.selectedMint;
-        const rows = yield* Effect.tryPromise(() => variantMarketsGetLatestByMints({ mints: [mint] }));
+        const rows = yield* variantMarketsGetLatestByMints({ mints: [mint] });
         const market = rows[0]?.market ?? null;
 
         const isStaleMarket = market ? Date.now() - market.lastFetchedAt > 60 * 60_000 : true;

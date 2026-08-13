@@ -66,7 +66,7 @@ function resolveKnownMintRef(
     isDeletedRef: ReturnType<typeof createDeletedRefChecker>,
 ) {
     return Effect.gen(function* () {
-        const variant = yield* Effect.tryPromise(() => assetVariantsGetByMint({ mint })).pipe(
+        const variant = yield* assetVariantsGetByMint({ mint }).pipe(
             Effect.catch(() => Effect.succeed(null)),
         );
         if (variant) {
@@ -159,7 +159,7 @@ export function resolveAssetRefContext(assetRef: string, options: AssetRefResolu
                             return Effect.succeed(resolution({ assetId: 'solana', ref, resolvedBy: 'sanctum' }));
 
                         // Finally: Convex-backed assets/aliases.
-                        return Effect.tryPromise(() => cloudRunResolveAssetRefForApi({ ref })).pipe(
+                        return cloudRunResolveAssetRefForApi({ ref }).pipe(
                             Effect.flatMap(result => {
                                 if (result) {
                                     if (looksLikeSolanaMintAddress(result.assetId))

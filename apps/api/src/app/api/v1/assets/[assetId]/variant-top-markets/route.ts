@@ -126,7 +126,7 @@ export const GET = route(
                     },
                 ];
             } else {
-                const assetDoc = yield* Effect.tryPromise(() => cloudRunGetByAssetId({ assetId }));
+                const assetDoc = yield* cloudRunGetByAssetId({ assetId });
                 if (!assetDoc) {
                     const registry = resolveRegistryAlias(assetId);
                     if (!registry) {
@@ -141,9 +141,7 @@ export const GET = route(
                     outAssetId = assetDoc.assetId;
                     assetCategory = assetDoc.category;
                     canonicalSymbol = optionalText(assetDoc.symbol);
-                    const variantsRows = yield* Effect.tryPromise(() =>
-                        assetVariantsListByAssetIds({ assetIds: [assetDoc.assetId] }),
-                    );
+                    const variantsRows = yield* assetVariantsListByAssetIds({ assetIds: [assetDoc.assetId] });
                     const dbVariants = (variantsRows[0]?.variants ?? []) as unknown as AssetVariant[];
                     variants = canonicalizeAssetVariants(outAssetId, dbVariants);
                 }
@@ -177,9 +175,7 @@ export const GET = route(
             }
 
             const allMints = variants.map(v => v.mint);
-            const variantMarketRows = yield* Effect.tryPromise(() =>
-                variantMarketsGetLatestByMints({ mints: allMints }),
-            );
+            const variantMarketRows = yield* variantMarketsGetLatestByMints({ mints: allMints });
             const variantMarketByMint = new Map<string, (typeof variantMarketRows)[number]['market']>();
             for (const row of variantMarketRows) variantMarketByMint.set(row.mint, row.market);
 
@@ -209,7 +205,7 @@ export const GET = route(
             const mintChunks = Arr.chunksOf(mints, 50);
             const chunkRows = yield* Effect.all(
                 mintChunks.map(chunk =>
-                    Effect.tryPromise(() => tokenMarketsGetLatestByMints({ mints: chunk })),
+                    tokenMarketsGetLatestByMints({ mints: chunk }),
                 ),
                 { concurrency: 2 },
             );
@@ -266,9 +262,7 @@ export const GET = route(
             const uniqueProtocolMints = Array.from(new Set(protocolMints.map(m => m.trim()).filter(Boolean)));
             const protocolRows =
                 uniqueProtocolMints.length > 0
-                    ? yield* Effect.tryPromise(() =>
-                          variantMarketsGetLatestByMints({ mints: uniqueProtocolMints }),
-                      )
+                    ? yield* variantMarketsGetLatestByMints({ mints: uniqueProtocolMints })
                     : [];
 
             const protocolMarketByMint = new Map<string, (typeof protocolRows)[number]['market']>();
