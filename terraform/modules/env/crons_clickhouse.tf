@@ -7,6 +7,7 @@ locals {
       body_json = jsonencode({
         limit                 = 5000
         requireRefreshEnabled = true
+        budgetMs              = 500000
       })
       attempt_deadline = "540s"
     },
@@ -19,6 +20,7 @@ locals {
         concurrency       = 2
         delayMs           = 50
         selectionWindowMs = 300000
+        budgetMs          = 500000
       })
       attempt_deadline = "540s"
     },
@@ -31,6 +33,7 @@ locals {
       body_json = jsonencode({
         maxAssets             = 1000
         requireRefreshEnabled = true
+        budgetMs              = 500000
       })
       attempt_deadline = "540s"
     },
@@ -45,6 +48,7 @@ locals {
         delayMs               = 25
         selectionWindowMs     = 300000
         requireRefreshEnabled = true
+        budgetMs              = 500000
       })
       attempt_deadline = "540s"
     },

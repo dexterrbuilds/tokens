@@ -231,6 +231,22 @@ async function call(app: ReturnType<typeof createApp>, path: string, init: Reque
 }
 
 describe('POST /jobs/:name', () => {
+    it('returns 404 clickhouse_jobs_disabled for clickhouse jobs when those deps are missing', async () => {
+        const app = createApp({
+            ...baseDeps, repo: noopRepo,
+            authToken: 'tok',
+            cronDeps: emptyCronDeps(),
+            verifyOidc: allowOidc,
+        });
+        const res = await call(app, '/jobs/refresh-solana-clickhouse-trade-snapshots', {
+            method: 'POST',
+            headers: { authorization: 'Bearer x' },
+            body: '{}',
+        });
+        expect(res.status).toBe(404);
+        expect(((await res.json()) as { error: string }).error).toBe('clickhouse_jobs_disabled');
+    });
+
     it('returns 404 jobs_disabled when cronDeps is missing', async () => {
         const app = createApp({ ...baseDeps, repo: noopRepo, authToken: 'tok' });
         const res = await call(app, '/jobs/sync-sanctum-lsts', {

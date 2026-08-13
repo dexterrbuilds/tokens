@@ -1,3 +1,4 @@
+import { Data } from 'effect';
 import { Redis as UpstashRedis } from '@upstash/redis';
 
 import {
@@ -21,6 +22,13 @@ export {
     type RedisSetOptions,
     type RedisTarget,
 } from './client';
+/** A Redis command failed (network, script, or server error). */
+export class RedisCommandError extends Data.TaggedError('RedisCommandError')<{
+    message: string;
+    command: string;
+    cause?: string;
+}> {}
+
 export { MemorystoreClient } from './memorystore';
 export { UpstashRedisClientAdapter } from './upstash-adapter';
 
