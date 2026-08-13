@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect';
-import { BadRequestError } from './api-errors';
+import { BadRequestError, UpstreamDataError } from './api-errors';
 
 // -----------------------------------------------------------------------------
 // Common schemas
@@ -59,4 +59,58 @@ export function decodeOptionalSearchParam<S extends Schema.ConstraintDecoder<unk
     const raw = params.get(key);
     if (raw == null) return Effect.succeed(null);
     return decodeUnknownOrBadRequest(schema, raw, `Invalid ${key}`);
+}
+
+// -----------------------------------------------------------------------------
+// Upstream (outbound) response decoding
+// -----------------------------------------------------------------------------
+
+/**
+ * Strictly decode an upstream response. Failure becomes a tagged
+ * `UpstreamDataError` (mapped to 500). Note that Schema decoding drops excess
+ * properties, so additive upstream changes never fail — only missing/wrong
+ * fields do. Use for first-party contracts (e.g. our Cloud Run services).
+ */
+export function decodeUpstreamOrFail<S extends Schema.ConstraintDecoder<unknown>>(
+    schema: S,
+    service: string,
+): (input: unknown) => Effect.Effect<S['Type'], UpstreamDataError, S['DecodingServices']> {
+    return input =>
+        Schema.decodeUnknownEffect(schema)(input).pipe(
+            Effect.mapError(
+                parseError =>
+                    new UpstreamDataError({
+                        message: `${service} response failed schema validation`,
+                        service,
+                        issue: parseErrorToMessage(parseError),
+                    }),
+            ),
+        );
+}
+
+/**
+ * Shadow-mode decode for third-party responses: on mismatch, log a structured
+ * `upstream_decode_failed` event and return the raw input (cast) so behavior
+ * is unchanged while schemas bed in. Flip callers to `decodeUpstreamOrFail`
+ * once the event is quiet in logs.
+ */
+export function decodeUpstreamOrWarn<S extends Schema.ConstraintDecoder<unknown>>(
+    schema: S,
+    service: string,
+): (input: unknown) => Effect.Effect<S['Type'], never, S['DecodingServices']> {
+    return input =>
+        Schema.decodeUnknownEffect(schema)(input).pipe(
+            Effect.catch(parseError =>
+                Effect.sync(() => {
+                    console.warn(
+                        JSON.stringify({
+                            event: 'upstream_decode_failed',
+                            service,
+                            issue: parseErrorToMessage(parseError).slice(0, 512),
+                        }),
+                    );
+                    return input as S['Type'];
+                }),
+            ),
+        );
 }

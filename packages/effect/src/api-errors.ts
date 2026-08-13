@@ -80,6 +80,13 @@ export class JsonParseError extends Data.TaggedError('JsonParseError')<{
     body?: string;
 }> {}
 
+/** An upstream response parsed as JSON but failed schema validation. */
+export class UpstreamDataError extends Data.TaggedError('UpstreamDataError')<{
+    message: string;
+    service: string;
+    issue?: string;
+}> {}
+
 // -----------------------------------------------------------------------------
 // Conversions (unknown -> standardized error shape)
 // -----------------------------------------------------------------------------
@@ -177,6 +184,7 @@ export function httpStatusForError(error: unknown): number {
             return 404;
         case 'RateLimitedError':
             return 429;
+        case 'UpstreamDataError':
         case 'MissingEnvError':
         case 'UpstreamHttpError':
         case 'FetchFailedError':

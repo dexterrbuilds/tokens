@@ -1,3 +1,6 @@
+import { Effect, Schema } from 'effect';
+import { fetchJsonWithRetry } from '@tokens/effect';
+import { decodeUpstreamOrWarn } from '@tokens/effect/schema';
 import { withExternalTiming } from './externalTiming';
 import type {
     BirdeyeClient,
@@ -29,6 +32,19 @@ import type {
 import type { BirdeyeMarketsClient, TokenMarketEntry } from './handlers/crons.misc';
 import type { PreStocksApiSnapshot, PreStocksClient } from './handlers/crons.prestocks';
 
+// Shadow-mode envelope schemas (warn on mismatch, pass through) — the two
+// highest-traffic blind casts. Row shapes stay unknown/T on purpose.
+const BirdeyeEnvelopeSchema = Schema.Struct({
+    success: Schema.optionalKey(Schema.Unknown),
+    data: Schema.optionalKey(Schema.NullishOr(Schema.Record(Schema.String, Schema.Unknown))),
+});
+
+const EXTERNAL_FETCH_TIMEOUT_MS = 30_000;
+
+const GatewayEnvelopeSchema = Schema.Struct({
+    data: Schema.optionalKey(Schema.NullishOr(Schema.Array(Schema.Unknown))),
+});
+
 interface MakeBirdeyeOptions {
     apiKey: string;
     origin?: string;
@@ -49,11 +65,21 @@ export function makeBirdeyeClient(opts: MakeBirdeyeOptions): BirdeyeClient {
     return {
         async fetchTokenOverview(mint: string): Promise<BirdeyeOverview | null> {
             const url = `${baseUrl}/defi/token_overview?address=${encodeURIComponent(mint)}`;
-            const res = await withExternalTiming('birdeye', url, () => fetch(url, { headers }));
-            const json = (await res.json().catch(() => null)) as
-                | { success?: unknown; data?: BirdeyeOverview }
-                | null;
-            if (!res.ok || !json || json.success !== true || !json.data) return null;
+            const json = await Effect.runPromise(
+                fetchJsonWithRetry<{ success?: unknown; data?: BirdeyeOverview } | null>({
+                    url,
+                    service: 'birdeye',
+                    init: { headers },
+                    maxRetries: 2,
+                    timeout: '15 seconds',
+                    schema: BirdeyeEnvelopeSchema,
+                }).pipe(
+                    // Non-2xx keeps the historical null-degrade contract; network
+                    // failures / timeouts still throw (tagged) after retries.
+                    Effect.catchTag('UpstreamHttpError', () => Effect.succeed(null)),
+                ),
+            );
+            if (!json || json.success !== true || !json.data) return null;
             return json.data;
         },
     };
@@ -116,11 +142,16 @@ export function makeBirdeyeOhlcvClient(opts: MakeBirdeyeOhlcvOptions): BirdeyeOh
                 time_to: String(args.to),
             });
             const url = `${baseUrl}/defi/v3/ohlcv?${params.toString()}`;
-            const res = await withExternalTiming('birdeye', url, () => fetch(url, { headers }));
-            const json = (await res.json().catch(() => null)) as
-                | { success?: unknown; data?: { items?: unknown[] } }
-                | null;
-            if (!res.ok || !json || json.success !== true || !json.data || !Array.isArray(json.data.items)) {
+            const json = await Effect.runPromise(
+                fetchJsonWithRetry<{ success?: unknown; data?: { items?: unknown[] } } | null>({
+                    url,
+                    service: 'birdeye',
+                    init: { headers },
+                    maxRetries: 2,
+                    timeout: '30 seconds',
+                }).pipe(Effect.catchTag('UpstreamHttpError', () => Effect.succeed(null))),
+            );
+            if (!json || json.success !== true || !json.data || !Array.isArray(json.data.items)) {
                 return [];
             }
             const out: OhlcvCandle[] = [];
@@ -151,11 +182,14 @@ export function makeSanctumClient(opts: MakeSanctumOptions): SanctumClient {
             };
             let res: Response;
             try {
-                res = await withExternalTiming('sanctum', url.toString(), () => fetch(url, { headers: primaryHeaders }));
+                res = await withExternalTiming('sanctum', url.toString(), () =>
+                    fetch(url, { headers: primaryHeaders, signal: AbortSignal.timeout(EXTERNAL_FETCH_TIMEOUT_MS) }),
+                );
                 if (!res.ok && (res.status === 400 || res.status === 401 || res.status === 403)) {
                     res = await withExternalTiming('sanctum', url.toString(), () =>
                         fetch(url, {
                             headers: { Accept: 'application/json', Authorization: `Bearer ${apiKey}` },
+                            signal: AbortSignal.timeout(EXTERNAL_FETCH_TIMEOUT_MS),
                         }),
                     );
                 }
@@ -163,7 +197,10 @@ export function makeSanctumClient(opts: MakeSanctumOptions): SanctumClient {
                     const fallback = new URL(url.toString());
                     fallback.searchParams.set('apiKey', apiKey);
                     res = await withExternalTiming('sanctum', fallback.toString(), () =>
-                        fetch(fallback, { headers: { Accept: 'application/json' } }),
+                        fetch(fallback, {
+                            headers: { Accept: 'application/json' },
+                            signal: AbortSignal.timeout(EXTERNAL_FETCH_TIMEOUT_MS),
+                        }),
                     );
                 }
             } catch (err) {
@@ -197,7 +234,10 @@ export function makeWebacyClient(opts: MakeWebacyOptions): WebacyClient {
         if (!apiKey) return { ok: false, status: 0, message: 'WEBACY_API_KEY not configured' };
         try {
             const res = await withExternalTiming('webacy', url, () =>
-                fetch(url, { headers: { 'x-api-key': apiKey, Accept: 'application/json' } }),
+                fetch(url, {
+                    headers: { 'x-api-key': apiKey, Accept: 'application/json' },
+                    signal: AbortSignal.timeout(EXTERNAL_FETCH_TIMEOUT_MS),
+                }),
             );
             const json = await res.json().catch(() => null);
             if (!res.ok || !json) {
@@ -301,13 +341,18 @@ export function makeCoingeckoClient(opts: MakeCoingeckoOptions): CoingeckoClient
     if (apiKey) headers['x-cg-pro-api-key'] = apiKey;
 
     async function fetchJson(url: URL | string): Promise<unknown> {
-        const res = await withExternalTiming('coingecko', url.toString(), () => fetch(url, { headers }));
-        const json: unknown = await res.json().catch(() => null);
-        if (!res.ok) {
-            const body = json ? JSON.stringify(json) : '(no json body)';
-            throw new Error(`CoinGecko ${url.toString()} failed: HTTP ${res.status} ${res.statusText} ${body}`.trim());
-        }
-        return json;
+        // Tagged failures (UpstreamHttpError / RateLimitedError / FetchFailedError)
+        // propagate to per-item catches; adds 429/5xx retry + a timeout, which
+        // these calls previously lacked entirely.
+        return Effect.runPromise(
+            fetchJsonWithRetry<unknown>({
+                url: url.toString(),
+                service: 'coingecko',
+                init: { headers },
+                maxRetries: 2,
+                timeout: '30 seconds',
+            }),
+        );
     }
 
     return {
@@ -524,8 +569,11 @@ export function makeClickhouseClient(opts: MakeClickhouseOptions): ClickhouseCli
             const text = await res.text().catch(() => '');
             throw new ClickhouseApiError(`clickhouse-api HTTP ${res.status}: ${text.slice(0, 500)}`, res.status);
         }
-        const payload = (await res.json()) as { data?: T[] };
-        return payload.data ?? [];
+        const payload: unknown = await res.json();
+        const decoded = await Effect.runPromise(
+            decodeUpstreamOrWarn(GatewayEnvelopeSchema, 'clickhouse-api')(payload),
+        );
+        return ((decoded as { data?: T[] }).data ?? []) as T[];
     }
 
     return {
@@ -961,13 +1009,15 @@ export function makeRwaXyzClient(opts: MakeRwaXyzOptions): RwaXyzClient {
 
     async function fetchJson(path: string): Promise<unknown> {
         const url = `${baseUrl}/${apiVersion}${path}`;
-        const res = await withExternalTiming('rwaxyz', url, () => fetch(url, { headers }));
-        const json = await res.json().catch(() => null);
-        if (!res.ok || !json) {
-            const body = json ? JSON.stringify(json) : '(no json body)';
-            throw new Error(`RWA.xyz request failed: HTTP ${res.status} ${res.statusText} ${body}`);
-        }
-        return json;
+        return Effect.runPromise(
+            fetchJsonWithRetry<unknown>({
+                url,
+                service: 'rwaxyz',
+                init: { headers },
+                maxRetries: 2,
+                timeout: '30 seconds',
+            }),
+        );
     }
 
     async function fetchTokenByMint(mint: string): Promise<RwaXyzTokenRaw | null> {
