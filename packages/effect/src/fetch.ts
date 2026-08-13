@@ -19,6 +19,8 @@ export interface FetchJsonArgs {
      */
     schema?: Schema.ConstraintDecoder<unknown>;
     decodeMode?: 'fail' | 'warn';
+    /** Per-attempt timeout. A timed-out attempt fails as FetchFailedError (retryable). */
+    timeout?: Duration.Input;
 }
 
 export type FetchJsonError = RateLimitedError | UpstreamHttpError | FetchFailedError | JsonParseError | UpstreamDataError;
@@ -58,7 +60,7 @@ function isRetryableFetchError(error: unknown): boolean {
 }
 
 export function fetchJson<T = unknown>(args: FetchJsonArgs): Effect.Effect<T, FetchJsonError> {
-    return Effect.tryPromise({
+    const attempt = Effect.tryPromise({
         try: (signal: AbortSignal) => {
             const merged = mergeSignals(signal, args.signal);
             return Promise.resolve()
@@ -129,6 +131,20 @@ export function fetchJson<T = unknown>(args: FetchJsonArgs): Effect.Effect<T, Fe
                 }),
             );
         }),
+    );
+
+    if (args.timeout === undefined) return attempt;
+    return attempt.pipe(
+        Effect.timeout(args.timeout),
+        Effect.catchTag('TimeoutError', () =>
+            Effect.fail(
+                new FetchFailedError({
+                    service: args.service,
+                    message: `${args.service} request timed out`,
+                    cause: 'timeout',
+                }),
+            ),
+        ),
     );
 }
 
