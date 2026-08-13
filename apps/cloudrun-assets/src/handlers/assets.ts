@@ -132,12 +132,8 @@ export function rowToResult(row: AssetRow): AssetResult {
     return result;
 }
 
-export class InvalidArgsError extends Error {
-    constructor(message: string) {
-        super(message);
-        this.name = 'InvalidArgsError';
-    }
-}
+export { InvalidArgsError } from '@tokens/cloudrun-shutdown/http-errors';
+import { InvalidArgsError } from '@tokens/cloudrun-shutdown/http-errors';
 
 function isAssetCategory(value: unknown): value is AssetCategory {
     return typeof value === 'string' && (ASSET_CATEGORIES as readonly string[]).includes(value);
