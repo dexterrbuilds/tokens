@@ -1,12 +1,15 @@
-import { getCloudRunClient } from './client';
+import type { Effect } from 'effect';
+
+import { cloudRunQuery } from './client';
+import type { CloudRunError } from './errors';
 
 export type AssetCollectionsGetMembersArgs = { slug: string; limit?: number };
 export type AssetCollectionsGetMembersResult = string[];
 
-export async function assetCollectionsGetMembers(
+export function assetCollectionsGetMembers(
     args: AssetCollectionsGetMembersArgs,
-): Promise<AssetCollectionsGetMembersResult> {
-    return getCloudRunClient().query<AssetCollectionsGetMembersResult>(
+): Effect.Effect<AssetCollectionsGetMembersResult, CloudRunError> {
+    return cloudRunQuery<AssetCollectionsGetMembersResult>(
         'assets',
         'assetCollectionsGetMembers',
         { ...args },

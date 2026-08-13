@@ -194,6 +194,7 @@ module "scheduler_jobs" {
         concurrency       = 3
         delayMs           = 100
         selectionWindowMs = 600000
+        budgetMs          = 260000
       })
       attempt_deadline = "300s"
     },
@@ -207,8 +208,12 @@ module "scheduler_jobs" {
         concurrency       = 2
         delayMs           = 150
         selectionWindowMs = 300000
+        budgetMs          = 500000
       })
       attempt_deadline = "540s"
+      # High-frequency job: the next scheduled tick is the retry; a 500 must not
+      # stack scheduler retries on top of a 1-5 minute cadence.
+      retry_count      = 0
     },
     {
       name      = "refresh-stale-asset-variant-markets"
@@ -219,6 +224,7 @@ module "scheduler_jobs" {
         minAgeMs    = 3600000
         concurrency = 2
         delayMs     = 200
+        budgetMs    = 500000
       })
       attempt_deadline = "540s"
     },
@@ -239,6 +245,7 @@ module "scheduler_jobs" {
         concurrency       = 2
         delayMs           = 250
         selectionWindowMs = 21600000
+        budgetMs          = 500000
       })
       attempt_deadline = "540s"
     },
@@ -256,6 +263,7 @@ module "scheduler_jobs" {
       body_json = jsonencode({
         concurrency = 2
         delayMs     = 150
+        budgetMs    = 500000
       })
       attempt_deadline = "540s"
     },
@@ -268,8 +276,12 @@ module "scheduler_jobs" {
         limit                 = 50
         concurrency           = 3
         requireRefreshEnabled = true
+        budgetMs              = 260000
       })
       attempt_deadline = "300s"
+      # High-frequency job: the next scheduled tick is the retry; a 500 must not
+      # stack scheduler retries on top of a 1-5 minute cadence.
+      retry_count      = 0
     },
     {
       name      = "refresh-clickhouse-variant-market-metrics"
@@ -280,8 +292,12 @@ module "scheduler_jobs" {
         chunkSize             = 100
         delayMs               = 100
         requireRefreshEnabled = true
+        budgetMs              = 150000
       })
       attempt_deadline = "180s"
+      # High-frequency job: the next scheduled tick is the retry; a 500 must not
+      # stack scheduler retries on top of a 1-5 minute cadence.
+      retry_count      = 0
     },
     {
       name      = "refresh-solana-clickhouse-trending-markets"
@@ -292,6 +308,7 @@ module "scheduler_jobs" {
         concurrency           = 3
         delayMs               = 25
         requireRefreshEnabled = true
+        budgetMs              = 260000
       })
       attempt_deadline = "300s"
     },
@@ -304,6 +321,7 @@ module "scheduler_jobs" {
         concurrency           = 3
         delayMs               = 25
         requireRefreshEnabled = true
+        budgetMs              = 500000
       })
       attempt_deadline = "540s"
     },
@@ -320,6 +338,7 @@ module "scheduler_jobs" {
         delayMs               = 500
         selectionWindowMs     = 900000
         requireRefreshEnabled = true
+        budgetMs              = 500000
       })
       attempt_deadline = "540s"
     },
@@ -336,6 +355,7 @@ module "scheduler_jobs" {
         delayMs               = 500
         selectionWindowMs     = 3600000
         requireRefreshEnabled = true
+        budgetMs              = 500000
       })
       attempt_deadline = "540s"
     },
@@ -352,6 +372,7 @@ module "scheduler_jobs" {
         delayMs               = 500
         selectionWindowMs     = 14400000
         requireRefreshEnabled = true
+        budgetMs              = 500000
       })
       attempt_deadline = "540s"
     },
@@ -368,6 +389,7 @@ module "scheduler_jobs" {
         delayMs               = 500
         selectionWindowMs     = 86400000
         requireRefreshEnabled = true
+        budgetMs              = 500000
       })
       attempt_deadline = "540s"
     },
@@ -384,6 +406,7 @@ module "scheduler_jobs" {
         delayMs               = 500
         selectionWindowMs     = 604800000
         requireRefreshEnabled = true
+        budgetMs              = 500000
       })
       attempt_deadline = "540s"
     },
@@ -398,6 +421,7 @@ module "scheduler_jobs" {
         concurrency       = 2
         delayMs           = 100
         selectionWindowMs = 3600000
+        budgetMs          = 500000
       })
       attempt_deadline = "540s"
     },
@@ -412,6 +436,7 @@ module "scheduler_jobs" {
         concurrency       = 2
         delayMs           = 100
         selectionWindowMs = 43200000
+        budgetMs          = 500000
       })
       attempt_deadline = "540s"
     },
@@ -426,6 +451,7 @@ module "scheduler_jobs" {
         concurrency       = 2
         delayMs           = 100
         selectionWindowMs = 86400000
+        budgetMs          = 500000
       })
       attempt_deadline = "540s"
     },
@@ -437,6 +463,7 @@ module "scheduler_jobs" {
         lookbackMinutes     = 15
         maxProjects         = 100
         maxEventsPerProject = 5000
+        budgetMs            = 500000
       })
       attempt_deadline = "540s"
     },
@@ -448,6 +475,7 @@ module "scheduler_jobs" {
         retentionDays       = 30
         batchSizePerProject = 5000
         maxProjects         = 100
+        budgetMs            = 500000
       })
       attempt_deadline = "540s"
     },
@@ -464,6 +492,7 @@ module "scheduler_jobs" {
         delayMs           = 200
         selectionWindowMs = 1800000
         upsertChunkSize   = 1000
+        budgetMs          = 500000
       })
       attempt_deadline = "540s"
     },
@@ -479,6 +508,7 @@ module "scheduler_jobs" {
         concurrency       = 2
         delayMs           = 200
         selectionWindowMs = 1800000
+        budgetMs          = 500000
       })
       attempt_deadline = "540s"
     },
@@ -494,6 +524,7 @@ module "scheduler_jobs" {
         concurrency       = 2
         delayMs           = 200
         selectionWindowMs = 21600000
+        budgetMs          = 500000
       })
       attempt_deadline = "540s"
     },
@@ -509,6 +540,7 @@ module "scheduler_jobs" {
         concurrency       = 2
         delayMs           = 200
         selectionWindowMs = 21600000
+        budgetMs          = 500000
       })
       attempt_deadline = "540s"
     },
@@ -524,6 +556,7 @@ module "scheduler_jobs" {
         concurrency       = 2
         delayMs           = 200
         selectionWindowMs = 86400000
+        budgetMs          = 500000
       })
       attempt_deadline = "540s"
     },

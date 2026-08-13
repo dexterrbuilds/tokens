@@ -2,6 +2,9 @@
 
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Effect } from 'effect';
+import { apiJson } from '@/effect/api-client';
+import { shouldRetryApiQuery } from '@/effect/query-retry';
 
 import { cn } from '@tokens/ui/cn';
 import { HoverCard, HoverCardArrow, HoverCardContent, HoverCardTrigger } from '@tokens/ui/hover-card';
@@ -121,12 +124,10 @@ export function TokenRiskPopover({ address, riskSummaryUrl, riskQueryKey }: Toke
         error,
     } = useQuery<RiskData>({
         queryKey,
-        queryFn: async ({ signal }) => {
-            const res = await fetch(riskSummaryHref, { signal });
-            if (!res.ok) throw new Error('Failed to load risk score');
-            return res.json();
-        },
+        queryFn: async ({ signal }) =>
+            Effect.runPromise(apiJson<RiskData>({ url: riskSummaryHref }), { signal }),
         enabled: open,
+        retry: shouldRetryApiQuery,
         staleTime: 60 * 1000,
     });
 

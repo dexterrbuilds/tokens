@@ -81,7 +81,7 @@ export const GET = route(
 
             const assetId = yield* resolveAssetIdFromRef(assetRef);
 
-            const assetDoc = yield* Effect.tryPromise(() => cloudRunGetByAssetId({ assetId }));
+            const assetDoc = yield* cloudRunGetByAssetId({ assetId });
             if (!assetDoc)
                 return yield* Effect.fail(new NotFoundError({ message: 'Asset not found', resource: 'asset' }));
 
@@ -93,7 +93,7 @@ export const GET = route(
                 };
             }
 
-            const coinDoc = yield* Effect.tryPromise(() => coingeckoGetCoinById({ id: coinId }));
+            const coinDoc = yield* coingeckoGetCoinById({ id: coinId });
             const nowMs = Date.now();
             const lastFetchedAt = coinDoc?.lastMetadataFetchedAt ?? 0;
             const isStale = lastFetchedAt <= 0 || nowMs - lastFetchedAt > 24 * 60 * 60_000;

@@ -31,9 +31,7 @@ export const POST = route(
             const mints = dedupe(values).slice(0, 250);
             if (mints.length === 0) return [];
 
-            return yield* Effect.tryPromise(() =>
-                tokensGetSearchTokensByAddresses({ addresses: mints }),
-            );
+            return yield* tokensGetSearchTokensByAddresses({ addresses: mints });
         }),
     { platform: { requiredScopes: ['assets:read'] }, cache: { maxAge: 60 } },
 );

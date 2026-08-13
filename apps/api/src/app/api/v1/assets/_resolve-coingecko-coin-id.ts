@@ -91,9 +91,7 @@ export function resolveCoinGeckoCoinIdForAsset(params: {
 
     return Effect.gen(function* () {
         for (const query of queries) {
-            const coins = (yield* Effect.tryPromise(() =>
-                coingeckoSearchCoins({ query, limit: 25 }),
-            ).pipe(
+            const coins = (yield* coingeckoSearchCoins({ query, limit: 25 }).pipe(
                 tapErrorAndDefault('assets.resolveCoinGeckoCoinId.search', [] as CoinGeckoCoinSearchResult[], {
                     assetId: params.assetId,
                     query,

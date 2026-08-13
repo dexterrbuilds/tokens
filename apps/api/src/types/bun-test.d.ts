@@ -4,6 +4,9 @@ declare module 'bun:test' {
     export const test: typeof it;
     export function beforeEach(fn: () => void | Promise<void>): void;
     export function afterEach(fn: () => void | Promise<void>): void;
+    export const mock: {
+        module(specifier: string, factory: () => unknown): void;
+    };
     export function expect<T>(value: T): {
         toBe(expected: unknown): void;
         toBeCloseTo(expected: number, numDigits?: number): void;

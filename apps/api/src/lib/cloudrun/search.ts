@@ -10,7 +10,10 @@
  * `/api/v1/assets/search` response shape by construction.
  */
 
-import { getCloudRunClient } from './client';
+import type { Effect } from 'effect';
+
+import { cloudRunQuery } from './client';
+import type { CloudRunError } from './errors';
 
 // Re-export the authoritative shape from the Cloud Run handler so the wrapper
 // and the server agree by construction.
@@ -23,8 +26,8 @@ import type { SearchPrefetchArgs, SearchPrefetchResult } from '../../../../cloud
 /**
  * Fetch every raw row the search route needs in a single Cloud Run RTT.
  */
-export async function searchPrefetchForApi(args: SearchPrefetchArgs): Promise<SearchPrefetchResult> {
-    return getCloudRunClient().query<SearchPrefetchResult>(
+export function searchPrefetchForApi(args: SearchPrefetchArgs): Effect.Effect<SearchPrefetchResult, CloudRunError> {
+    return cloudRunQuery<SearchPrefetchResult>(
         'assets',
         'assetsApiSearchPrefetchForApi',
         { ...args },
