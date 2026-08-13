@@ -6,6 +6,13 @@ const ENV_KEYS = [
     'NODE_ENV',
     'VERCEL_ENV',
     'TOKENS_USAGE_LOG_MODE',
+    'TOKENS_USAGE_RAW_SAMPLE_RATE',
+    'TOKENS_CLOUDRUN_AUTH_TOKEN',
+    'TOKENS_CLOUDRUN_ASSETS_URL',
+    'TOKENS_CLOUDRUN_PRICES_URL',
+    'TOKENS_CLOUDRUN_USAGE_URL',
+    'TOKENS_CLOUDRUN_ADMIN_URL',
+    'TOKENS_CLOUDRUN_TIMEOUT_MS',
 ] as const;
 
 function setEnv(key: string, value: string): void {
@@ -14,6 +21,19 @@ function setEnv(key: string, value: string): void {
 
 function deleteEnv(key: string): void {
     delete (process.env as Record<string, string | undefined>)[key];
+}
+
+function withCapturedWarnings(fn: (warnings: string[]) => void): void {
+    const warnings: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => {
+        warnings.push(String(args[0]));
+    };
+    try {
+        fn(warnings);
+    } finally {
+        console.warn = original;
+    }
 }
 
 function withEnv(overrides: Partial<Record<(typeof ENV_KEYS)[number], string>>, fn: () => void): void {
@@ -67,6 +87,71 @@ describe('loadEnv usage logging mode', () => {
             },
             () => {
                 expect(loadEnv().usageLogMode).toBe('aggregated');
+            },
+        );
+    });
+});
+
+
+describe('loadEnv invalid numeric values', () => {
+    it('warns loudly when a numeric env is not a number, then uses the fallback', () => {
+        withEnv({ TOKENS_USAGE_RAW_SAMPLE_RATE: 'abc' }, () => {
+            withCapturedWarnings(warnings => {
+                const env = loadEnv();
+                expect(env.usageRawSampleRate).toBe(0);
+                const events = warnings
+                    .map(line => JSON.parse(line) as Record<string, unknown>)
+                    .filter(event => event.event === 'env_invalid_value');
+                expect(events.length).toBe(1);
+                expect(events[0]!.name).toBe('TOKENS_USAGE_RAW_SAMPLE_RATE');
+                expect(events[0]!.raw).toBe('abc');
+            });
+        });
+    });
+
+    it('warns when a numeric env is clamped', () => {
+        withEnv({ TOKENS_USAGE_RAW_SAMPLE_RATE: '7' }, () => {
+            withCapturedWarnings(warnings => {
+                const env = loadEnv();
+                expect(env.usageRawSampleRate).toBe(1);
+                expect(warnings.length).toBe(1);
+            });
+        });
+    });
+
+    it('stays silent for valid values', () => {
+        withEnv({ TOKENS_USAGE_RAW_SAMPLE_RATE: '0.5' }, () => {
+            withCapturedWarnings(warnings => {
+                expect(loadEnv().usageRawSampleRate).toBe(0.5);
+                expect(warnings.length).toBe(0);
+            });
+        });
+    });
+});
+
+describe('loadEnv cloudRun section', () => {
+    const CLOUDRUN_VARS = {
+        TOKENS_CLOUDRUN_AUTH_TOKEN: 'tok',
+        TOKENS_CLOUDRUN_ASSETS_URL: 'https://assets.example.run.app',
+        TOKENS_CLOUDRUN_PRICES_URL: 'https://prices.example.run.app',
+        TOKENS_CLOUDRUN_USAGE_URL: 'https://usage.example.run.app',
+    };
+
+    it('is null when any required var is missing', () => {
+        withEnv({ ...CLOUDRUN_VARS, TOKENS_CLOUDRUN_USAGE_URL: undefined }, () => {
+            expect(loadEnv().cloudRun).toBeNull();
+        });
+    });
+
+    it('resolves the full section including optional admin URL and timeout', () => {
+        withEnv(
+            { ...CLOUDRUN_VARS, TOKENS_CLOUDRUN_ADMIN_URL: 'https://admin.example.run.app', TOKENS_CLOUDRUN_TIMEOUT_MS: '20000' },
+            () => {
+                const cloudRun = loadEnv().cloudRun;
+                expect(cloudRun).not.toBeNull();
+                expect(cloudRun!.authToken).toBe('tok');
+                expect(cloudRun!.urls.admin).toBe('https://admin.example.run.app');
+                expect(cloudRun!.timeoutMs).toBe(20000);
             },
         );
     });

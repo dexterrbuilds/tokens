@@ -10,6 +10,7 @@ import type { AdminMutationsRepo } from './handlers/curatedTokensMutations';
 import * as reads from './handlers/curatedTokensReads';
 import type { AdminReadsRepo } from './handlers/curatedTokensReads';
 import { IdentityRequiredError, InvalidArgsError, UnauthorizedError } from './handlers/errors';
+import { dispatchErrorResponse } from '@tokens/cloudrun-shutdown/http-errors';
 import * as hardDeleteHandlers from './handlers/hardDelete';
 import type { HardDeleteRepo } from './handlers/hardDelete';
 import * as logoUploadsHandlers from './handlers/logoUploads';
@@ -57,19 +58,6 @@ export function decodeIdentityHeader(raw: string | undefined): CallerIdentity | 
     }
 }
 
-function errorResponse(err: unknown, kind: string, name: string) {
-    if (err instanceof InvalidArgsError) {
-        return { body: { error: 'invalid_args', message: err.message }, status: 400 as const };
-    }
-    if (err instanceof IdentityRequiredError) {
-        return { body: { error: 'identity_required' }, status: 401 as const };
-    }
-    if (err instanceof UnauthorizedError) {
-        return { body: { error: 'unauthorized' }, status: 403 as const };
-    }
-    console.error(`[cloudrun-admin] ${kind} ${name} threw`, err);
-    return { body: { error: 'handler_error' }, status: 500 as const };
-}
 
 export function createApp(deps: ServerDeps) {
     const app = new Hono();
@@ -151,7 +139,7 @@ export function createApp(deps: ServerDeps) {
         try {
             return c.json(await handler(args, identity));
         } catch (err) {
-            const { body: errBody, status } = errorResponse(err, kind, name);
+            const { body: errBody, status } = dispatchErrorResponse('cloudrun-admin', err, kind, name);
             return c.json(errBody, status);
         }
     };
