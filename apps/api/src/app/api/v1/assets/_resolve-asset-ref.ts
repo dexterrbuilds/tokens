@@ -50,9 +50,7 @@ function createDeletedRefChecker(cache: Map<string, boolean>) {
             const cached = cache.get(normalizedRef);
             if (cached !== undefined) return cached;
 
-            const deletedRefs = yield* Effect.tryPromise(() =>
-                listDeletedRefs({ refs: [normalizedRef] }),
-            ).pipe(Effect.catch(() => Effect.succeed([] as string[])));
+            const deletedRefs = yield* listDeletedRefs({ refs: [normalizedRef] }).pipe(Effect.catch(() => Effect.succeed([] as string[])));
             const isDeleted = deletedRefs.includes(normalizedRef);
             cache.set(normalizedRef, isDeleted);
             return isDeleted;
@@ -89,7 +87,7 @@ function resolveKnownMintRef(
             }
         }
 
-        const sanctum = yield* Effect.tryPromise(() => sanctumResolveRef({ ref: mint })).pipe(
+        const sanctum = yield* sanctumResolveRef({ ref: mint }).pipe(
             tapErrorAndDefault('assets.resolve.sanctumMintRef', null, { ref, mint }),
         );
         if (sanctum) return resolution({ assetId: 'solana', ref, resolvedBy: 'sanctum', mint });
@@ -151,7 +149,7 @@ export function resolveAssetRefContext(assetRef: string, options: AssetRefResolu
             }
 
             // Second: Sanctum-backed LST discovery (mint or symbol) should resolve to canonical `solana`.
-            return Effect.tryPromise(() => sanctumResolveRef({ ref }))
+            return sanctumResolveRef({ ref })
                 .pipe(tapErrorAndDefault('assets.resolve.sanctumLstRef', null, { ref }))
                 .pipe(
                     Effect.flatMap(sanctum => {

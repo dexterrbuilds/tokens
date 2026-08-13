@@ -55,14 +55,12 @@ export const GET = route(
 
             const warmSecret = (process.env.TOKENS_CACHE_WARM_SECRET ?? '').trim();
 
-            const candles = yield* Effect.tryPromise(() =>
-                ohlcvList({
+            const candles = yield* ohlcvList({
                     address,
                     interval,
                     from: requestedFrom,
                     to: requestedTo,
-                }),
-            );
+                });
 
             const firstTime = candles.length > 0 ? (candles[0]?.time ?? null) : null;
             const lastTime = candles.length > 0 ? (candles[candles.length - 1]?.time ?? null) : null;
@@ -80,14 +78,12 @@ export const GET = route(
                 const coinId = (assetDoc?.coingeckoId ?? '').trim();
 
                 if (coinId) {
-                    const cgCandles = yield* Effect.tryPromise(() =>
-                        coingeckoListOhlcv({
+                    const cgCandles = yield* coingeckoListOhlcv({
                             coinId,
                             interval,
                             from: requestedFrom,
                             to: requestedTo,
-                        }),
-                    );
+                        });
                     if (warmSecret) {
                         const requestedDays = Math.max(1, Math.ceil((requestedTo - requestedFrom) / (24 * 60 * 60)));
                         yield* scheduleCoingeckoOhlcvWarm({

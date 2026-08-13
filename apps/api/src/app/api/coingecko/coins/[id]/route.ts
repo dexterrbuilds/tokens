@@ -11,7 +11,7 @@ export const GET = route(
             const coinId = (id ?? '').trim();
             if (!coinId) return yield* Effect.fail(new BadRequestError({ message: 'id is required' }));
 
-            return yield* Effect.tryPromise(() => coingeckoGetCoinById({ id: coinId }));
+            return yield* coingeckoGetCoinById({ id: coinId });
         }),
     { platform: { requiredScopes: ['internal:read'] } },
 );

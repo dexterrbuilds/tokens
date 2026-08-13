@@ -112,7 +112,7 @@ export async function refreshPrestocksPrices(
     }
 
     return {
-        ok: true,
+        ok: !(listings.length > 0 && succeeded === 0 && failed >= listings.length),
         processed: succeeded + failed,
         durationMs: deps.now() - start,
         requested: listings.length,

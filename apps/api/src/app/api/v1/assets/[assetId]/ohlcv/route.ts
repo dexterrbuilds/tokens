@@ -169,14 +169,12 @@ export const GET = route(
                 interval,
             });
 
-            const candles = yield* Effect.tryPromise(() =>
-                ohlcvList({
+            const candles = yield* ohlcvList({
                     address: mint,
                     interval,
                     from: requestedFrom,
                     to: requestedTo,
-                }),
-            );
+                });
 
             const intervalSeconds = intervalToSeconds(interval);
             const latestTime = candles.length > 0 ? (candles[candles.length - 1]?.time ?? null) : null;

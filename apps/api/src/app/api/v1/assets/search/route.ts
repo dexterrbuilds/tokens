@@ -176,8 +176,7 @@ export const GET = route(
             // through to the per-handler Convex path preserved below. Shape is
             // preserved by construction because the composite returns the same
             // rows the individual calls would.
-            const prefetch: SearchPrefetchResult | null = yield* Effect.tryPromise(() =>
-                searchPrefetchForApi({
+            const prefetch: SearchPrefetchResult | null = yield* searchPrefetchForApi({
                     query: qOriginal,
                     ...(category ? { category } : {}),
                     searchLimit: Math.min(limit * 2, 50),
@@ -188,13 +187,12 @@ export const GET = route(
                     ...(additionalMints.length > 0 ? { additionalMints } : {}),
                     ...(additionalCoingeckoIds.length > 0 ? { additionalCoingeckoIds } : {}),
                     combinedAssetIdsCap: Math.max(limit * 4, 250),
-                }),
-            ).pipe(tapErrorAndDefault<SearchPrefetchResult | null>('assets.search.composite', null, { query: qOriginal }));
+                }).pipe(tapErrorAndDefault<SearchPrefetchResult | null>('assets.search.composite', null, { query: qOriginal }));
 
             const sanctumMatch = prefetch
                 ? prefetch.sanctumMatch
                 : shouldConsiderSanctumLsts
-                  ? yield* Effect.tryPromise(() => sanctumResolveRef({ ref: qOriginal })).pipe(
+                  ? yield* sanctumResolveRef({ ref: qOriginal }).pipe(
                         tapErrorAndDefault('assets.search.sanctumResolveRef', null, { query: qOriginal }),
                     )
                   : null;
@@ -299,11 +297,9 @@ export const GET = route(
                 );
                 const deletedRegistryRefs = new Set(
                     registryRefs.length > 0
-                        ? yield* Effect.tryPromise(() =>
-                              listDeletedRefs({
+                        ? yield* listDeletedRefs({
                                   refs: registryRefs.slice(0, 2000),
-                              }),
-                          ).pipe(tapErrorAndDefault('assets.search.registryDeletedRefs', [], { query: qOriginal }))
+                              }).pipe(tapErrorAndDefault('assets.search.registryDeletedRefs', [], { query: qOriginal }))
                         : [],
                 );
 
@@ -364,7 +360,7 @@ export const GET = route(
             if (coingeckoIdsToFetch.length > 0) {
                 const rows = yield* Effect.all(
                     coingeckoIdsToFetch.map(id =>
-                        Effect.tryPromise(() => coingeckoGetCoinById({ id })).pipe(
+                        coingeckoGetCoinById({ id }).pipe(
                             Effect.map(coin => [id, coin] as const),
                             Effect.catch(() => Effect.succeed([id, null] as const)),
                         ),
@@ -649,9 +645,7 @@ export const GET = route(
                         }
                         for (let i = 0; i < missingMints.length; i += 250) {
                             const chunk = missingMints.slice(i, i + 250);
-                            const rows = yield* Effect.tryPromise(() =>
-                                variantFillQualityGetLatestByMints({ mints: chunk }),
-                            ).pipe(tapErrorAndDefault('assets.search.fillQuality.gapfill', [], { count: chunk.length }));
+                            const rows = yield* variantFillQualityGetLatestByMints({ mints: chunk }).pipe(tapErrorAndDefault('assets.search.fillQuality.gapfill', [], { count: chunk.length }));
                             for (const row of rows) {
                                 const snapshot = executionQualitySnapshotFromConvexFillQuality(row.fillQuality);
                                 if (snapshot) fillQualityByMint.set(row.mint, snapshot);
@@ -675,9 +669,7 @@ export const GET = route(
 
                     for (let i = 0; i < uniqueMints.length; i += 250) {
                         const chunk = uniqueMints.slice(i, i + 250);
-                        const rows = yield* Effect.tryPromise(() =>
-                            variantFillQualityGetLatestByMints({ mints: chunk }),
-                        ).pipe(tapErrorAndDefault('assets.search.variantFillQuality', [], { count: chunk.length }));
+                        const rows = yield* variantFillQualityGetLatestByMints({ mints: chunk }).pipe(tapErrorAndDefault('assets.search.variantFillQuality', [], { count: chunk.length }));
                         for (const row of rows) {
                             const snapshot = executionQualitySnapshotFromConvexFillQuality(row.fillQuality);
                             if (snapshot) fillQualityByMint.set(row.mint, snapshot);
@@ -834,16 +826,12 @@ export const GET = route(
             const stockInstrumentRows = (prefetch
                 ? prefetch.stockInstruments
                 : stockAssetIds.length > 0
-                  ? yield* Effect.tryPromise(() =>
-                        stockInstrumentsGetByAssetIds({ assetIds: stockAssetIds.slice(0, 500) }),
-                    ).pipe(tapErrorAndDefault('assets.search.stockInstruments', [], { count: stockAssetIds.length }))
+                  ? yield* stockInstrumentsGetByAssetIds({ assetIds: stockAssetIds.slice(0, 500) }).pipe(tapErrorAndDefault('assets.search.stockInstruments', [], { count: stockAssetIds.length }))
                   : []) as StockInstrumentsGetByAssetIdsResult;
             const stockPriceRows = (prefetch
                 ? prefetch.stockPrices
                 : stockAssetIds.length > 0
-                  ? yield* Effect.tryPromise(() =>
-                        stockPricesGetLatestByAssetIds({ assetIds: stockAssetIds.slice(0, 500) }),
-                    ).pipe(tapErrorAndDefault('assets.search.stockPrices', [], { count: stockAssetIds.length }))
+                  ? yield* stockPricesGetLatestByAssetIds({ assetIds: stockAssetIds.slice(0, 500) }).pipe(tapErrorAndDefault('assets.search.stockPrices', [], { count: stockAssetIds.length }))
                   : []) as StockPricesGetLatestByAssetIdsResult;
             type StockInstrument = NonNullable<(typeof stockInstrumentRows)[number]['instrument']>;
             type StockSnapshot = NonNullable<(typeof stockPriceRows)[number]['snapshot']>;
@@ -929,7 +917,7 @@ export const GET = route(
                 : priceChunks.length > 0
                   ? (yield* Effect.all(
                         priceChunks.map(chunk =>
-                            Effect.tryPromise(() => coingeckoGetPriceLatestByCoinIds({ coinIds: chunk })),
+                            coingeckoGetPriceLatestByCoinIds({ coinIds: chunk }),
                         ),
                         { concurrency: 2 },
                     )).flat()

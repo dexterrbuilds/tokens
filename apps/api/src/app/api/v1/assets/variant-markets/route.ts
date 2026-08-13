@@ -56,7 +56,7 @@ export const GET = route(
             const [marketRows, fillQualityRows, variantRows] = yield* Effect.all(
                 [
                     variantMarketsGetLatestByMints({ mints }),
-                    Effect.tryPromise(() => variantFillQualityGetLatestByMints({ mints })),
+                    variantFillQualityGetLatestByMints({ mints }),
                     assetVariantsListByMints({ mints }),
                 ],
                 { concurrency: 'unbounded' },

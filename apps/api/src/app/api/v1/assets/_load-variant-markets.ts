@@ -131,7 +131,7 @@ export async function loadExecutionQualityByMints(
     const uniqueMints = Array.from(new Set(mints.map(m => m.trim()).filter(Boolean)));
     if (uniqueMints.length === 0) return new Map();
 
-    const rows = await variantFillQualityGetLatestByMints({ mints: uniqueMints });
+    const rows = await Effect.runPromise(variantFillQualityGetLatestByMints({ mints: uniqueMints }));
 
     const out = new Map<string, VariantExecutionQualitySnapshot>();
     for (const row of rows) {

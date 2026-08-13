@@ -55,7 +55,7 @@ const CLOUDRUN_ENV = {
 };
 
 describe('cloudrun/assets.getByAssetId', () => {
-    it('routes through CloudRunClient', async () => {
+    it('routes through the Cloud Run caller', async () => {
         let capturedUrl = '';
         let capturedAuth = '';
         let capturedBody = '';

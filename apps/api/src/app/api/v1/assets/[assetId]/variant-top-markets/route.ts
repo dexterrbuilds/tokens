@@ -161,7 +161,7 @@ export const GET = route(
 
             const sanctumActiveMints =
                 outAssetId === 'solana'
-                    ? yield* Effect.tryPromise(() => sanctumListActive({ limit: 5000 }))
+                    ? yield* sanctumListActive({ limit: 5000 })
                           .pipe(tapErrorAndDefault('assets.variantTopMarkets.sanctumLsts', [], { assetId: outAssetId }))
                           .pipe(
                               Effect.map((rows: Array<{ mint: string }>) =>

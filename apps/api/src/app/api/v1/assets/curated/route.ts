@@ -276,8 +276,7 @@ export const GET = route(
             // Convex path preserved below.
             const shouldLoadSanctumForPrefetch = listId === 'all' || listId === 'lsts';
             const includeStockForPrefetch = listId === 'all' || listId === 'stocks';
-            const prefetch: CuratedPrefetchResult | null = yield* Effect.tryPromise(() =>
-                curatedPrefetchForApi({
+            const prefetch: CuratedPrefetchResult | null = yield* curatedPrefetchForApi({
                     listId,
                     memberMints,
                     memberAssetIds,
@@ -286,8 +285,7 @@ export const GET = route(
                     ...(registryCoingeckoIds.length > 0
                         ? { additionalCoingeckoIds: registryCoingeckoIds }
                         : {}),
-                }),
-            ).pipe(
+                }).pipe(
                 Effect.retry({ schedule: Schedule.exponential('250 millis'), times: 1 }),
                 tapErrorAndDefault<CuratedPrefetchResult | null>('assets.curated.composite', null, { listId }),
             );
@@ -296,7 +294,7 @@ export const GET = route(
                 ? prefetch.collectionAssetIds
                 : (yield* Effect.all(
                       memberListIds.map(id =>
-                          Effect.tryPromise(() => assetCollectionsGetMembers({ slug: id, limit: 2000 })).pipe(
+                          assetCollectionsGetMembers({ slug: id, limit: 2000 }).pipe(
                               tapErrorAndDefault('assets.curated.collections', [] as string[], { listId: id }),
                           ),
                       ),
@@ -309,9 +307,7 @@ export const GET = route(
                 : rawAssetIds.length > 0
                   ? (yield* Effect.all(
                         Arr.chunksOf(rawAssetIds, 500).map(chunk =>
-                            Effect.tryPromise(() =>
-                                listDeletedRefs({ refs: chunk }),
-                            ).pipe(Effect.catch(() => Effect.succeed([] as string[]))),
+                            listDeletedRefs({ refs: chunk }).pipe(Effect.catch(() => Effect.succeed([] as string[]))),
                         ),
                         { concurrency: 2 },
                     )).flat()
@@ -519,7 +515,7 @@ export const GET = route(
             const sanctumLsts = shouldLoadSanctumLsts
                 ? prefetch && prefetch.sanctumLsts.length > 0
                     ? prefetch.sanctumLsts
-                    : yield* Effect.tryPromise(() => sanctumListActive({ limit: 5000 })).pipe(
+                    : yield* sanctumListActive({ limit: 5000 }).pipe(
                           tapErrorAndDefault('assets.curated.sanctumLsts', [], { listId }),
                       )
                 : [];
@@ -569,9 +565,7 @@ export const GET = route(
                         }
                         for (let i = 0; i < missingMints.length; i += 250) {
                             const chunk = missingMints.slice(i, i + 250);
-                            const rows = yield* Effect.tryPromise(() =>
-                                variantFillQualityGetLatestByMints({ mints: chunk }),
-                            ).pipe(tapErrorAndDefault('assets.curated.fillQuality.gapfill', [], { count: chunk.length }));
+                            const rows = yield* variantFillQualityGetLatestByMints({ mints: chunk }).pipe(tapErrorAndDefault('assets.curated.fillQuality.gapfill', [], { count: chunk.length }));
                             for (const row of rows) {
                                 const snapshot = executionQualitySnapshotFromConvexFillQuality(row.fillQuality);
                                 if (snapshot) fillQualityByMint.set(row.mint, snapshot);
@@ -599,9 +593,7 @@ export const GET = route(
 
                     for (let i = 0; i < uniqueMints.length; i += 250) {
                         const chunk = uniqueMints.slice(i, i + 250);
-                        const rows = yield* Effect.tryPromise(() =>
-                            variantFillQualityGetLatestByMints({ mints: chunk }),
-                        ).pipe(tapErrorAndDefault('assets.curated.variantFillQuality', [], { count: chunk.length }));
+                        const rows = yield* variantFillQualityGetLatestByMints({ mints: chunk }).pipe(tapErrorAndDefault('assets.curated.variantFillQuality', [], { count: chunk.length }));
                         for (const row of rows) {
                             const snapshot = executionQualitySnapshotFromConvexFillQuality(row.fillQuality);
                             if (snapshot) fillQualityByMint.set(row.mint, snapshot);
@@ -783,10 +775,10 @@ export const GET = route(
                     const chunk = stockAssetIds.slice(i, i + 500);
                     if (chunk.length === 0) continue;
                     const [instrumentRows, priceRows] = yield* Effect.all([
-                        Effect.tryPromise(() => stockInstrumentsGetByAssetIds({ assetIds: chunk })).pipe(
+                        stockInstrumentsGetByAssetIds({ assetIds: chunk }).pipe(
                             tapErrorAndDefault('assets.curated.stockInstruments', [], { count: chunk.length }),
                         ),
-                        Effect.tryPromise(() => stockPricesGetLatestByAssetIds({ assetIds: chunk })).pipe(
+                        stockPricesGetLatestByAssetIds({ assetIds: chunk }).pipe(
                             tapErrorAndDefault('assets.curated.stockPrices', [], { count: chunk.length }),
                         ),
                     ]);
@@ -878,7 +870,7 @@ export const GET = route(
                 : priceChunks.length > 0
                   ? (yield* Effect.all(
                         priceChunks.map(chunk =>
-                            Effect.tryPromise(() => coingeckoGetPriceLatestByCoinIds({ coinIds: chunk })).pipe(
+                            coingeckoGetPriceLatestByCoinIds({ coinIds: chunk }).pipe(
                                 tapErrorAndDefault(
                                     'assets.curated.coingeckoPrices',
                                     [] as CoingeckoGetPriceLatestByCoinIdsResult,

@@ -54,7 +54,7 @@ export const GET = route(
                 return yield* Effect.fail(new BadRequestError({ message: 'id is required' }));
             }
 
-            const coinDoc = yield* Effect.tryPromise(() => coingeckoGetCoinById({ id: coinId }));
+            const coinDoc = yield* coingeckoGetCoinById({ id: coinId });
             if (!coinDoc || !coinDoc.coin) return null;
 
             const md = coinDoc.coin.market_data;
