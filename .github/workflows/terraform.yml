@@ -24,6 +24,7 @@ env:
   TF_VERSION: 1.9.8
   GCP_PROJECT: ${{ vars.GCP_PROJECT }}
   GCP_REGION: us-east4
+  TF_VAR_vercel_admin_project_id: ${{ vars.VERCEL_PROJECT_ID_ADMIN }}
 
 jobs:
   fmt-validate:
