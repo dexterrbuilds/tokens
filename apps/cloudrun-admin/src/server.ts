@@ -9,7 +9,6 @@ import * as mutationsHandlers from './handlers/curatedTokensMutations';
 import type { AdminMutationsRepo } from './handlers/curatedTokensMutations';
 import * as reads from './handlers/curatedTokensReads';
 import type { AdminReadsRepo } from './handlers/curatedTokensReads';
-import { IdentityRequiredError, InvalidArgsError, UnauthorizedError } from './handlers/errors';
 import { dispatchErrorResponse } from '@tokens/cloudrun-shutdown/http-errors';
 import * as hardDeleteHandlers from './handlers/hardDelete';
 import type { HardDeleteRepo } from './handlers/hardDelete';

@@ -4,7 +4,6 @@ import { isValidBearerToken } from '@tokens/cloudrun-shutdown';
 import type { IdentityRepo } from './handlers/clerkIdentity';
 import * as dashboard from './handlers/dashboard';
 import type { DashboardRepo } from './handlers/dashboard';
-import { IdentityRequiredError, InvalidArgsError, UnauthorizedError } from './handlers/errors';
 import { dispatchErrorResponse } from '@tokens/cloudrun-shutdown/http-errors';
 import { authenticateApiKey, logApiRequest, type PlatformAuthRepo } from './handlers/platformAuth';
 import * as usageDashboard from './handlers/usageDashboard';
