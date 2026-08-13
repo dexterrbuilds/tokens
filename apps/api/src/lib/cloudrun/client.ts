@@ -7,8 +7,8 @@
  * interrupts in-flight backend calls.
  */
 
-import { Duration, Effect, Schedule } from 'effect';
-import { MissingEnvError } from '@tokens/effect';
+import { Duration, Effect, Schedule, type Schema } from 'effect';
+import { MissingEnvError, type UpstreamDataError, decodeUpstreamOrFail } from '@tokens/effect';
 import { loadEnv, resetEnvForTests } from '../env';
 import {
     CloudRunHttpError,
@@ -29,6 +29,12 @@ export interface CloudRunCallerIdentity {
 
 export interface CloudRunCallOptions {
     identity?: CloudRunCallerIdentity;
+    /**
+     * Optional response schema, decoded STRICTLY (our own contract; excess
+     * keys are dropped, so additive upstream deploys never break us). A
+     * mismatch fails with a tagged UpstreamDataError (500).
+     */
+    schema?: Schema.ConstraintDecoder<unknown>;
     /** Per-call timeout override in ms. Defaults to the client-level timeout (15s). */
     timeoutMs?: number;
     /**
@@ -89,6 +95,7 @@ export function makeCloudRunCaller(cfg: CloudRunClientConfig): CloudRunCaller {
         args: Record<string, unknown>,
         timeoutMs: number,
         identity: CloudRunCallerIdentity | undefined,
+        schema: Schema.ConstraintDecoder<unknown> | undefined,
     ): Effect.Effect<T, CloudRunError> {
         const url = `${base.replace(/\/$/, '')}/${kind}/${encodeURIComponent(name)}`;
         const headers: Record<string, string> = {
@@ -145,7 +152,14 @@ export function makeCloudRunCaller(cfg: CloudRunClientConfig): CloudRunCaller {
                             callName: name,
                             cause: err instanceof Error ? err.message : String(err),
                         }),
-                });
+                }).pipe(
+                    Effect.flatMap(payload => {
+                        if (!schema) return Effect.succeed(payload);
+                        return decodeUpstreamOrFail(schema, `cloudrun:${service}.${name}`)(
+                            payload,
+                        ) as Effect.Effect<T, UpstreamDataError, never>;
+                    }),
+                );
             }),
             Effect.timeout(Duration.millis(timeoutMs)),
             Effect.catchTag('TimeoutError', () =>
@@ -181,7 +195,7 @@ export function makeCloudRunCaller(cfg: CloudRunClientConfig): CloudRunCaller {
             }
 
             const timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
-            const attempt = callOnce<T>(base, service, kind, name, args, timeoutMs, options.identity);
+            const attempt = callOnce<T>(base, service, kind, name, args, timeoutMs, options.identity, options.schema);
 
             // Mutations are never retried regardless of options — replaying a
             // non-idempotent call is worse than failing it.

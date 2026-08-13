@@ -1,6 +1,7 @@
-import { Duration, Effect, Schedule } from 'effect';
+import { Duration, Effect, Schedule, type Schema } from 'effect';
 import { mergeSignals } from './abort';
-import { FetchFailedError, JsonParseError, RateLimitedError, UpstreamHttpError } from './api-errors';
+import { FetchFailedError, JsonParseError, RateLimitedError, UpstreamDataError, UpstreamHttpError } from './api-errors';
+import { decodeUpstreamOrFail, decodeUpstreamOrWarn } from './schema';
 
 type NextFetchInit = RequestInit & { next?: { revalidate?: number } };
 
@@ -9,7 +10,17 @@ export interface FetchJsonArgs {
     service: string;
     init?: NextFetchInit;
     signal?: AbortSignal;
+    /**
+     * Optional response schema. In 'warn' mode (the default, right for
+     * third-party APIs) mismatches log an `upstream_decode_failed` event and
+     * pass the raw payload through; in 'fail' mode they fail with a tagged
+     * `UpstreamDataError`.
+     */
+    schema?: Schema.ConstraintDecoder<unknown>;
+    decodeMode?: 'fail' | 'warn';
 }
+
+export type FetchJsonError = RateLimitedError | UpstreamHttpError | FetchFailedError | JsonParseError | UpstreamDataError;
 
 function parseRetryAfterMs(value: string | null): number | undefined {
     if (!value) return undefined;
@@ -45,9 +56,7 @@ function isRetryableFetchError(error: unknown): boolean {
     return false;
 }
 
-export function fetchJson<T = unknown>(
-    args: FetchJsonArgs,
-): Effect.Effect<T, RateLimitedError | UpstreamHttpError | FetchFailedError | JsonParseError> {
+export function fetchJson<T = unknown>(args: FetchJsonArgs): Effect.Effect<T, FetchJsonError> {
     return Effect.tryPromise({
         try: (signal: AbortSignal) => {
             const merged = mergeSignals(signal, args.signal);
@@ -63,7 +72,7 @@ export function fetchJson<T = unknown>(
             }),
     }).pipe(
         Effect.flatMap(res => {
-            type FetchJsonError = RateLimitedError | UpstreamHttpError | JsonParseError;
+            type BodyError = RateLimitedError | UpstreamHttpError | JsonParseError | UpstreamDataError;
 
             if (res.status === 429) {
                 return Effect.fail(
@@ -72,7 +81,7 @@ export function fetchJson<T = unknown>(
                         message: `${args.service} rate limited`,
                         retryAfterMs: parseRetryAfterMs(res.headers.get('retry-after')),
                     }),
-                ) as Effect.Effect<T, FetchJsonError, never>;
+                ) as Effect.Effect<T, BodyError, never>;
             }
 
             if (!res.ok) {
@@ -98,7 +107,7 @@ export function fetchJson<T = unknown>(
                             }),
                         ),
                     ),
-                ) as Effect.Effect<T, FetchJsonError, never>;
+                ) as Effect.Effect<T, BodyError, never>;
             }
 
             return Effect.tryPromise({
@@ -108,14 +117,23 @@ export function fetchJson<T = unknown>(
                         message: `Failed to parse JSON from ${args.service}`,
                         cause: error instanceof Error ? error.message : String(error),
                     }),
-            });
+            }).pipe(
+                Effect.flatMap(payload => {
+                    if (!args.schema) return Effect.succeed(payload);
+                    const decode =
+                        args.decodeMode === 'fail'
+                            ? decodeUpstreamOrFail(args.schema, args.service)
+                            : decodeUpstreamOrWarn(args.schema, args.service);
+                    return decode(payload) as Effect.Effect<T, UpstreamDataError, never>;
+                }),
+            );
         }),
     );
 }
 
 export function fetchJsonWithRetry<T = unknown>(
     args: FetchJsonArgs & { maxRetries?: number; baseDelay?: Duration.Input },
-): Effect.Effect<T, RateLimitedError | UpstreamHttpError | FetchFailedError | JsonParseError> {
+): Effect.Effect<T, FetchJsonError> {
     const maxRetries = Math.max(0, args.maxRetries ?? 3);
     const baseDelay = args.baseDelay ?? '200 millis';
 
