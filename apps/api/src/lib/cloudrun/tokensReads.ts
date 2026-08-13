@@ -8,27 +8,88 @@ import type {
     TokenDescriptionSummaryDoc,
 } from '../../../../cloudrun-assets/src/handlers/tokensReads';
 
-import type { Effect } from 'effect';
+import { Schema, type Effect } from 'effect';
 
 import { cloudRunQuery } from './client';
 import type { CloudRunError } from './errors';
+
+
+// -----------------------------------------------------------------------------
+// Response schemas (strict decode of our own contract; excess keys dropped, so
+// additive cloudrun-assets deploys never break us). The compile-time asserts
+// below turn drift between schema and the imported handler types into build
+// failures. Remaining result types adopt incrementally via the `schema` option.
+// -----------------------------------------------------------------------------
+
+const TokenDocSchema = Schema.Struct({
+    _id: Schema.String,
+    _creationTime: Schema.Number,
+    address: Schema.String,
+    symbol: Schema.String,
+    name: Schema.String,
+    decimals: Schema.Number,
+    logoUri: Schema.optionalKey(Schema.String),
+    coingeckoId: Schema.optionalKey(Schema.String),
+    description: Schema.optionalKey(Schema.String),
+    website: Schema.optionalKey(Schema.String),
+    twitter: Schema.optionalKey(Schema.String),
+    discord: Schema.optionalKey(Schema.String),
+    telegram: Schema.optionalKey(Schema.String),
+    reddit: Schema.optionalKey(Schema.String),
+    github: Schema.optionalKey(Schema.String),
+    price: Schema.optionalKey(Schema.Number),
+    priceChange24hPercent: Schema.optionalKey(Schema.Number),
+    priceChange1hPercent: Schema.optionalKey(Schema.Number),
+    volume24hUSD: Schema.optionalKey(Schema.Number),
+    liquidity: Schema.optionalKey(Schema.Number),
+    marketCap: Schema.optionalKey(Schema.Number),
+    lastFetchedAt: Schema.Number,
+});
+
+const TokenSearchTokenSchema = Schema.Struct({
+    address: Schema.String,
+    symbol: Schema.String,
+    name: Schema.String,
+    decimals: Schema.Number,
+    logoURI: Schema.optionalKey(Schema.String),
+    liquidity: Schema.Number,
+    volume24hUSD: Schema.Number,
+    price: Schema.Number,
+    priceChange24hPercent: Schema.Number,
+    priceChange1hPercent: Schema.optionalKey(Schema.Number),
+    marketCap: Schema.Number,
+});
+
+const TokensGetByAddressResultSchema = Schema.NullOr(TokenDocSchema);
+const TokensSearchTokensResultSchema = Schema.Array(TokenSearchTokenSchema);
+
+type AssertAssignable<_A extends B, B> = never;
+// Drift guards: the schema's decoded type must satisfy the handler contract.
+type _TokenDocDrift = AssertAssignable<Schema.Schema.Type<typeof TokenDocSchema>, TokenDoc>;
+type _TokenSearchTokenDrift = AssertAssignable<Schema.Schema.Type<typeof TokenSearchTokenSchema>, TokenSearchToken>;
 
 export type TokensGetByAddressArgs = { address: string };
 export type TokensGetByAddressResult = TokenDoc | null;
 
 export function tokensGetByAddress(args: TokensGetByAddressArgs): Effect.Effect<TokensGetByAddressResult, CloudRunError> {
-    return cloudRunQuery<TokensGetByAddressResult>('assets', 'tokensGetByAddress', {
-        ...args,
-    });
+    return cloudRunQuery<TokensGetByAddressResult>(
+        'assets',
+        'tokensGetByAddress',
+        { ...args },
+        { schema: TokensGetByAddressResultSchema },
+    );
 }
 
 export type TokensSearchTokensArgs = { query: string; limit?: number };
 export type TokensSearchTokensResult = TokenSearchToken[];
 
 export function tokensSearchTokens(args: TokensSearchTokensArgs): Effect.Effect<TokensSearchTokensResult, CloudRunError> {
-    return cloudRunQuery<TokensSearchTokensResult>('assets', 'tokensSearchTokens', {
-        ...args,
-    });
+    return cloudRunQuery<TokensSearchTokensResult>(
+        'assets',
+        'tokensSearchTokens',
+        { ...args },
+        { schema: TokensSearchTokensResultSchema },
+    );
 }
 
 export type TokensGetSearchTokensByAddressesArgs = { addresses: string[] };
