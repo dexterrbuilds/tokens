@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Array as Arr, Effect } from 'effect';
 
 import { route } from '@/effect/next-route';
 import { BadRequestError, NotFoundError } from '@tokens/effect';
@@ -95,12 +95,6 @@ const TOKEN_MARKETS_CHUNK_SIZE = 50;
 const CLOUDRUN_BULK_QUERY_CONCURRENCY = 4;
 type SolanaVariantsForApiResult = ListSolanaVariantsForApiResult;
 
-function chunkArray<T>(items: T[], size: number): T[][] {
-    const chunks: T[][] = [];
-    for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
-    return chunks;
-}
-
 function uniqueNonEmptyStrings(items: string[]): string[] {
     const seen = new Set<string>();
     for (const item of items) {
@@ -115,7 +109,7 @@ async function loadExecutionQualityByMints(mints: string[]): Promise<Map<string,
     if (uniqueMints.length === 0) return new Map();
 
     const out = new Map<string, VariantExecutionQualitySnapshot>();
-    for (const chunk of chunkArray(uniqueMints, 250)) {
+    for (const chunk of Arr.chunksOf(uniqueMints, 250)) {
         const rows = await variantFillQualityGetLatestByMints({ mints: chunk });
         for (const row of rows) {
             const snapshot = executionQualitySnapshotFromConvexFillQuality(row.fillQuality);
@@ -574,7 +568,7 @@ export const GET = route(
                 return { assetId: outAssetId, sortBy, variants: [] };
             }
 
-            const marketChunks = chunkArray(
+            const marketChunks = Arr.chunksOf(
                 filteredVariants.map(v => v.mint),
                 VARIANT_MARKETS_CHUNK_SIZE,
             );
@@ -668,7 +662,7 @@ export const GET = route(
                     const uniqueMints = uniqueNonEmptyStrings(mints);
                     if (uniqueMints.length === 0) return new Map<string, TokenMarketTopRow>();
 
-                    const tokenMarketChunks = chunkArray(uniqueMints, TOKEN_MARKETS_CHUNK_SIZE);
+                    const tokenMarketChunks = Arr.chunksOf(uniqueMints, TOKEN_MARKETS_CHUNK_SIZE);
                     const tokenMarketRowsByChunk = yield* Effect.all(
                         tokenMarketChunks.map(chunk =>
                             Effect.tryPromise(() =>

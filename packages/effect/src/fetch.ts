@@ -1,4 +1,5 @@
 import { Duration, Effect, Schedule } from 'effect';
+import { mergeSignals } from './abort';
 import { FetchFailedError, JsonParseError, RateLimitedError, UpstreamHttpError } from './api-errors';
 
 type NextFetchInit = RequestInit & { next?: { revalidate?: number } };
@@ -8,41 +9,6 @@ export interface FetchJsonArgs {
     service: string;
     init?: NextFetchInit;
     signal?: AbortSignal;
-}
-
-interface MergeSignalsResult {
-    signal: AbortSignal;
-    cleanup: () => void;
-}
-
-function mergeSignals(primary: AbortSignal, secondary?: AbortSignal): MergeSignalsResult {
-    const noop = () => {};
-    if (!secondary) return { signal: primary, cleanup: noop };
-    const secondarySignal = secondary;
-
-    // Prefer native AbortSignal.any when available.
-    const anyFn = (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
-    if (typeof anyFn === 'function') return { signal: anyFn([primary, secondarySignal]), cleanup: noop };
-
-    if (primary.aborted) return { signal: primary, cleanup: noop };
-    if (secondarySignal.aborted) return { signal: secondarySignal, cleanup: noop };
-
-    const controller = new AbortController();
-
-    function onAbort() {
-        cleanup();
-        controller.abort();
-    }
-
-    primary.addEventListener('abort', onAbort, { once: true });
-    secondarySignal.addEventListener('abort', onAbort, { once: true });
-
-    function cleanup() {
-        primary.removeEventListener('abort', onAbort);
-        secondarySignal.removeEventListener('abort', onAbort);
-    }
-
-    return { signal: controller.signal, cleanup };
 }
 
 function parseRetryAfterMs(value: string | null): number | undefined {

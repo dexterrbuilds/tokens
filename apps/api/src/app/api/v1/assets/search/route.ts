@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Array as Arr, Effect } from 'effect';
 
 import { route } from '@/effect/next-route';
 import { BadRequestError } from '@tokens/effect';
@@ -95,13 +95,6 @@ function uniqueStrings(values: readonly string[]): string[] {
         out.push(value);
     }
     return out;
-}
-
-function chunkArray<T>(items: ReadonlyArray<T>, chunkSize: number): Array<Array<T>> {
-    if (chunkSize <= 0) return [items.slice()];
-    const chunks: Array<Array<T>> = [];
-    for (let i = 0; i < items.length; i += chunkSize) chunks.push(items.slice(i, i + chunkSize));
-    return chunks;
 }
 
 function scheduleCoinPriceWarm(coinId: string): Effect.Effect<void, never> {
@@ -945,7 +938,7 @@ export const GET = route(
                     )
                     .filter(Boolean),
             );
-            const priceChunks = chunkArray(coinIds, 50);
+            const priceChunks = Arr.chunksOf(coinIds, 50);
             const canonicalPriceRows = prefetch
                 ? prefetch.coingeckoPrices
                 : priceChunks.length > 0

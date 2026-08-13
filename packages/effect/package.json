@@ -11,6 +11,7 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
+    "./abort": "./src/abort.ts",
     "./api-errors": "./src/api-errors.ts",
     "./schema": "./src/schema.ts",
     "./fetch": "./src/fetch.ts",

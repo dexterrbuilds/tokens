@@ -1,4 +1,4 @@
-import { Effect, Schedule } from 'effect';
+import { Array as Arr, Effect, Schedule } from 'effect';
 
 import { route } from '@/effect/next-route';
 import { withStaleFallback } from '@/effect/stale-response-cache';
@@ -129,13 +129,6 @@ function uniqueStrings(values: readonly string[]): string[] {
 
 function normalizeRef(value: string): string {
     return value.trim().toLowerCase();
-}
-
-function chunkArray<T>(items: ReadonlyArray<T>, chunkSize: number): Array<Array<T>> {
-    if (chunkSize <= 0) return [items.slice()];
-    const chunks: Array<Array<T>> = [];
-    for (let i = 0; i < items.length; i += chunkSize) chunks.push(items.slice(i, i + chunkSize));
-    return chunks;
 }
 
 function assetForCanonicalPriceSelection(asset: CanonicalAsset): CanonicalAsset {
@@ -313,7 +306,7 @@ export const GET = route(
                 ? prefetch.deletedAssetRefs
                 : rawAssetIds.length > 0
                   ? (yield* Effect.all(
-                        chunkArray(rawAssetIds, 500).map(chunk =>
+                        Arr.chunksOf(rawAssetIds, 500).map(chunk =>
                             Effect.tryPromise(() =>
                                 listDeletedRefs({ refs: chunk }),
                             ).pipe(Effect.catch(() => Effect.succeed([] as string[]))),
@@ -891,7 +884,7 @@ export const GET = route(
                     )
                     .filter(Boolean),
             );
-            const priceChunks = chunkArray(coinIds, 50);
+            const priceChunks = Arr.chunksOf(coinIds, 50);
             const canonicalPriceRows: CoingeckoGetPriceLatestByCoinIdsResult = prefetch
                 ? prefetch.coingeckoPrices
                 : priceChunks.length > 0
