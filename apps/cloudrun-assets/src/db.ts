@@ -3182,20 +3182,41 @@ export function makePostgresAssetCollectionsReadsRepo(sql: Sql): AssetCollection
         },
         async getSummariesBySlugs(slugs) {
             if (slugs.length === 0) return [];
+            // "Last added" counts a new variant on an existing member too: attaching
+            // a mint to a canonical that is already in the list (the admin add-variant
+            // flow) never writes asset_collection_members, so membership added_at
+            // alone can never see it. Auto-synced yield/LST variants are excluded so
+            // Sanctum churn cannot hold the highlight hostage.
             const rows = await sql<
                 { collection_slug: string; member_count: number; last_added_asset_id: string | null; last_added_at: number | null }[]
             >`
-                SELECT acm.collection_slug,
+                WITH members AS (
+                    SELECT acm.collection_slug,
+                           acm.asset_id,
+                           acm.rank,
+                           GREATEST(
+                               acm.added_at,
+                               COALESCE((
+                                   SELECT MAX((EXTRACT(EPOCH FROM av.created_at) * 1000)::bigint)
+                                   FROM asset_variants av
+                                   WHERE av.asset_id = acm.asset_id
+                                     AND av.is_active = true
+                                     AND av.kind NOT IN ('yield', 'lst')
+                               ), acm.added_at)
+                           ) AS added_at
+                    FROM asset_collection_members acm
+                    JOIN assets a ON a.asset_id = acm.asset_id AND a.is_active = true
+                    WHERE acm.collection_slug IN ${sql([...slugs])}
+                      AND NOT EXISTS (
+                          SELECT 1 FROM asset_deletion_tombstones t WHERE t.asset_id = acm.asset_id
+                      )
+                )
+                SELECT collection_slug,
                        COUNT(*)::int AS member_count,
-                       (ARRAY_AGG(acm.asset_id ORDER BY acm.added_at DESC, acm.rank ASC))[1] AS last_added_asset_id,
-                       MAX(acm.added_at) AS last_added_at
-                FROM asset_collection_members acm
-                JOIN assets a ON a.asset_id = acm.asset_id AND a.is_active = true
-                WHERE acm.collection_slug IN ${sql([...slugs])}
-                  AND NOT EXISTS (
-                      SELECT 1 FROM asset_deletion_tombstones t WHERE t.asset_id = acm.asset_id
-                  )
-                GROUP BY acm.collection_slug
+                       (ARRAY_AGG(asset_id ORDER BY added_at DESC, rank ASC))[1] AS last_added_asset_id,
+                       MAX(added_at) AS last_added_at
+                FROM members
+                GROUP BY collection_slug
             `;
             return rows.map(r => ({
                 collection_slug: r.collection_slug,

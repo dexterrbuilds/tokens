@@ -19,9 +19,18 @@ export interface AssetCollectionSummaryRow {
 
 export interface AssetCollectionsReadsRepo {
     listMembersBySlug(slug: string, limit: number): Promise<AssetCollectionMemberRow[]>;
-    /** Active-variant mints for a collection's members, rank order. */
+    /**
+     * Active-variant mints for a collection's members, rank order. Deliberately
+     * includes the ~1.5k Sanctum yield variants hanging off `solana`: they keep the
+     * prefetch's market coverage complete for `groupBy=mint` callers. Consumers must
+     * not assume one mint per member (see `addMemberFallbackAssets` in the API).
+     */
     listMemberMintsBySlug(slug: string, limit: number): Promise<AssetCollectionMemberMintRow[]>;
-    /** Per-slug count + latest-added member, active-assets only, tombstone-filtered. */
+    /**
+     * Per-slug count + latest-added member, active-assets only, tombstone-filtered.
+     * Latest-added also reflects a new variant on an existing member (the admin
+     * add-variant flow leaves membership untouched).
+     */
     getSummariesBySlugs(slugs: readonly string[]): Promise<AssetCollectionSummaryRow[]>;
 }
 

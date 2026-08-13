@@ -66,8 +66,9 @@ import {
     type TokenMarketSnapshot,
     type VariantExecutionQualitySnapshot,
 } from '../_asset-helpers';
-import { looksLikeSolanaMintAddress, mintToSingletonAssetId, singletonAssetIdToMint } from '../_singleton-asset-id';
+import { looksLikeSolanaMintAddress, mintToSingletonAssetId } from '../_singleton-asset-id';
 import { normalizeCoinGeckoCoinIdForAsset } from '../_coingecko-id';
+import { addMemberFallbackAssets } from './_member-fallback-assets';
 
 type CuratedTokenCategoryId = 'all' | CuratedTokenListId;
 
@@ -406,42 +407,13 @@ export const GET = route(
             }
 
             // …then ensure *every* DB collection member is represented, even before seeding.
-            for (const memberAssetId of assetIds) {
-                const normalizedAssetId = looksLikeSolanaMintAddress(memberAssetId)
-                    ? mintToSingletonAssetId(memberAssetId)
-                    : memberAssetId;
-                if (canonicalAssetById.has(normalizedAssetId)) continue;
-
-                const singletonMint = singletonAssetIdToMint(memberAssetId);
-                const mint = singletonMint ?? (looksLikeSolanaMintAddress(memberAssetId) ? memberAssetId.trim() : null);
-
-                // Prefer registry fallbacks when possible.
-                const registryAsset = resolveRegistryAlias(memberAssetId);
-                if (registryAsset) {
-                    canonicalAssetById.set(registryAsset.assetId, registryAsset);
-                    continue;
-                }
-
-                if (!mint) continue;
-
-                const singletonAssetId = mintToSingletonAssetId(mint);
-                const fallback: CanonicalAsset = {
-                    assetId: singletonAssetId,
-                    category: categoryForCuratedListId(listId),
-                    aliases: [singletonAssetId, mint],
-                    variants: [
-                        {
-                            variantId: `${singletonAssetId}:mint`,
-                            mint,
-                            kind: kindForCuratedListId(listId),
-                            trustTier: 'tier3',
-                            tags: [`curated:${listId}`],
-                        },
-                    ],
-                };
-
-                canonicalAssetById.set(singletonAssetId, fallback);
-            }
+            addMemberFallbackAssets({
+                assetIds,
+                canonicalAssetById,
+                category: categoryForCuratedListId(listId),
+                kind: kindForCuratedListId(listId),
+                listId,
+            });
 
             function mergeRegistryVariantMetadata(asset: CanonicalAsset): CanonicalAsset {
                 const registryAsset =
