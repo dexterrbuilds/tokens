@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Effect } from 'effect';
-import { ApiResponseError, apiJson } from '@/effect/api-client';
+import { apiJson } from '@/effect/api-client';
+import { shouldRetryApiQuery } from '@/effect/query-retry';
 import type { OHLCVData, TimeInterval } from '@/lib/birdeye';
 import { alignEpochSeconds } from '@/lib/time';
 
@@ -10,13 +11,6 @@ interface UseAssetPriceChartOptions {
 
 interface AssetPriceChartResponse {
     candles: OHLCVData[];
-}
-
-function shouldRetryAssetPriceChartQuery(failureCount: number, error: unknown): boolean {
-    if (error instanceof ApiResponseError) {
-        if ([400, 401, 403, 404, 429].includes(error.status)) return false;
-    }
-    return failureCount < 2;
 }
 
 export function useAssetPriceChart(
@@ -49,6 +43,6 @@ export function useAssetPriceChart(
             return data.candles ?? [];
         },
         enabled: enabled && assetId.trim().length > 0,
-        retry: shouldRetryAssetPriceChartQuery,
+        retry: shouldRetryApiQuery,
     });
 }

@@ -18,6 +18,16 @@ export interface ApiErrorEnvelope {
 // Tagged errors (typed failures in the Effect error channel)
 // -----------------------------------------------------------------------------
 
+/**
+ * A non-2xx response from the tokens API, with the upstream error envelope
+ * preserved (`error` carries the API's tagged `ApiErrorInfo`).
+ */
+export class ApiResponseError extends Data.TaggedError('ApiResponseError')<{
+    message: string;
+    status: number;
+    error: ApiErrorInfo;
+}> {}
+
 export class BadRequestError extends Data.TaggedError('BadRequestError')<{
     message: string;
     details?: unknown;
@@ -68,6 +78,13 @@ export class JsonParseError extends Data.TaggedError('JsonParseError')<{
     message: string;
     cause?: string;
     body?: string;
+}> {}
+
+/** An upstream response parsed as JSON but failed schema validation. */
+export class UpstreamDataError extends Data.TaggedError('UpstreamDataError')<{
+    message: string;
+    service: string;
+    issue?: string;
 }> {}
 
 // -----------------------------------------------------------------------------
@@ -167,6 +184,7 @@ export function httpStatusForError(error: unknown): number {
             return 404;
         case 'RateLimitedError':
             return 429;
+        case 'UpstreamDataError':
         case 'MissingEnvError':
         case 'UpstreamHttpError':
         case 'FetchFailedError':

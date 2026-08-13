@@ -1,14 +1,17 @@
 import type { GetLatestByMintsEntry } from '../../../../cloudrun-assets/src/handlers/fillQualityReads';
 
-import { getCloudRunClient } from './client';
+import type { Effect } from 'effect';
+
+import { cloudRunQuery } from './client';
+import type { CloudRunError } from './errors';
 
 export type VariantFillQualityGetLatestByMintsArgs = { mints: string[] };
 export type VariantFillQualityGetLatestByMintsResult = GetLatestByMintsEntry[];
 
-export async function variantFillQualityGetLatestByMints(
+export function variantFillQualityGetLatestByMints(
     args: VariantFillQualityGetLatestByMintsArgs,
-): Promise<VariantFillQualityGetLatestByMintsResult> {
-    return getCloudRunClient().query<VariantFillQualityGetLatestByMintsResult>(
+): Effect.Effect<VariantFillQualityGetLatestByMintsResult, CloudRunError> {
+    return cloudRunQuery<VariantFillQualityGetLatestByMintsResult>(
         'assets',
         'variantFillQualityGetLatestByMints',
         { ...args },

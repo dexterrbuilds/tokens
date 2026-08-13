@@ -5,6 +5,9 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
+import { Effect } from 'effect';
+import { apiJson } from '@/effect/api-client';
+import { shouldRetryApiQuery } from '@/effect/query-retry';
 import { AnimatePresence, domAnimation, LazyMotion, m, useReducedMotion } from 'motion/react';
 import { ArrowUpRight, ChevronDown, ChevronUp, Info, Settings2, X } from 'lucide-react';
 import { IconTriangleFill } from 'symbols-react';
@@ -220,15 +223,12 @@ async function fetchFloatingMarketFeed(params: {
     });
     if (terms.length > 0) searchParams.set('terms', terms.join(','));
 
-    const response = await fetch(`/api/v1/news/feed?${searchParams.toString()}`, {
-        headers: { Accept: 'application/json' },
-    });
-
-    if (!response.ok) {
-        throw new Error(`Failed to load market feed (${response.status})`);
-    }
-
-    const data = (await response.json()) as FloatingMarketFeedResponse;
+    const data = await Effect.runPromise(
+        apiJson<FloatingMarketFeedResponse>({
+            url: `/api/v1/news/feed?${searchParams.toString()}`,
+            init: { headers: { Accept: 'application/json' } },
+        }),
+    );
     return Array.isArray(data.items) ? data.items : EMPTY_ARTICLES;
 }
 
@@ -266,6 +266,7 @@ export function FloatingMarketFeed() {
                 tokenFeedCoinId: pageContext?.tokenFeedCoinId,
                 tokenFeedTerms,
             }),
+        retry: shouldRetryApiQuery,
         staleTime: 60 * 1000,
         enabled: !hideFeed,
     });

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
+import { Effect } from 'effect';
+
 import { __resetCloudRunClientForTesting } from './client';
 import { authenticateApiKey, logApiRequest } from './platformAuth';
 
@@ -17,7 +19,7 @@ const USAGE_URL = 'https://tokens-usage-stg.example.run.app';
 async function withEnvAndFetch<T>(
     overrides: Record<string, string | undefined>,
     fetchImpl: typeof fetch,
-    fn: () => Promise<T>,
+    fn: () => Effect.Effect<T, unknown>,
 ): Promise<T> {
     const savedEnv: Record<string, string | undefined> = {};
     for (const k of ENV_KEYS) {
@@ -32,7 +34,7 @@ async function withEnvAndFetch<T>(
     globalThis.fetch = fetchImpl;
     __resetCloudRunClientForTesting();
     try {
-        return await fn();
+        return await Effect.runPromise(fn());
     } finally {
         for (const [k, v] of Object.entries(savedEnv)) {
             if (v === undefined) delete process.env[k];

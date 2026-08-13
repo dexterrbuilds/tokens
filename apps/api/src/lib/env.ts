@@ -9,6 +9,12 @@
 export interface ApiEnv {
     /** Upstash Redis REST credentials — both set, or null (rate limiting disabled / fail-open). */
     upstash: { url: string; token: string } | null;
+    /** Cloud Run backend — all required vars set, or null (asserted at boot). */
+    cloudRun: {
+        authToken: string;
+        urls: { assets: string; prices: string; usage: string; admin?: string };
+        timeoutMs?: number;
+    } | null;
     // Optional integrations — absence disables the corresponding feature.
     birdeyeApiKey: string | null;
     coingeckoApiKey: string | null;
@@ -42,8 +48,17 @@ function readNumber(name: string, fallback: number, min: number, max: number): n
     const raw = readTrimmed(name);
     if (raw === null) return fallback;
     const value = Number(raw);
-    if (!Number.isFinite(value)) return fallback;
-    return Math.min(max, Math.max(min, value));
+    if (!Number.isFinite(value)) {
+        // A typo'd value silently becoming the fallback is how misconfiguration
+        // hides for months — say so once, loudly, then proceed with the fallback.
+        console.warn(JSON.stringify({ event: 'env_invalid_value', name, raw, used: fallback }));
+        return fallback;
+    }
+    const clamped = Math.min(max, Math.max(min, value));
+    if (clamped !== value) {
+        console.warn(JSON.stringify({ event: 'env_invalid_value', name, raw, used: clamped }));
+    }
+    return clamped;
 }
 
 function getDefaultUsageLogMode(): ApiEnv['usageLogMode'] {
@@ -61,6 +76,24 @@ function readUsageLogMode(): ApiEnv['usageLogMode'] {
     const raw = (readTrimmed('TOKENS_USAGE_LOG_MODE') ?? getDefaultUsageLogMode()).toLowerCase();
     if (raw === 'raw' || raw === 'off' || raw === 'aggregated') return raw;
     return getDefaultUsageLogMode();
+}
+
+function readCloudRunEnv(): ApiEnv['cloudRun'] {
+    const authToken = readTrimmed('TOKENS_CLOUDRUN_AUTH_TOKEN');
+    const assets = readTrimmed('TOKENS_CLOUDRUN_ASSETS_URL');
+    const prices = readTrimmed('TOKENS_CLOUDRUN_PRICES_URL');
+    const usage = readTrimmed('TOKENS_CLOUDRUN_USAGE_URL');
+    if (!authToken || !assets || !prices || !usage) return null;
+
+    const admin = readTrimmed('TOKENS_CLOUDRUN_ADMIN_URL');
+    const timeoutRaw = readTrimmed('TOKENS_CLOUDRUN_TIMEOUT_MS');
+    const timeout = timeoutRaw !== null ? Number(timeoutRaw) : Number.NaN;
+
+    return {
+        authToken,
+        urls: { assets, prices, usage, ...(admin ? { admin } : {}) },
+        ...(Number.isFinite(timeout) && timeout > 0 ? { timeoutMs: timeout } : {}),
+    };
 }
 
 let cached: ApiEnv | null = null;
@@ -82,6 +115,7 @@ export function loadEnv(): ApiEnv {
 
     cached = {
         upstash: upstashUrl && upstashToken ? { url: upstashUrl, token: upstashToken } : null,
+        cloudRun: readCloudRunEnv(),
         birdeyeApiKey: readTrimmed('BIRDEYE_API_KEY'),
         coingeckoApiKey: readTrimmed('COINGECKO_API_KEY'),
         openaiApiKey: readTrimmed('OPENAI_API_KEY'),
@@ -115,6 +149,7 @@ export function resetEnvForTests(): void {
 
 /** Boot-only assertion that Cloud Run env is complete. */
 export function assertCloudRunEnvOrThrow(): void {
+    if (loadEnv().cloudRun !== null) return;
     const missing = (
         [
             'TOKENS_CLOUDRUN_AUTH_TOKEN',
@@ -123,9 +158,7 @@ export function assertCloudRunEnvOrThrow(): void {
             'TOKENS_CLOUDRUN_USAGE_URL',
         ] as const
     ).filter(name => readTrimmed(name) === null);
-    if (missing.length > 0) {
-        throw new Error(
-            `[env] required Cloud Run vars missing: ${missing.join(', ')}. TOKENS_CLOUDRUN_ADMIN_URL is optional (admin service stays IAM-locked).`,
-        );
-    }
+    throw new Error(
+        `[env] required Cloud Run vars missing: ${missing.join(', ')}. TOKENS_CLOUDRUN_ADMIN_URL is optional (admin service stays IAM-locked).`,
+    );
 }

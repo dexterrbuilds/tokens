@@ -1,3 +1,6 @@
+import { Effect } from 'effect';
+import { isShuttingDown } from '@tokens/cloudrun-shutdown';
+import { isTotalFailure, runJobPool } from '@tokens/effect/job-runner';
 import type { AssetCategory } from '@tokens/asset-registry';
 import { getVariantByMint } from '@tokens/asset-registry';
 import { CURATED_LIST_ORDER, getCuratedTokenAddresses, getCuratedTokenList } from '@tokens/asset-registry/compat';
@@ -142,11 +145,6 @@ function chunkArray<T>(items: readonly T[], size: number): T[][] {
     const out: T[][] = [];
     for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
     return out;
-}
-
-function sleep(ms: number): Promise<void> {
-    if (ms <= 0) return Promise.resolve();
-    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function finiteNumber(value: number | null | undefined): number {
@@ -346,23 +344,32 @@ export async function refreshFreshTrendingMarkets(
     const marketRows = new Map<string, VariantMarketSnapshot>();
     const flowRows = new Map<string, FlowTrendingMarketRow>();
     const chunks = chunkArray(mints, 250);
-    let nextIndex = 0;
-    async function worker(workerIdx: number): Promise<void> {
-        if (workerIdx > 0) await sleep(workerIdx * WORKER_STARTUP_STAGGER_MS);
-        while (true) {
-            const idx = nextIndex;
-            if (idx >= chunks.length) return;
-            nextIndex += 1;
-            const mintsChunk = chunks[idx]!;
-            const [markets, flow] = await Promise.all([
-                deps.repo.findVariantMarketSnapshotsByMints(mintsChunk),
-                deps.repo.findFlowTrendingMarketsByMints(mintsChunk),
-            ]);
-            for (const row of markets) marketRows.set(row.mint, row);
-            for (const row of flow) flowRows.set(row.mint, row);
-        }
+    const poolSummary = await Effect.runPromise(
+        runJobPool({
+            label: 'refreshFreshTrendingMarkets',
+            items: chunks,
+            concurrency,
+            staggerMs: WORKER_STARTUP_STAGGER_MS,
+            shouldStop: isShuttingDown,
+            process: mintsChunk =>
+                Effect.tryPromise(async () => {
+                    const [markets, flow] = await Promise.all([
+                        deps.repo.findVariantMarketSnapshotsByMints(mintsChunk),
+                        deps.repo.findFlowTrendingMarketsByMints(mintsChunk),
+                    ]);
+                    for (const row of markets) marketRows.set(row.mint, row);
+                    for (const row of flow) flowRows.set(row.mint, row);
+                }),
+        }),
+    );
+    // Previously any chunk failure aborted the whole job with an opaque 500;
+    // now failed chunks degrade the ranking input instead — but a run where
+    // every chunk failed must not overwrite rankings with an empty scoreboard.
+    if (isTotalFailure(poolSummary)) {
+        throw new Error(
+            `[refreshFreshTrendingMarkets] all ${poolSummary.attempted} market-snapshot chunks failed`,
+        );
     }
-    await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, (_, i) => worker(i)));
 
     type Candidate = Omit<FreshTrendingMarketRow, 'rank' | 'categoryRank' | 'scoringVersion' | 'lastComputedAt'>;
     const candidates: Candidate[] = [];
