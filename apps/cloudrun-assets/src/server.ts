@@ -181,6 +181,14 @@ type Handler = (args: unknown, identity: CallerIdentity | null) => Promise<unkno
 type JobHandler = (deps: CronDeps & ClickhouseCronDeps, args: unknown) => Promise<CronResult>;
 
 /**
+ * `ok: false` means total failure (work attempted, none succeeded) — return
+ * 500 so Cloud Scheduler counts the run as failed and retries per its policy.
+ */
+function cronJobResponse(c: Context, result: CronResult) {
+    return c.json(result, result.ok === false ? 500 : 200);
+}
+
+/**
  * SECURITY: trusted-on-arrival by design. This header is a base64 JSON blob
  * decoded WITHOUT cryptographic verification — the caller identity is whatever
  * the header claims. The trust model relies on (1) this service only being
@@ -466,7 +474,7 @@ export function createApp(deps: ServerDeps) {
             }
             const handler = jobs[name]!;
             try {
-                return c.json(await handler(cronDeps as CronDeps & ClickhouseCronDeps, args));
+                return cronJobResponse(c, await handler(cronDeps as CronDeps & ClickhouseCronDeps, args));
             } catch (err) {
                 if (err instanceof CronInvalidArgsError) {
                     return c.json({ error: 'invalid_args', message: err.message }, 400);
@@ -481,7 +489,7 @@ export function createApp(deps: ServerDeps) {
             }
             const handler = miscJobsTable[name]!;
             try {
-                return c.json(await handler(miscCronDeps, args));
+                return cronJobResponse(c, await handler(miscCronDeps, args));
             } catch (err) {
                 if (err instanceof CronInvalidArgsError) {
                     return c.json({ error: 'invalid_args', message: err.message }, 400);
@@ -496,7 +504,7 @@ export function createApp(deps: ServerDeps) {
             }
             const handler = assetVariantsJobsTable[name]!;
             try {
-                return c.json(await handler(assetVariantsCronDeps, args));
+                return cronJobResponse(c, await handler(assetVariantsCronDeps, args));
             } catch (err) {
                 if (err instanceof CronInvalidArgsError) {
                     return c.json({ error: 'invalid_args', message: err.message }, 400);
@@ -511,7 +519,7 @@ export function createApp(deps: ServerDeps) {
             }
             const handler = seedJobsTable[name]!;
             try {
-                return c.json(await handler(seedCronDeps, args));
+                return cronJobResponse(c, await handler(seedCronDeps, args));
             } catch (err) {
                 if (err instanceof CronInvalidArgsError) {
                     return c.json({ error: 'invalid_args', message: err.message }, 400);
@@ -526,7 +534,7 @@ export function createApp(deps: ServerDeps) {
             }
             const handler = trendingJobsTable[name]!;
             try {
-                return c.json(await handler(trendingCronDeps, args));
+                return cronJobResponse(c, await handler(trendingCronDeps, args));
             } catch (err) {
                 if (err instanceof CronInvalidArgsError) {
                     return c.json({ error: 'invalid_args', message: err.message }, 400);
@@ -541,7 +549,7 @@ export function createApp(deps: ServerDeps) {
             }
             const handler = clickhouseExtrasJobsTable[name]!;
             try {
-                return c.json(await handler(clickhouseExtrasCronDeps, args));
+                return cronJobResponse(c, await handler(clickhouseExtrasCronDeps, args));
             } catch (err) {
                 if (err instanceof CronInvalidArgsError) {
                     return c.json({ error: 'invalid_args', message: err.message }, 400);
@@ -557,7 +565,7 @@ export function createApp(deps: ServerDeps) {
             }
             const handler = prestocksJobsTable[name]!;
             try {
-                return c.json(await handler(prestocksCronDeps, args));
+                return cronJobResponse(c, await handler(prestocksCronDeps, args));
             } catch (err) {
                 if (err instanceof CronInvalidArgsError) {
                     return c.json({ error: 'invalid_args', message: err.message }, 400);

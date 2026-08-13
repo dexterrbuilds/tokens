@@ -1,7 +1,18 @@
+import { Effect } from 'effect';
+import { runJobPool } from '@tokens/effect/job-runner';
+import { isShuttingDown } from '@tokens/cloudrun-shutdown';
+
 export interface CronResult {
-    ok: true;
+    /**
+     * `false` means total failure — work was attempted and none of it
+     * succeeded. The dispatcher maps it to HTTP 500 so Cloud Scheduler can
+     * retry. Partial failures stay `ok: true` with counters.
+     */
+    ok: boolean;
     processed: number;
     durationMs: number;
+    /** Present (true) when a deadline budget or shutdown stopped the run early. */
+    partial?: boolean;
     [extra: string]: unknown;
 }
 
@@ -780,6 +791,8 @@ export async function refreshCuratedVariantMarkets(deps: CronDeps, rawArgs: unkn
     const concurrency = clampInt(args.concurrency, 3, 1, 5);
     const delayMs = clampInt(args.delayMs, 100, 0, 5_000);
     const selectionWindowMs = clampInt(args.selectionWindowMs, 2 * 60_000, 10_000, 24 * 60 * 60_000);
+    // Deadline budget (0 = disabled); wired from terraform body_json alongside attempt_deadline.
+    const budgetMs = clampInt(args.budgetMs, 0, 0, 3_600_000);
 
     const explicitMints = parseExplicitTargets(args.mints, 'mints');
 
@@ -796,67 +809,60 @@ export async function refreshCuratedVariantMarkets(deps: CronDeps, rawArgs: unkn
 
     let refreshed = 0;
     let skipped = 0;
-    let failed = 0;
+    let softFailed = 0;
 
     if (mints.length === 0) {
-        return { ok: true, processed: 0, durationMs: deps.now() - start, refreshed, skipped, failed };
+        return { ok: true, processed: 0, durationMs: deps.now() - start, refreshed, skipped, failed: 0 };
     }
 
-    let nextIndex = 0;
-    async function worker(): Promise<void> {
-        while (true) {
-            const idx = nextIndex;
-            if (idx >= mints.length) return;
-            nextIndex += 1;
-            const mint = mints[idx]!;
-            try {
-                const last = await deps.repo.getOverviewLastFetchedAtByMint(mint);
-                if (last !== null && start - last < minAgeMs) {
-                    skipped += 1;
-                    continue;
-                }
-                const overview = await deps.birdeye.fetchTokenOverview(mint);
-                if (!overview) {
-                    failed += 1;
+    const summary = await Effect.runPromise(
+        runJobPool({
+            label: 'refreshCuratedVariantMarkets',
+            items: mints,
+            concurrency,
+            delayMs,
+            ...(budgetMs > 0 ? { budgetMs } : {}),
+            shouldStop: isShuttingDown,
+            process: mint =>
+                Effect.tryPromise(async () => {
+                    const last = await deps.repo.getOverviewLastFetchedAtByMint(mint);
+                    if (last !== null && start - last < minAgeMs) {
+                        skipped += 1;
+                        return;
+                    }
+                    const overview = await deps.birdeye.fetchTokenOverview(mint);
+                    if (!overview) {
+                        softFailed += 1;
+                        await deps.repo.touchVariantMarket(mint, start);
+                        return;
+                    }
+                    const upsert = birdeyeOverviewToUpsert(mint, overview, start);
+                    if (!upsert) {
+                        softFailed += 1;
+                        await deps.repo.touchVariantMarket(mint, start);
+                        return;
+                    }
+                    await deps.repo.upsertVariantMarketFromBirdeye(upsert);
+                    await tryShadowWriteFromRwaXyz(deps, mint, start, 'refreshCuratedVariantMarkets');
+                    refreshed += 1;
+                }),
+            onItemError: mint =>
+                Effect.tryPromise(async () => {
+                    await tryShadowWriteFromRwaXyz(deps, mint, start, 'refreshCuratedVariantMarkets');
                     await deps.repo.touchVariantMarket(mint, start);
-                    continue;
-                }
-                const upsert = birdeyeOverviewToUpsert(mint, overview, start);
-                if (!upsert) {
-                    failed += 1;
-                    await deps.repo.touchVariantMarket(mint, start);
-                    continue;
-                }
-                await deps.repo.upsertVariantMarketFromBirdeye(upsert);
-                await tryShadowWriteFromRwaXyz(deps, mint, start, 'refreshCuratedVariantMarkets');
-                refreshed += 1;
-            } catch (err) {
-                failed += 1;
-                console.error(
-                    `[refreshCuratedVariantMarkets] mint=${mint}`,
-                    err instanceof Error ? err.message : String(err),
-                );
-                await tryShadowWriteFromRwaXyz(deps, mint, start, 'refreshCuratedVariantMarkets');
-                try {
-                    await deps.repo.touchVariantMarket(mint, start);
-                } catch {
-                    void 0;
-                }
-            } finally {
-                await sleep(delayMs);
-            }
-        }
-    }
+                }),
+        }),
+    );
 
-    await Promise.all(Array.from({ length: Math.min(concurrency, mints.length) }, () => worker()));
-
+    const failed = softFailed + summary.failed;
     return {
-        ok: true,
+        ok: !(summary.attempted > 0 && refreshed === 0 && skipped === 0 && failed >= summary.attempted),
         processed: mints.length,
         durationMs: deps.now() - start,
         refreshed,
         skipped,
         failed,
+        ...(summary.partial ? { partial: true } : {}),
     };
 }
 
@@ -866,67 +872,61 @@ export async function refreshStaleVariantMarkets(deps: CronDeps, rawArgs: unknow
     const minAgeMs = clampInt(args.minAgeMs, 60_000, 10_000, 24 * 60 * 60_000);
     const concurrency = clampInt(args.concurrency, 2, 1, 5);
     const delayMs = clampInt(args.delayMs, 200, 0, 5_000);
+    const budgetMs = clampInt(args.budgetMs, 0, 0, 3_600_000);
 
     const start = deps.now();
     const beforeLastFetchedAt = start - minAgeMs;
     const mints = await deps.repo.listStaleVariantMints(beforeLastFetchedAt, maxVariants);
 
     let refreshed = 0;
-    let failed = 0;
+    let softFailed = 0;
 
     if (mints.length === 0) {
-        return { ok: true, processed: 0, durationMs: deps.now() - start, refreshed, failed };
+        return { ok: true, processed: 0, durationMs: deps.now() - start, refreshed, failed: 0 };
     }
 
-    let nextIndex = 0;
-    async function worker(): Promise<void> {
-        while (true) {
-            const idx = nextIndex;
-            if (idx >= mints.length) return;
-            nextIndex += 1;
-            const mint = mints[idx]!;
-            try {
-                const overview = await deps.birdeye.fetchTokenOverview(mint);
-                if (!overview) {
-                    failed += 1;
+    const summary = await Effect.runPromise(
+        runJobPool({
+            label: 'refreshStaleVariantMarkets',
+            items: mints,
+            concurrency,
+            delayMs,
+            ...(budgetMs > 0 ? { budgetMs } : {}),
+            shouldStop: isShuttingDown,
+            process: mint =>
+                Effect.tryPromise(async () => {
+                    const overview = await deps.birdeye.fetchTokenOverview(mint);
+                    if (!overview) {
+                        softFailed += 1;
+                        await deps.repo.touchVariantMarket(mint, start);
+                        return;
+                    }
+                    const upsert = birdeyeOverviewToUpsert(mint, overview, start);
+                    if (!upsert) {
+                        softFailed += 1;
+                        await deps.repo.touchVariantMarket(mint, start);
+                        return;
+                    }
+                    await deps.repo.upsertVariantMarketFromBirdeye(upsert);
+                    await tryShadowWriteFromRwaXyz(deps, mint, start, 'refreshStaleVariantMarkets');
+                    refreshed += 1;
+                }),
+            onItemError: mint =>
+                Effect.tryPromise(async () => {
+                    await tryShadowWriteFromRwaXyz(deps, mint, start, 'refreshStaleVariantMarkets');
                     await deps.repo.touchVariantMarket(mint, start);
-                    continue;
-                }
-                const upsert = birdeyeOverviewToUpsert(mint, overview, start);
-                if (!upsert) {
-                    failed += 1;
-                    await deps.repo.touchVariantMarket(mint, start);
-                    continue;
-                }
-                await deps.repo.upsertVariantMarketFromBirdeye(upsert);
-                await tryShadowWriteFromRwaXyz(deps, mint, start, 'refreshStaleVariantMarkets');
-                refreshed += 1;
-            } catch (err) {
-                failed += 1;
-                console.error(
-                    `[refreshStaleVariantMarkets] mint=${mint}`,
-                    err instanceof Error ? err.message : String(err),
-                );
-                await tryShadowWriteFromRwaXyz(deps, mint, start, 'refreshStaleVariantMarkets');
-                try {
-                    await deps.repo.touchVariantMarket(mint, start);
-                } catch {
-                    void 0;
-                }
-            } finally {
-                await sleep(delayMs);
-            }
-        }
-    }
+                }),
+        }),
+    );
 
-    await Promise.all(Array.from({ length: Math.min(concurrency, mints.length) }, () => worker()));
-
+    const failed = softFailed + summary.failed;
     return {
-        ok: true,
+        ok: !(summary.attempted > 0 && refreshed === 0 && failed >= summary.attempted),
         processed: mints.length,
         durationMs: deps.now() - start,
         refreshed,
         failed,
+        ...(summary.partial ? { partial: true } : {}),
     };
 }
 
