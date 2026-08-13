@@ -159,9 +159,7 @@ export const GET = route(
             };
 
             if (mode === 'flow') {
-                const result = (yield* Effect.tryPromise(() =>
-                    trendingMarketsList(queryArgs),
-                )) as FlowTrendingListResult;
+                const result = (yield* trendingMarketsList(queryArgs)) as FlowTrendingListResult;
 
                 return {
                     trending: result.rows.map((row: FlowTrendingRow) => ({
@@ -204,9 +202,7 @@ export const GET = route(
                 };
             }
 
-            const result = (yield* Effect.tryPromise(() =>
-                freshTrendingMarketsList(queryArgs),
-            )) as FreshTrendingListResult;
+            const result = (yield* freshTrendingMarketsList(queryArgs)) as FreshTrendingListResult;
 
             return {
                 trending: result.rows.map((row: FreshTrendingRow) => ({

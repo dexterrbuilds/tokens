@@ -1,21 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
 import { Effect } from 'effect';
-import { ApiResponseError, apiJson } from '@/effect/api-client';
+import { apiJson } from '@/effect/api-client';
+import { shouldRetryApiQuery } from '@/effect/query-retry';
 import type { OHLCVData, TimeInterval } from '@/lib/birdeye';
 import { looksLikeSolanaMintAddress } from '@/lib/solana-address';
 import { alignEpochSeconds } from '@/lib/time';
 
 interface UseOHLCVOptions {
     enabled?: boolean;
-}
-
-function shouldRetryOhlcvQuery(failureCount: number, error: unknown): boolean {
-    if (error instanceof ApiResponseError) {
-        // These are not transient for the client; retrying just increases load and makes rate limits worse.
-        if ([400, 401, 403, 429].includes(error.status)) return false;
-    }
-
-    return failureCount < 2;
 }
 
 export function useOHLCV(address: string, interval: TimeInterval, days: number, options: UseOHLCVOptions = {}) {
@@ -39,6 +31,6 @@ export function useOHLCV(address: string, interval: TimeInterval, days: number, 
             );
         },
         enabled: enabled && isValidAddress,
-        retry: shouldRetryOhlcvQuery,
+        retry: shouldRetryApiQuery,
     });
 }

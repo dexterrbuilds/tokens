@@ -1,3 +1,6 @@
+import { Effect } from 'effect';
+import { isShuttingDown } from '@tokens/cloudrun-shutdown';
+import { runJobPool } from '@tokens/effect/job-runner';
 import type { CronResult, CuratedMintsSource } from './crons';
 import { InvalidArgsError, parseExplicitTargets } from './crons';
 
@@ -165,11 +168,6 @@ function normalizeSymbol(value: string): string {
 
 function normalizeText(value: unknown): string {
     return typeof value === 'string' ? value.trim().toLowerCase().replace(/\s+/g, ' ') : '';
-}
-
-function sleep(ms: number): Promise<void> {
-    if (ms <= 0) return Promise.resolve();
-    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function pickDeterministicBatch<T>(items: readonly T[], maxItems: number, windowMs: number, nowMs: number): T[] {
@@ -357,6 +355,7 @@ export async function refreshPublicEquityStockPrices(
     const concurrency = clampInt(args.concurrency, 2, 1, 5);
     const delayMs = clampInt(args.delayMs, 50, 0, 5_000);
     const selectionWindowMs = clampInt(args.selectionWindowMs, 5 * 60_000, 10_000, 24 * 60 * 60_000);
+    const budgetMs = clampInt(args.budgetMs, 0, 0, 3_600_000);
     const requireRefreshEnabled = clampBool(args.requireRefreshEnabled, true);
     const explicitAssetIds = parseExplicitTargets(args.assetIds, 'assetIds');
 
@@ -394,53 +393,45 @@ export async function refreshPublicEquityStockPrices(
 
     let refreshed = 0;
     let skippedNoSnapshot = 0;
-    let failed = 0;
-    let nextIndex = 0;
 
-    async function worker(): Promise<void> {
-        while (true) {
-            const idx = nextIndex;
-            if (idx >= selected.length) return;
-            nextIndex += 1;
-            const mapping = selected[idx]!;
-            try {
-                const snapshot = await deps.clickhouse.fetchStockSnapshot(mapping.symbol);
-                if (!snapshot) {
-                    skippedNoSnapshot += 1;
-                    continue;
-                }
-                await deps.clickhouseRepo.upsertStockPriceLatest({
-                    assetId: mapping.assetId,
-                    symbol: mapping.symbol,
-                    normalizedSymbol: mapping.normalizedSymbol,
-                    priceUsd: snapshot.priceUsd,
-                    volume24hUsd: snapshot.volume24hUsd,
-                    priceChange24hPercent: snapshot.priceChange24hPercent,
-                    asOf: snapshot.asOf,
-                    lastFetchedAt: start,
-                });
-                refreshed += 1;
-            } catch (err) {
-                failed += 1;
-                console.error(
-                    `[refreshPublicEquityStockPrices] assetId=${mapping.assetId} symbol=${mapping.symbol}`,
-                    err instanceof Error ? err.message : String(err),
-                );
-            } finally {
-                await sleep(delayMs);
-            }
-        }
-    }
-
-    await Promise.all(Array.from({ length: Math.min(concurrency, selected.length) }, () => worker()));
+    const summary = await Effect.runPromise(
+        runJobPool({
+            label: 'refreshPublicEquityStockPrices',
+            items: selected,
+            concurrency,
+            delayMs,
+            ...(budgetMs > 0 ? { budgetMs } : {}),
+            shouldStop: isShuttingDown,
+            process: mapping =>
+                Effect.tryPromise(async () => {
+                    const snapshot = await deps.clickhouse.fetchStockSnapshot(mapping.symbol);
+                    if (!snapshot) {
+                        skippedNoSnapshot += 1;
+                        return;
+                    }
+                    await deps.clickhouseRepo.upsertStockPriceLatest({
+                        assetId: mapping.assetId,
+                        symbol: mapping.symbol,
+                        normalizedSymbol: mapping.normalizedSymbol,
+                        priceUsd: snapshot.priceUsd,
+                        volume24hUsd: snapshot.volume24hUsd,
+                        priceChange24hPercent: snapshot.priceChange24hPercent,
+                        asOf: snapshot.asOf,
+                        lastFetchedAt: start,
+                    });
+                    refreshed += 1;
+                }),
+        }),
+    );
 
     return {
-        ok: true,
+        ok: !(summary.attempted > 0 && refreshed === 0 && skippedNoSnapshot === 0 && summary.failed >= summary.attempted),
         processed: selected.length,
         durationMs: deps.now() - start,
         refreshed,
         skippedNoSnapshot,
-        failed,
+        failed: summary.failed,
+        ...(summary.partial ? { partial: true } : {}),
     };
 }
 
@@ -571,6 +562,7 @@ export async function refreshSolanaClickhouseTradeSnapshots(
     const delayMs = clampInt(args.delayMs, 25, 0, 5_000);
     const selectionWindowMs = clampInt(args.selectionWindowMs, 5 * 60_000, 10_000, 24 * 60 * 60_000);
     const chunkSize = clampInt(args.chunkSize, 50, 1, 250);
+    const budgetMs = clampInt(args.budgetMs, 0, 0, 3_600_000);
     const requireRefreshEnabled = clampBool(args.requireRefreshEnabled, true);
 
     const start = deps.now();
@@ -608,16 +600,18 @@ export async function refreshSolanaClickhouseTradeSnapshots(
     const chunks = chunkArr(mints, chunkSize);
     const seen = new Set<string>();
     let refreshed = 0;
-    let failed = 0;
-    let nextIndex = 0;
+    let softFailed = 0;
 
-    async function worker(): Promise<void> {
-        while (true) {
-            const idx = nextIndex;
-            if (idx >= chunks.length) return;
-            nextIndex += 1;
-            const mintsChunk = chunks[idx]!;
-            try {
+    const summary = await Effect.runPromise(
+        runJobPool({
+            label: 'refreshSolanaClickhouseTradeSnapshots',
+            items: chunks,
+            concurrency,
+            delayMs,
+            ...(budgetMs > 0 ? { budgetMs } : {}),
+            shouldStop: isShuttingDown,
+            process: mintsChunk =>
+                Effect.tryPromise(async () => {
                 const snapshots = await deps.clickhouse.fetchSolanaMintSnapshots({
                     mints: mintsChunk,
                     stableMints,
@@ -645,28 +639,25 @@ export async function refreshSolanaClickhouseTradeSnapshots(
                     });
                     refreshed += 1;
                 }
-            } catch (err) {
-                failed += mintsChunk.length;
-                console.error(
-                    `[refreshSolanaClickhouseTradeSnapshots] chunk size=${mintsChunk.length}`,
-                    err instanceof Error ? err.message : String(err),
-                );
-            } finally {
-                await sleep(delayMs);
-            }
-        }
-    }
+                }),
+            onItemError: mintsChunk =>
+                Effect.sync(() => {
+                    // Preserve the per-mint failure accounting the old catch kept.
+                    softFailed += mintsChunk.length;
+                }),
+        }),
+    );
 
-    await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, () => worker()));
-
+    const failed = softFailed;
     return {
-        ok: true,
+        ok: !(summary.attempted > 0 && refreshed === 0 && summary.failed >= summary.attempted),
         processed: mints.length,
         durationMs: deps.now() - start,
         refreshed,
         noTrades: Math.max(0, mints.length - seen.size - failed),
         failed,
         asOfMs: asOfMs ?? null,
+        ...(summary.partial ? { partial: true } : {}),
     };
 }
 

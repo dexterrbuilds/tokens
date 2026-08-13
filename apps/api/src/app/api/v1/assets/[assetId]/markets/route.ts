@@ -50,7 +50,7 @@ async function getProtocolTokensByMarketAddress(
     const uniqueMints = Array.from(mintToFallback.keys());
     if (uniqueMints.length === 0) return {};
 
-    const rows = await variantMarketsGetLatestByMints({ mints: uniqueMints });
+    const rows = await Effect.runPromise(variantMarketsGetLatestByMints({ mints: uniqueMints }));
     const marketByMint = new Map<string, (typeof rows)[number]['market']>();
     for (const row of rows) marketByMint.set(row.mint, row.market);
 
@@ -107,7 +107,7 @@ export const GET = route(
             const offset = yield* decodeOffset(url.searchParams.get('offset'));
             const limit = yield* decodeLimit(url.searchParams.get('limit'), { defaultValue: '10', max: 50 });
 
-            const doc = yield* Effect.tryPromise(() => tokenMarketsGetLatestByMint({ mint }));
+            const doc = yield* tokenMarketsGetLatestByMint({ mint });
             const staleMs =
                 loaded.canonical.category === 'equity' ? EQUITY_MARKETS_STALE_MS : DEFAULT_MARKETS_STALE_MS;
             const isStale = doc ? Date.now() - doc.lastFetchedAt > staleMs : true;

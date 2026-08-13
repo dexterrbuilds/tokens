@@ -101,11 +101,9 @@ export const GET = route(
                 };
             }
 
-            const rows = yield* Effect.tryPromise(() =>
-                variantMarketsGetLatestByMints({
+            const rows = yield* variantMarketsGetLatestByMints({
                     mints: [address],
-                }),
-            );
+                });
 
             const market = rows[0]?.market ?? null;
             if (!market) return insufficient('Market snapshot not available in cache');

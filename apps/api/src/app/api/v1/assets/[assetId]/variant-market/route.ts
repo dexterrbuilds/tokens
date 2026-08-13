@@ -32,13 +32,11 @@ export const GET = route(
             const url = new URL(request.url);
             const assetId = yield* resolveAssetIdFromRef(assetRef);
 
-            const assetDoc = yield* Effect.tryPromise(() => cloudRunGetByAssetId({ assetId }));
+            const assetDoc = yield* cloudRunGetByAssetId({ assetId });
             if (!assetDoc)
                 return yield* Effect.fail(new NotFoundError({ message: 'Asset not found', resource: 'asset' }));
 
-            const variantsRows = yield* Effect.tryPromise(() =>
-                assetVariantsListByAssetIds({ assetIds: [assetDoc.assetId] }),
-            );
+            const variantsRows = yield* assetVariantsListByAssetIds({ assetIds: [assetDoc.assetId] });
             const variants = variantsRows[0]?.variants ?? [];
             if (variants.length === 0) {
                 return yield* Effect.fail(
@@ -88,9 +86,7 @@ export const GET = route(
                 );
             }
 
-            const rows = yield* Effect.tryPromise(() =>
-                variantMarketsGetLatestByMints({ mints: [mint] }),
-            );
+            const rows = yield* variantMarketsGetLatestByMints({ mints: [mint] });
             const marketOut = rows[0]?.market ?? null;
 
             const isStale = marketOut ? Date.now() - marketOut.lastFetchedAt > 60 * 60_000 : true;

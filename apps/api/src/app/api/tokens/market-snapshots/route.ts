@@ -30,7 +30,7 @@ export const POST = route(
             const addresses = dedupeAddresses(body.addresses).slice(0, 250);
             if (addresses.length === 0) return [];
 
-            return yield* Effect.tryPromise(() => tokensGetSearchTokensByAddresses({ addresses }));
+            return yield* tokensGetSearchTokensByAddresses({ addresses });
         }),
     { platform: { requiredScopes: ['internal:read'] } },
 );

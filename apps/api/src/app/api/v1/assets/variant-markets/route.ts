@@ -8,13 +8,9 @@ import {
     variantFillQualityGetLatestByMints,
     variantMarketsGetLatestByMints,
     type AssetVariantsListByMintsResult,
-    type VariantFillQualityGetLatestByMintsResult,
-    type VariantMarketsGetLatestByMintsResult,
 } from '@/lib/cloudrun';
 import { executionQualitySnapshotFromConvexFillQuality } from '../_asset-helpers';
 
-type VariantMarketRows = VariantMarketsGetLatestByMintsResult;
-type VariantFillQualityRows = VariantFillQualityGetLatestByMintsResult;
 type AssetVariantRows = AssetVariantsListByMintsResult;
 
 function parseMints(raw: string): string[] {
@@ -57,13 +53,13 @@ export const GET = route(
                 mints.push(yield* decodeUnknownOrBadRequest(SolanaAddress, raw, 'Invalid mint'));
             }
 
-            const [marketRows, fillQualityRows, variantRows] = yield* Effect.tryPromise(
-                () =>
-                    Promise.all([
-                        variantMarketsGetLatestByMints({ mints }),
-                        variantFillQualityGetLatestByMints({ mints }),
-                        assetVariantsListByMints({ mints }),
-                    ]) as Promise<[VariantMarketRows, VariantFillQualityRows, AssetVariantRows]>,
+            const [marketRows, fillQualityRows, variantRows] = yield* Effect.all(
+                [
+                    variantMarketsGetLatestByMints({ mints }),
+                    variantFillQualityGetLatestByMints({ mints }),
+                    assetVariantsListByMints({ mints }),
+                ],
+                { concurrency: 'unbounded' },
             );
 
             const marketByMint = new Map<string, (typeof marketRows)[number]['market']>();

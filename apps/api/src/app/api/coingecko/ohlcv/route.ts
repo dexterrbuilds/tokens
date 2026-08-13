@@ -61,14 +61,12 @@ export const GET = route(
                 return yield* Effect.fail(new BadRequestError({ message: '`from` must be <= `to`' }));
             }
 
-            const candles = yield* Effect.tryPromise(() =>
-                coingeckoListOhlcv({
+            const candles = yield* coingeckoListOhlcv({
                     coinId,
                     interval,
                     from: requestedFrom,
                     to: requestedTo,
-                }),
-            );
+                });
 
             const warmSecret = (process.env.TOKENS_CACHE_WARM_SECRET ?? '').trim();
             if (warmSecret) {

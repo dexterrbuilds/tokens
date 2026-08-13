@@ -1,4 +1,5 @@
 import { Hono, type Context } from 'hono';
+import { BadRequestError } from '@tokens/effect';
 import { compress } from 'hono/compress';
 import { isValidBearerToken } from '@tokens/cloudrun-shutdown';
 
@@ -109,7 +110,7 @@ import {
     type CronResult,
 } from './handlers/crons';
 import { coingeckoJobs } from './handlers/crons.coingecko';
-import { clickhouseJobs, type ClickhouseCronDeps } from './handlers/crons.clickhouse';
+import { clickhouseJobs, type ClickhouseCronDeps, type ClickhouseJobHandler } from './handlers/crons.clickhouse';
 import { miscJobs, type MiscCronDeps, type MiscJobHandler } from './handlers/crons.misc';
 import {
     assetVariantsJobs,
@@ -165,7 +166,8 @@ export interface ServerDeps {
     ohlcvReadsRepo: OhlcvReadsRepo;
     prestocksReadsRepo: PrestocksReadsRepo;
     authToken: string;
-    cronDeps?: CronDeps & Partial<ClickhouseCronDeps>;
+    cronDeps?: CronDeps;
+    clickhouseCronDeps?: CronDeps & ClickhouseCronDeps;
     miscCronDeps?: MiscCronDeps;
     assetVariantsCronDeps?: AssetVariantsCronDeps;
     seedCronDeps?: SeedCronDeps;
@@ -178,7 +180,7 @@ export interface ServerDeps {
 }
 
 type Handler = (args: unknown, identity: CallerIdentity | null) => Promise<unknown>;
-type JobHandler = (deps: CronDeps & ClickhouseCronDeps, args: unknown) => Promise<CronResult>;
+type JobHandler = (deps: CronDeps, args: unknown) => Promise<CronResult>;
 
 /**
  * `ok: false` means total failure (work attempted, none succeeded) — return
@@ -186,6 +188,19 @@ type JobHandler = (deps: CronDeps & ClickhouseCronDeps, args: unknown) => Promis
  */
 function cronJobResponse(c: Context, result: CronResult) {
     return c.json(result, result.ok === false ? 500 : 200);
+}
+
+/**
+ * Shared error mapping for job handlers: invalid args (either the legacy
+ * CronInvalidArgsError or @tokens/effect's BadRequestError from decodeJobArgs)
+ * map to 400; everything else logs the full error (stack preserved) and 500s.
+ */
+function jobErrorResponse(c: Context, name: string, err: unknown) {
+    if (err instanceof CronInvalidArgsError || err instanceof BadRequestError) {
+        return c.json({ error: 'invalid_args', message: err.message }, 400);
+    }
+    console.error(`[cloudrun-assets] job ${name} threw`, err);
+    return c.json({ error: 'handler_error' }, 500);
 }
 
 /**
@@ -433,7 +448,8 @@ export function createApp(deps: ServerDeps) {
     jobs['refresh-curated-ohlcv-1d'] = refreshCuratedOhlcv;
     jobs['refresh-curated-ohlcv-1w'] = refreshCuratedOhlcv;
     Object.assign(jobs, coingeckoJobs);
-    Object.assign(jobs, clickhouseJobs as Record<string, JobHandler>);
+
+    const clickhouseJobsTable: Record<string, ClickhouseJobHandler> = { ...clickhouseJobs };
 
     const miscJobsTable: Record<string, MiscJobHandler> = { ...miscJobs };
     const assetVariantsJobsTable: Record<string, AssetVariantsJobHandler> = { ...assetVariantsJobs };
@@ -442,15 +458,62 @@ export function createApp(deps: ServerDeps) {
     const clickhouseExtrasJobsTable: Record<string, ClickhouseExtrasJobHandler> = { ...clickhouseExtrasJobs };
     const prestocksJobsTable: Record<string, PrestocksJobHandler> = { ...prestocksJobs };
 
+    interface JobGroup {
+        has(name: string): boolean;
+        /** null = this group's deps are unavailable. */
+        run: ((name: string, args: unknown) => Promise<CronResult>) | null;
+        disabledError?: string;
+    }
+
+    const jobGroups: JobGroup[] = [
+        {
+            has: name => Object.hasOwn(jobs, name),
+            run: deps.cronDeps ? (name, args) => jobs[name]!(deps.cronDeps!, args) : null,
+        },
+        {
+            has: name => Object.hasOwn(clickhouseJobsTable, name),
+            run: deps.clickhouseCronDeps
+                ? (name, args) => clickhouseJobsTable[name]!(deps.clickhouseCronDeps!, args)
+                : null,
+            disabledError: 'clickhouse_jobs_disabled',
+        },
+        {
+            has: name => Object.hasOwn(miscJobsTable, name),
+            run: deps.miscCronDeps ? (name, args) => miscJobsTable[name]!(deps.miscCronDeps!, args) : null,
+        },
+        {
+            has: name => Object.hasOwn(assetVariantsJobsTable, name),
+            run: deps.assetVariantsCronDeps
+                ? (name, args) => assetVariantsJobsTable[name]!(deps.assetVariantsCronDeps!, args)
+                : null,
+        },
+        {
+            has: name => Object.hasOwn(seedJobsTable, name),
+            run: deps.seedCronDeps ? (name, args) => seedJobsTable[name]!(deps.seedCronDeps!, args) : null,
+        },
+        {
+            has: name => Object.hasOwn(trendingJobsTable, name),
+            run: deps.trendingCronDeps
+                ? (name, args) => trendingJobsTable[name]!(deps.trendingCronDeps!, args)
+                : null,
+        },
+        {
+            has: name => Object.hasOwn(clickhouseExtrasJobsTable, name),
+            run: deps.clickhouseExtrasCronDeps
+                ? (name, args) => clickhouseExtrasJobsTable[name]!(deps.clickhouseExtrasCronDeps!, args)
+                : null,
+        },
+        {
+            has: name => Object.hasOwn(prestocksJobsTable, name),
+            run: deps.prestocksCronDeps
+                ? (name, args) => prestocksJobsTable[name]!(deps.prestocksCronDeps!, args)
+                : null,
+        },
+    ];
+
     app.post('/jobs/:name', async (c: Context) => {
-        const cronDeps = deps.cronDeps;
-        const miscCronDeps = deps.miscCronDeps;
-        const assetVariantsCronDeps = deps.assetVariantsCronDeps;
-        const seedCronDeps = deps.seedCronDeps;
-        const trendingCronDeps = deps.trendingCronDeps;
-        const clickhouseExtrasCronDeps = deps.clickhouseExtrasCronDeps;
         const verifyOidc = deps.verifyOidc;
-        if (!cronDeps || !verifyOidc) {
+        if (!deps.cronDeps || !verifyOidc) {
             return c.json({ error: 'jobs_disabled' }, 404);
         }
         const token = parseBearer(c.req.header('authorization'));
@@ -468,110 +531,15 @@ export function createApp(deps: ServerDeps) {
         }
         const name = c.req.param('name') ?? '';
         const args: unknown = await c.req.json().catch(() => ({}));
-        if (Object.hasOwn(jobs, name)) {
-            if (Object.hasOwn(clickhouseJobs, name) && (!cronDeps.clickhouseRepo || !cronDeps.clickhouse || !cronDeps.env)) {
-                return c.json({ error: 'clickhouse_jobs_disabled' }, 404);
+        for (const group of jobGroups) {
+            if (!group.has(name)) continue;
+            if (!group.run) {
+                return c.json({ error: group.disabledError ?? 'jobs_disabled' }, 404);
             }
-            const handler = jobs[name]!;
             try {
-                return cronJobResponse(c, await handler(cronDeps as CronDeps & ClickhouseCronDeps, args));
+                return cronJobResponse(c, await group.run(name, args));
             } catch (err) {
-                if (err instanceof CronInvalidArgsError) {
-                    return c.json({ error: 'invalid_args', message: err.message }, 400);
-                }
-                console.error(`[cloudrun-assets] job ${name} threw`, err);
-                return c.json({ error: 'handler_error' }, 500);
-            }
-        }
-        if (Object.hasOwn(miscJobsTable, name)) {
-            if (!miscCronDeps) {
-                return c.json({ error: 'jobs_disabled' }, 404);
-            }
-            const handler = miscJobsTable[name]!;
-            try {
-                return cronJobResponse(c, await handler(miscCronDeps, args));
-            } catch (err) {
-                if (err instanceof CronInvalidArgsError) {
-                    return c.json({ error: 'invalid_args', message: err.message }, 400);
-                }
-                console.error(`[cloudrun-assets] job ${name} threw`, err);
-                return c.json({ error: 'handler_error' }, 500);
-            }
-        }
-        if (Object.hasOwn(assetVariantsJobsTable, name)) {
-            if (!assetVariantsCronDeps) {
-                return c.json({ error: 'jobs_disabled' }, 404);
-            }
-            const handler = assetVariantsJobsTable[name]!;
-            try {
-                return cronJobResponse(c, await handler(assetVariantsCronDeps, args));
-            } catch (err) {
-                if (err instanceof CronInvalidArgsError) {
-                    return c.json({ error: 'invalid_args', message: err.message }, 400);
-                }
-                console.error(`[cloudrun-assets] job ${name} threw`, err);
-                return c.json({ error: 'handler_error' }, 500);
-            }
-        }
-        if (Object.hasOwn(seedJobsTable, name)) {
-            if (!seedCronDeps) {
-                return c.json({ error: 'jobs_disabled' }, 404);
-            }
-            const handler = seedJobsTable[name]!;
-            try {
-                return cronJobResponse(c, await handler(seedCronDeps, args));
-            } catch (err) {
-                if (err instanceof CronInvalidArgsError) {
-                    return c.json({ error: 'invalid_args', message: err.message }, 400);
-                }
-                console.error(`[cloudrun-assets] job ${name} threw`, err);
-                return c.json({ error: 'handler_error' }, 500);
-            }
-        }
-        if (Object.hasOwn(trendingJobsTable, name)) {
-            if (!trendingCronDeps) {
-                return c.json({ error: 'jobs_disabled' }, 404);
-            }
-            const handler = trendingJobsTable[name]!;
-            try {
-                return cronJobResponse(c, await handler(trendingCronDeps, args));
-            } catch (err) {
-                if (err instanceof CronInvalidArgsError) {
-                    return c.json({ error: 'invalid_args', message: err.message }, 400);
-                }
-                console.error(`[cloudrun-assets] job ${name} threw`, err);
-                return c.json({ error: 'handler_error' }, 500);
-            }
-        }
-        if (Object.hasOwn(clickhouseExtrasJobsTable, name)) {
-            if (!clickhouseExtrasCronDeps) {
-                return c.json({ error: 'jobs_disabled' }, 404);
-            }
-            const handler = clickhouseExtrasJobsTable[name]!;
-            try {
-                return cronJobResponse(c, await handler(clickhouseExtrasCronDeps, args));
-            } catch (err) {
-                if (err instanceof CronInvalidArgsError) {
-                    return c.json({ error: 'invalid_args', message: err.message }, 400);
-                }
-                console.error(`[cloudrun-assets] job ${name} threw`, err);
-                return c.json({ error: 'handler_error' }, 500);
-            }
-        }
-        if (Object.hasOwn(prestocksJobsTable, name)) {
-            const prestocksCronDeps = deps.prestocksCronDeps;
-            if (!prestocksCronDeps) {
-                return c.json({ error: 'jobs_disabled' }, 404);
-            }
-            const handler = prestocksJobsTable[name]!;
-            try {
-                return cronJobResponse(c, await handler(prestocksCronDeps, args));
-            } catch (err) {
-                if (err instanceof CronInvalidArgsError) {
-                    return c.json({ error: 'invalid_args', message: err.message }, 400);
-                }
-                console.error(`[cloudrun-assets] job ${name} threw`, err);
-                return c.json({ error: 'handler_error' }, 500);
+                return jobErrorResponse(c, name, err);
             }
         }
         return c.json({ error: `unknown job: ${name}` }, 404);

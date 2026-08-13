@@ -5,15 +5,18 @@ import type {
     GetPricesByAssetIdsEntry,
 } from '../../../../cloudrun-assets/src/handlers/stockReads';
 
-import { getCloudRunClient } from './client';
+import type { Effect } from 'effect';
+
+import { cloudRunQuery } from './client';
+import type { CloudRunError } from './errors';
 
 export type GetInstrumentByAssetIdArgs = { assetId: string; includeInactive?: boolean };
 export type GetInstrumentByAssetIdResult = StockInstrumentResult | null;
 
-export async function stockInstrumentsGetByAssetId(
+export function stockInstrumentsGetByAssetId(
     args: GetInstrumentByAssetIdArgs,
-): Promise<GetInstrumentByAssetIdResult> {
-    return getCloudRunClient().query<GetInstrumentByAssetIdResult>(
+): Effect.Effect<GetInstrumentByAssetIdResult, CloudRunError> {
+    return cloudRunQuery<GetInstrumentByAssetIdResult>(
         'assets',
         'stockInstrumentsGetByAssetId',
         { ...args },
@@ -23,10 +26,10 @@ export async function stockInstrumentsGetByAssetId(
 export type GetInstrumentsByAssetIdsArgs = { assetIds: string[]; includeInactive?: boolean };
 export type GetInstrumentsByAssetIdsResult = GetInstrumentsByAssetIdsEntry[];
 
-export async function stockInstrumentsGetByAssetIds(
+export function stockInstrumentsGetByAssetIds(
     args: GetInstrumentsByAssetIdsArgs,
-): Promise<GetInstrumentsByAssetIdsResult> {
-    return getCloudRunClient().query<GetInstrumentsByAssetIdsResult>(
+): Effect.Effect<GetInstrumentsByAssetIdsResult, CloudRunError> {
+    return cloudRunQuery<GetInstrumentsByAssetIdsResult>(
         'assets',
         'stockInstrumentsGetByAssetIds',
         { ...args },
@@ -36,10 +39,10 @@ export async function stockInstrumentsGetByAssetIds(
 export type GetPriceLatestByAssetIdArgs = { assetId: string };
 export type GetPriceLatestByAssetIdResult = StockPriceResult | null;
 
-export async function stockPricesGetLatestByAssetId(
+export function stockPricesGetLatestByAssetId(
     args: GetPriceLatestByAssetIdArgs,
-): Promise<GetPriceLatestByAssetIdResult> {
-    return getCloudRunClient().query<GetPriceLatestByAssetIdResult>(
+): Effect.Effect<GetPriceLatestByAssetIdResult, CloudRunError> {
+    return cloudRunQuery<GetPriceLatestByAssetIdResult>(
         'assets',
         'stockPricesGetLatestByAssetId',
         { ...args },
@@ -49,10 +52,10 @@ export async function stockPricesGetLatestByAssetId(
 export type GetPriceLatestByAssetIdsArgs = { assetIds: string[] };
 export type GetPriceLatestByAssetIdsResult = GetPricesByAssetIdsEntry[];
 
-export async function stockPricesGetLatestByAssetIds(
+export function stockPricesGetLatestByAssetIds(
     args: GetPriceLatestByAssetIdsArgs,
-): Promise<GetPriceLatestByAssetIdsResult> {
-    return getCloudRunClient().query<GetPriceLatestByAssetIdsResult>(
+): Effect.Effect<GetPriceLatestByAssetIdsResult, CloudRunError> {
+    return cloudRunQuery<GetPriceLatestByAssetIdsResult>(
         'assets',
         'stockPricesGetLatestByAssetIds',
         { ...args },

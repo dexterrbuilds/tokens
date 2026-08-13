@@ -3,7 +3,10 @@ import type {
     FreshTrendingListResult,
 } from '../../../../cloudrun-assets/src/handlers/trendingReads';
 
-import { getCloudRunClient } from './client';
+import type { Effect } from 'effect';
+
+import { cloudRunQuery } from './client';
+import type { CloudRunError } from './errors';
 
 type AssetCategory =
     | 'crypto'
@@ -18,8 +21,8 @@ type AssetCategory =
 export type TrendingMarketsListArgs = { category?: AssetCategory; limit?: number; offset?: number };
 export type TrendingMarketsListResult = TrendingListResult;
 
-export async function trendingMarketsList(args: TrendingMarketsListArgs): Promise<TrendingMarketsListResult> {
-    return getCloudRunClient().query<TrendingMarketsListResult>('assets', 'trendingMarketsList', {
+export function trendingMarketsList(args: TrendingMarketsListArgs): Effect.Effect<TrendingMarketsListResult, CloudRunError> {
+    return cloudRunQuery<TrendingMarketsListResult>('assets', 'trendingMarketsList', {
         ...args,
     });
 }
@@ -27,10 +30,10 @@ export async function trendingMarketsList(args: TrendingMarketsListArgs): Promis
 export type FreshTrendingMarketsListArgs = TrendingMarketsListArgs;
 export type FreshTrendingMarketsListResult = FreshTrendingListResult;
 
-export async function freshTrendingMarketsList(
+export function freshTrendingMarketsList(
     args: FreshTrendingMarketsListArgs,
-): Promise<FreshTrendingMarketsListResult> {
-    return getCloudRunClient().query<FreshTrendingMarketsListResult>('assets', 'freshTrendingMarketsList', {
+): Effect.Effect<FreshTrendingMarketsListResult, CloudRunError> {
+    return cloudRunQuery<FreshTrendingMarketsListResult>('assets', 'freshTrendingMarketsList', {
         ...args,
     });
 }

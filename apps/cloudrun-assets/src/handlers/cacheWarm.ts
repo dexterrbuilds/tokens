@@ -191,7 +191,7 @@ async function runRefresh(label: string, fn: () => Promise<CronResult>): Promise
     try {
         await fn();
     } catch (err) {
-        console.error(`[cacheWarm] ${label} refresh failed`, err instanceof Error ? err.message : String(err));
+        console.error(`[cacheWarm] ${label} refresh failed`, err);
     }
 }
 
