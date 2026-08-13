@@ -9,6 +9,7 @@
 
 import { Duration, Effect, Schedule } from 'effect';
 import { MissingEnvError } from '@tokens/effect';
+import { loadEnv, resetEnvForTests } from '../env';
 import {
     CloudRunHttpError,
     CloudRunTimeoutError,
@@ -212,33 +213,29 @@ let cachedConfig: CloudRunClientConfig | null = null;
 let cachedCaller: CloudRunCaller | null = null;
 
 function readConfigFromEnv(): CloudRunClientConfig | MissingEnvError {
-    const read = (name: string): string | MissingEnvError => {
-        const v = process.env[name]?.trim();
-        if (!v) return new MissingEnvError({ message: `CloudRun client: missing required env var ${name}`, name });
-        return v;
-    };
-
-    const assets = read('TOKENS_CLOUDRUN_ASSETS_URL');
-    if (typeof assets !== 'string') return assets;
-    const prices = read('TOKENS_CLOUDRUN_PRICES_URL');
-    if (typeof prices !== 'string') return prices;
-    const usage = read('TOKENS_CLOUDRUN_USAGE_URL');
-    if (typeof usage !== 'string') return usage;
-    const authToken = read('TOKENS_CLOUDRUN_AUTH_TOKEN');
-    if (typeof authToken !== 'string') return authToken;
-
-    const adminUrl = process.env.TOKENS_CLOUDRUN_ADMIN_URL?.trim();
-    const timeout = Number(process.env.TOKENS_CLOUDRUN_TIMEOUT_MS) || undefined;
+    const cloudRun = loadEnv().cloudRun;
+    if (cloudRun === null) {
+        const missing = [
+            'TOKENS_CLOUDRUN_AUTH_TOKEN',
+            'TOKENS_CLOUDRUN_ASSETS_URL',
+            'TOKENS_CLOUDRUN_PRICES_URL',
+            'TOKENS_CLOUDRUN_USAGE_URL',
+        ].find(name => !process.env[name]?.trim());
+        return new MissingEnvError({
+            message: `CloudRun client: missing required env var ${missing ?? 'TOKENS_CLOUDRUN_AUTH_TOKEN'}`,
+            name: missing ?? 'TOKENS_CLOUDRUN_AUTH_TOKEN',
+        });
+    }
 
     return {
         baseUrls: {
-            assets,
-            prices,
-            usage,
-            ...(adminUrl ? { admin: adminUrl } : {}),
+            assets: cloudRun.urls.assets,
+            prices: cloudRun.urls.prices,
+            usage: cloudRun.urls.usage,
+            ...(cloudRun.urls.admin ? { admin: cloudRun.urls.admin } : {}),
         },
-        authToken,
-        ...(timeout !== undefined ? { timeoutMs: timeout } : {}),
+        authToken: cloudRun.authToken,
+        ...(cloudRun.timeoutMs !== undefined ? { timeoutMs: cloudRun.timeoutMs } : {}),
     };
 }
 
@@ -299,4 +296,6 @@ export function cloudRunMutation<TResult = unknown>(
 export function __resetCloudRunClientForTesting() {
     cachedConfig = null;
     cachedCaller = null;
+    // Config now flows through loadEnv(); tests that toggle env need both caches cleared.
+    resetEnvForTests();
 }
