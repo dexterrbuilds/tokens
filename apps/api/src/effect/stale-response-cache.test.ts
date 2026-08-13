@@ -109,7 +109,7 @@ describe('withStaleFallback', () => {
         } catch (err) {
             thrown = err;
         }
-        expect(String(thrown)).toContain('downstream timeout');
+        expect(String((thrown as Error | undefined)?.cause)).toContain('downstream timeout');
     });
 
     it('never masks 4xx-class failures with stale data', async () => {
@@ -149,7 +149,7 @@ describe('withStaleFallback', () => {
         } catch (err) {
             thrown = err;
         }
-        expect(String(thrown)).toContain('downstream timeout');
+        expect(String((thrown as Error | undefined)?.cause)).toContain('downstream timeout');
     });
 
     it('does not fail the request when the cache write fails', async () => {
@@ -239,6 +239,6 @@ describe('withStaleFallback', () => {
         } catch (err) {
             thrown = err;
         }
-        expect(String(thrown)).toContain('downstream timeout');
+        expect(String((thrown as Error | undefined)?.cause)).toContain('downstream timeout');
     });
 });

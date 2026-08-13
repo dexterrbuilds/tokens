@@ -1,3 +1,9 @@
+> [!IMPORTANT]
+> External pull requests are not accepted and will be closed automatically.
+> Please open an issue for bugs, data corrections, or suggestions. This template
+> is for maintainer-authored pull requests from within the organization. See the
+> [contribution policy](https://github.com/solana-foundation/tokens/blob/main/CONTRIBUTING.md).
+
 ## Summary
 
 Describe what changed.

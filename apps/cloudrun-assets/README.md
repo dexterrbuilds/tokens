@@ -14,7 +14,8 @@ The query names match the corresponding Convex export names (e.g. `getByAssetId`
 | --- | --- | --- |
 | `getByAssetId` | query | template, parity with `convex/assets.ts:getByAssetId` minus the `imageStorageId` lookup (dropped during migration) |
 
-The remaining `assets.*`, `assetVariants.*`, `assetMarkets.*` etc. land in follow-up PRs.
+The remaining `assets.*`, `assetVariants.*`, `assetMarkets.*` functionality will
+be implemented incrementally by the maintainers.
 
 ## Env
 

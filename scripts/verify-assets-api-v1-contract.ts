@@ -84,8 +84,8 @@ function assertCanonicalMarketSnapshot(snapshot: unknown, path: string): void {
     assertObject(snapshot, path);
 
     assert(
-        snapshot.source === 'coingecko' || snapshot.source === 'clickhouse_stock',
-        `${path}.source must be "coingecko" or "clickhouse_stock"`,
+        snapshot.source === 'coingecko' || snapshot.source === 'clickhouse_stock' || snapshot.source === 'prestocks',
+        `${path}.source must be "coingecko", "clickhouse_stock", or "prestocks"`,
     );
     assertNullableNumber(snapshot.price, `${path}.price`);
     assertNullableNumber(snapshot.volume24hUSD, `${path}.volume24hUSD`);
@@ -96,6 +96,15 @@ function assertCanonicalMarketSnapshot(snapshot: unknown, path: string): void {
     if (snapshot.source === 'coingecko') {
         assert(typeof snapshot.coinId === 'string', `${path}.coinId must be a string`);
         assertNullableNumber(snapshot.marketCap, `${path}.marketCap`);
+    } else if (snapshot.source === 'prestocks') {
+        assert(typeof snapshot.symbol === 'string', `${path}.symbol must be a string`);
+        assert(typeof snapshot.mint === 'string', `${path}.mint must be a string`);
+        assertNullableNumber(snapshot.marketCap, `${path}.marketCap`);
+        assertNullableNumber(snapshot.markPriceUsd, `${path}.markPriceUsd`);
+        assertNullableNumber(snapshot.markValuationUsd, `${path}.markValuationUsd`);
+        assertNullableNumber(snapshot.impliedValuationUsd, `${path}.impliedValuationUsd`);
+        assertNullableNumber(snapshot.premiumToMarkPercent, `${path}.premiumToMarkPercent`);
+        assertNullableNumber(snapshot.asOf, `${path}.asOf`);
     } else {
         assert(typeof snapshot.symbol === 'string', `${path}.symbol must be a string`);
         assertNullableNumber(snapshot.asOf, `${path}.asOf`);
@@ -283,6 +292,15 @@ async function main(): Promise<void> {
     const resolvedTesla = await verifyResolve(baseUrl, apiKey, prefix, teslaXstockMint);
     assert(resolvedTesla === 'tesla', `Tesla xStock mint must resolve to tesla, got ${resolvedTesla}`);
     await verifyDetailAssetId(baseUrl, apiKey, prefix, teslaXstockMint, 'tesla');
+
+    // PreStocks pre-IPO asset: the `anduril` alias must resolve, and any
+    // canonicalMarket present must satisfy the union (including `prestocks`).
+    const resolvedAnduril = await verifyResolve(baseUrl, apiKey, prefix, 'anduril');
+    assert(
+        resolvedAnduril.startsWith('pre-'),
+        `anduril alias must resolve to a pre-* asset, got ${resolvedAnduril}`,
+    );
+    await verifyDetail(baseUrl, apiKey, prefix, resolvedAnduril);
 
     // Optional singleton mint check (for tokens outside a canonical asset).
     const singletonMint = process.env.SINGLETON_MINT?.trim() ?? '';

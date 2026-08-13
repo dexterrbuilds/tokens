@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Array as Arr, Effect } from 'effect';
 
 import { route } from '@/effect/next-route';
 import { BadRequestError } from '@tokens/effect';
@@ -25,6 +25,7 @@ import {
     type SearchPrefetchResult,
     type StockInstrumentsGetByAssetIdsResult,
     type StockPricesGetLatestByAssetIdsResult,
+    type TokenMarketsGetLatestByMintsResult,
 } from '@/lib/cloudrun';
 
 import type { AssetCategory, CanonicalAsset } from '@tokens/asset-registry';
@@ -95,13 +96,6 @@ function uniqueStrings(values: readonly string[]): string[] {
         out.push(value);
     }
     return out;
-}
-
-function chunkArray<T>(items: ReadonlyArray<T>, chunkSize: number): Array<Array<T>> {
-    if (chunkSize <= 0) return [items.slice()];
-    const chunks: Array<Array<T>> = [];
-    for (let i = 0; i < items.length; i += chunkSize) chunks.push(items.slice(i, i + chunkSize));
-    return chunks;
 }
 
 function scheduleCoinPriceWarm(coinId: string): Effect.Effect<void, never> {
@@ -182,8 +176,7 @@ export const GET = route(
             // through to the per-handler Convex path preserved below. Shape is
             // preserved by construction because the composite returns the same
             // rows the individual calls would.
-            const prefetch: SearchPrefetchResult | null = yield* Effect.tryPromise(() =>
-                searchPrefetchForApi({
+            const prefetch: SearchPrefetchResult | null = yield* searchPrefetchForApi({
                     query: qOriginal,
                     ...(category ? { category } : {}),
                     searchLimit: Math.min(limit * 2, 50),
@@ -194,13 +187,12 @@ export const GET = route(
                     ...(additionalMints.length > 0 ? { additionalMints } : {}),
                     ...(additionalCoingeckoIds.length > 0 ? { additionalCoingeckoIds } : {}),
                     combinedAssetIdsCap: Math.max(limit * 4, 250),
-                }),
-            ).pipe(tapErrorAndDefault<SearchPrefetchResult | null>('assets.search.composite', null, { query: qOriginal }));
+                }).pipe(tapErrorAndDefault<SearchPrefetchResult | null>('assets.search.composite', null, { query: qOriginal }));
 
             const sanctumMatch = prefetch
                 ? prefetch.sanctumMatch
                 : shouldConsiderSanctumLsts
-                  ? yield* Effect.tryPromise(() => sanctumResolveRef({ ref: qOriginal })).pipe(
+                  ? yield* sanctumResolveRef({ ref: qOriginal }).pipe(
                         tapErrorAndDefault('assets.search.sanctumResolveRef', null, { query: qOriginal }),
                     )
                   : null;
@@ -208,13 +200,11 @@ export const GET = route(
 
             const assetsFromDb = (prefetch
                 ? prefetch.assets
-                : yield* Effect.tryPromise(() =>
-                      cloudRunSearch({
+                : yield* cloudRunSearch({
                           query: effectiveAssetQuery,
                           ...(category ? { category } : {}),
                           limit: Math.min(limit * 2, 50),
-                      }),
-                  )) as AssetDocLike[];
+                      })) as AssetDocLike[];
             const legacyMintAssetsFromDb = assetsFromDb.filter(a => looksLikeSolanaMintAddress(a.assetId));
             const canonicalAssetsFromDb = assetsFromDb.filter(a => !looksLikeSolanaMintAddress(a.assetId));
             const assetImageById = new Map<string, string>();
@@ -225,12 +215,10 @@ export const GET = route(
             const tokenMatches = prefetch
                 ? prefetch.tokens
                 : shouldSearchTokens
-                  ? ((yield* Effect.tryPromise(() =>
-                        tokensSearchTokens({
+                  ? ((yield* tokensSearchTokens({
                             query: qOriginal,
                             limit: Math.min(limit * 2, 50),
-                        }),
-                    ).pipe(tapErrorAndDefault('assets.search.tokenSearch', [], { query: qOriginal }))) as Array<{
+                        }).pipe(tapErrorAndDefault('assets.search.tokenSearch', [], { query: qOriginal }))) as Array<{
                         address: string;
                         symbol: string;
                         name: string;
@@ -252,7 +240,7 @@ export const GET = route(
             const variantsByTokenMint = prefetch
                 ? prefetch.variantsByTokenMint
                 : tokenMints.length
-                  ? yield* Effect.tryPromise(() => assetVariantsListByMints({ mints: tokenMints }))
+                  ? yield* assetVariantsListByMints({ mints: tokenMints })
                   : [];
 
             const canonicalMintSet = new Set<string>();
@@ -278,7 +266,7 @@ export const GET = route(
                 : missingCanonicalAssetIds.length > 0
                   ? yield* Effect.all(
                         missingCanonicalAssetIds.map(assetId =>
-                            Effect.tryPromise(() => cloudRunGetByAssetId({ assetId })).pipe(
+                            cloudRunGetByAssetId({ assetId }).pipe(
                                 tapErrorAndDefault('assets.search.extraAssetDoc', null, { assetId }),
                             ),
                         ),
@@ -309,11 +297,9 @@ export const GET = route(
                 );
                 const deletedRegistryRefs = new Set(
                     registryRefs.length > 0
-                        ? yield* Effect.tryPromise(() =>
-                              listDeletedRefs({
+                        ? yield* listDeletedRefs({
                                   refs: registryRefs.slice(0, 2000),
-                              }),
-                          ).pipe(tapErrorAndDefault('assets.search.registryDeletedRefs', [], { query: qOriginal }))
+                              }).pipe(tapErrorAndDefault('assets.search.registryDeletedRefs', [], { query: qOriginal }))
                         : [],
                 );
 
@@ -374,9 +360,9 @@ export const GET = route(
             if (coingeckoIdsToFetch.length > 0) {
                 const rows = yield* Effect.all(
                     coingeckoIdsToFetch.map(id =>
-                        Effect.tryPromise(() => coingeckoGetCoinById({ id })).pipe(
+                        coingeckoGetCoinById({ id }).pipe(
                             Effect.map(coin => [id, coin] as const),
-                            Effect.catchAll(() => Effect.succeed([id, null] as const)),
+                            Effect.catch(() => Effect.succeed([id, null] as const)),
                         ),
                     ),
                     // Avoid bursting Convex queries at scale.
@@ -388,9 +374,7 @@ export const GET = route(
             const assetIds = firstPage.map(a => a.assetId);
             const variantsRows = prefetch
                 ? prefetch.variantsByAssetId
-                : yield* Effect.tryPromise(() =>
-                      assetVariantsListByAssetIds({ assetIds }),
-                  );
+                : yield* assetVariantsListByAssetIds({ assetIds });
             const variantsByAssetId = new Map<string, (typeof variantsRows)[number]['variants']>();
             for (const row of variantsRows) variantsByAssetId.set(row.assetId, row.variants);
 
@@ -650,9 +634,7 @@ export const GET = route(
                     if (missingMints.length > 0) {
                         for (let i = 0; i < missingMints.length; i += 250) {
                             const chunk = missingMints.slice(i, i + 250);
-                            const rows = yield* Effect.tryPromise(() =>
-                                variantMarketsGetLatestByMints({ mints: chunk }),
-                            );
+                            const rows = yield* variantMarketsGetLatestByMints({ mints: chunk });
                             for (const row of rows) {
                                 const market = row.market;
                                 if (!market) continue;
@@ -663,9 +645,7 @@ export const GET = route(
                         }
                         for (let i = 0; i < missingMints.length; i += 250) {
                             const chunk = missingMints.slice(i, i + 250);
-                            const rows = yield* Effect.tryPromise(() =>
-                                variantFillQualityGetLatestByMints({ mints: chunk }),
-                            ).pipe(tapErrorAndDefault('assets.search.fillQuality.gapfill', [], { count: chunk.length }));
+                            const rows = yield* variantFillQualityGetLatestByMints({ mints: chunk }).pipe(tapErrorAndDefault('assets.search.fillQuality.gapfill', [], { count: chunk.length }));
                             for (const row of rows) {
                                 const snapshot = executionQualitySnapshotFromConvexFillQuality(row.fillQuality);
                                 if (snapshot) fillQualityByMint.set(row.mint, snapshot);
@@ -676,9 +656,7 @@ export const GET = route(
                     // Convex query caps at 250 mints; chunk to keep search results complete.
                     for (let i = 0; i < uniqueMints.length; i += 250) {
                         const chunk = uniqueMints.slice(i, i + 250);
-                        const rows = yield* Effect.tryPromise(() =>
-                            variantMarketsGetLatestByMints({ mints: chunk }),
-                        );
+                        const rows = yield* variantMarketsGetLatestByMints({ mints: chunk });
                         for (const row of rows) {
                             const market = row.market;
                             if (!market) continue;
@@ -691,9 +669,7 @@ export const GET = route(
 
                     for (let i = 0; i < uniqueMints.length; i += 250) {
                         const chunk = uniqueMints.slice(i, i + 250);
-                        const rows = yield* Effect.tryPromise(() =>
-                            variantFillQualityGetLatestByMints({ mints: chunk }),
-                        ).pipe(tapErrorAndDefault('assets.search.variantFillQuality', [], { count: chunk.length }));
+                        const rows = yield* variantFillQualityGetLatestByMints({ mints: chunk }).pipe(tapErrorAndDefault('assets.search.variantFillQuality', [], { count: chunk.length }));
                         for (const row of rows) {
                             const snapshot = executionQualitySnapshotFromConvexFillQuality(row.fillQuality);
                             if (snapshot) fillQualityByMint.set(row.mint, snapshot);
@@ -739,20 +715,16 @@ export const GET = route(
                 .map(entry => entry.mint);
             const uniqueMissing = Array.from(new Set(missingMints.map(m => m.trim()).filter(Boolean))).slice(0, 25);
             if (uniqueMissing.length > 0) {
-                let tokenMarketsDocs: Awaited<ReturnType<typeof tokenMarketsGetLatestByMints>>;
+                let tokenMarketsDocs: TokenMarketsGetLatestByMintsResult;
                 if (prefetch) {
                     const covered = new Set(prefetch.tokenMarketsDocs.map(d => d.mint));
                     const gap = uniqueMissing.filter(m => !covered.has(m));
                     const gapDocs = gap.length > 0
-                        ? yield* Effect.tryPromise(() =>
-                              tokenMarketsGetLatestByMints({ mints: gap }),
-                          ).pipe(tapErrorAndDefault('assets.search.tokenMarkets.gapfill', [] as Awaited<ReturnType<typeof tokenMarketsGetLatestByMints>>, { count: gap.length }))
+                        ? yield* tokenMarketsGetLatestByMints({ mints: gap }).pipe(tapErrorAndDefault('assets.search.tokenMarkets.gapfill', [] as TokenMarketsGetLatestByMintsResult, { count: gap.length }))
                         : [];
                     tokenMarketsDocs = [...prefetch.tokenMarketsDocs, ...gapDocs];
                 } else {
-                    tokenMarketsDocs = yield* Effect.tryPromise(() =>
-                        tokenMarketsGetLatestByMints({ mints: uniqueMissing }),
-                    );
+                    tokenMarketsDocs = yield* tokenMarketsGetLatestByMints({ mints: uniqueMissing });
                 }
 
                 for (const { mint, doc } of tokenMarketsDocs) {
@@ -844,9 +816,7 @@ export const GET = route(
 
             const assetAggregatesRows = prefetch
                 ? prefetch.assetAggregates
-                : yield* Effect.tryPromise(() =>
-                      assetMarketsGetLatestByAssetIds({ assetIds: combinedAssets.map(a => a.assetId) }),
-                  );
+                : yield* assetMarketsGetLatestByAssetIds({ assetIds: combinedAssets.map(a => a.assetId) });
             const aggregatesByAssetId = new Map<string, (typeof assetAggregatesRows)[number]['market']>();
             for (const row of assetAggregatesRows) aggregatesByAssetId.set(row.assetId, row.market);
 
@@ -856,16 +826,12 @@ export const GET = route(
             const stockInstrumentRows = (prefetch
                 ? prefetch.stockInstruments
                 : stockAssetIds.length > 0
-                  ? yield* Effect.tryPromise(() =>
-                        stockInstrumentsGetByAssetIds({ assetIds: stockAssetIds.slice(0, 500) }),
-                    ).pipe(tapErrorAndDefault('assets.search.stockInstruments', [], { count: stockAssetIds.length }))
+                  ? yield* stockInstrumentsGetByAssetIds({ assetIds: stockAssetIds.slice(0, 500) }).pipe(tapErrorAndDefault('assets.search.stockInstruments', [], { count: stockAssetIds.length }))
                   : []) as StockInstrumentsGetByAssetIdsResult;
             const stockPriceRows = (prefetch
                 ? prefetch.stockPrices
                 : stockAssetIds.length > 0
-                  ? yield* Effect.tryPromise(() =>
-                        stockPricesGetLatestByAssetIds({ assetIds: stockAssetIds.slice(0, 500) }),
-                    ).pipe(tapErrorAndDefault('assets.search.stockPrices', [], { count: stockAssetIds.length }))
+                  ? yield* stockPricesGetLatestByAssetIds({ assetIds: stockAssetIds.slice(0, 500) }).pipe(tapErrorAndDefault('assets.search.stockPrices', [], { count: stockAssetIds.length }))
                   : []) as StockPricesGetLatestByAssetIdsResult;
             type StockInstrument = NonNullable<(typeof stockInstrumentRows)[number]['instrument']>;
             type StockSnapshot = NonNullable<(typeof stockPriceRows)[number]['snapshot']>;
@@ -945,13 +911,13 @@ export const GET = route(
                     )
                     .filter(Boolean),
             );
-            const priceChunks = chunkArray(coinIds, 50);
+            const priceChunks = Arr.chunksOf(coinIds, 50);
             const canonicalPriceRows = prefetch
                 ? prefetch.coingeckoPrices
                 : priceChunks.length > 0
                   ? (yield* Effect.all(
                         priceChunks.map(chunk =>
-                            Effect.tryPromise(() => coingeckoGetPriceLatestByCoinIds({ coinIds: chunk })),
+                            coingeckoGetPriceLatestByCoinIds({ coinIds: chunk }),
                         ),
                         { concurrency: 2 },
                     )).flat()

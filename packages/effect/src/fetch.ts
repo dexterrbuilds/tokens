@@ -1,5 +1,8 @@
-import { Duration, Effect, Schedule } from 'effect';
-import { FetchFailedError, JsonParseError, RateLimitedError, UpstreamHttpError } from './api-errors';
+import { Duration, Effect, Schedule, type Schema } from 'effect';
+import { mergeSignals } from './abort';
+import { FetchFailedError, JsonParseError, RateLimitedError, UpstreamDataError, UpstreamHttpError } from './api-errors';
+import { CurrentRequestId, emitEvent } from './observability';
+import { decodeUpstreamOrFail, decodeUpstreamOrWarn } from './schema';
 
 type NextFetchInit = RequestInit & { next?: { revalidate?: number } };
 
@@ -8,42 +11,19 @@ export interface FetchJsonArgs {
     service: string;
     init?: NextFetchInit;
     signal?: AbortSignal;
+    /**
+     * Optional response schema. In 'warn' mode (the default, right for
+     * third-party APIs) mismatches log an `upstream_decode_failed` event and
+     * pass the raw payload through; in 'fail' mode they fail with a tagged
+     * `UpstreamDataError`.
+     */
+    schema?: Schema.ConstraintDecoder<unknown>;
+    decodeMode?: 'fail' | 'warn';
+    /** Per-attempt timeout. A timed-out attempt fails as FetchFailedError (retryable). */
+    timeout?: Duration.Input;
 }
 
-interface MergeSignalsResult {
-    signal: AbortSignal;
-    cleanup: () => void;
-}
-
-function mergeSignals(primary: AbortSignal, secondary?: AbortSignal): MergeSignalsResult {
-    const noop = () => {};
-    if (!secondary) return { signal: primary, cleanup: noop };
-    const secondarySignal = secondary;
-
-    // Prefer native AbortSignal.any when available.
-    const anyFn = (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
-    if (typeof anyFn === 'function') return { signal: anyFn([primary, secondarySignal]), cleanup: noop };
-
-    if (primary.aborted) return { signal: primary, cleanup: noop };
-    if (secondarySignal.aborted) return { signal: secondarySignal, cleanup: noop };
-
-    const controller = new AbortController();
-
-    function onAbort() {
-        cleanup();
-        controller.abort();
-    }
-
-    primary.addEventListener('abort', onAbort, { once: true });
-    secondarySignal.addEventListener('abort', onAbort, { once: true });
-
-    function cleanup() {
-        primary.removeEventListener('abort', onAbort);
-        secondarySignal.removeEventListener('abort', onAbort);
-    }
-
-    return { signal: controller.signal, cleanup };
-}
+export type FetchJsonError = RateLimitedError | UpstreamHttpError | FetchFailedError | JsonParseError | UpstreamDataError;
 
 function parseRetryAfterMs(value: string | null): number | undefined {
     if (!value) return undefined;
@@ -79,10 +59,8 @@ function isRetryableFetchError(error: unknown): boolean {
     return false;
 }
 
-export function fetchJson<T = unknown>(
-    args: FetchJsonArgs,
-): Effect.Effect<T, RateLimitedError | UpstreamHttpError | FetchFailedError | JsonParseError> {
-    return Effect.tryPromise({
+export function fetchJson<T = unknown>(args: FetchJsonArgs): Effect.Effect<T, FetchJsonError> {
+    const attempt = Effect.tryPromise({
         try: (signal: AbortSignal) => {
             const merged = mergeSignals(signal, args.signal);
             return Promise.resolve()
@@ -97,7 +75,7 @@ export function fetchJson<T = unknown>(
             }),
     }).pipe(
         Effect.flatMap(res => {
-            type FetchJsonError = RateLimitedError | UpstreamHttpError | JsonParseError;
+            type BodyError = RateLimitedError | UpstreamHttpError | JsonParseError | UpstreamDataError;
 
             if (res.status === 429) {
                 return Effect.fail(
@@ -106,7 +84,7 @@ export function fetchJson<T = unknown>(
                         message: `${args.service} rate limited`,
                         retryAfterMs: parseRetryAfterMs(res.headers.get('retry-after')),
                     }),
-                ) as Effect.Effect<T, FetchJsonError, never>;
+                ) as Effect.Effect<T, BodyError, never>;
             }
 
             if (!res.ok) {
@@ -118,7 +96,7 @@ export function fetchJson<T = unknown>(
                             message: `Failed to read ${args.service} response body`,
                             cause: error instanceof Error ? error.message : String(error),
                         }),
-                }).pipe(Effect.catchAll(() => Effect.succeed('')));
+                }).pipe(Effect.catch(() => Effect.succeed('')));
 
                 return bodyEffect.pipe(
                     Effect.flatMap(body =>
@@ -132,7 +110,7 @@ export function fetchJson<T = unknown>(
                             }),
                         ),
                     ),
-                ) as Effect.Effect<T, FetchJsonError, never>;
+                ) as Effect.Effect<T, BodyError, never>;
             }
 
             return Effect.tryPromise({
@@ -142,45 +120,78 @@ export function fetchJson<T = unknown>(
                         message: `Failed to parse JSON from ${args.service}`,
                         cause: error instanceof Error ? error.message : String(error),
                     }),
-            });
+            }).pipe(
+                Effect.flatMap(payload => {
+                    if (!args.schema) return Effect.succeed(payload);
+                    const decode =
+                        args.decodeMode === 'fail'
+                            ? decodeUpstreamOrFail(args.schema, args.service)
+                            : decodeUpstreamOrWarn(args.schema, args.service);
+                    return decode(payload) as Effect.Effect<T, UpstreamDataError, never>;
+                }),
+            );
         }),
+    );
+
+    if (args.timeout === undefined) return attempt;
+    return attempt.pipe(
+        Effect.timeout(args.timeout),
+        Effect.catchTag('TimeoutError', () =>
+            Effect.fail(
+                new FetchFailedError({
+                    service: args.service,
+                    message: `${args.service} request timed out`,
+                    cause: 'timeout',
+                }),
+            ),
+        ),
     );
 }
 
 export function fetchJsonWithRetry<T = unknown>(
-    args: FetchJsonArgs & { maxRetries?: number; baseDelay?: Duration.DurationInput },
-): Effect.Effect<T, RateLimitedError | UpstreamHttpError | FetchFailedError | JsonParseError> {
+    args: FetchJsonArgs & { maxRetries?: number; baseDelay?: Duration.Input },
+): Effect.Effect<T, FetchJsonError> {
     const maxRetries = Math.max(0, args.maxRetries ?? 3);
     const baseDelay = args.baseDelay ?? '200 millis';
-
-    const schedule = Schedule.whileInput(
-        Schedule.intersect(Schedule.exponential(baseDelay), Schedule.recurs(maxRetries)),
-        isRetryableFetchError,
-    );
 
     const started = Date.now();
     const endpoint = extractEndpoint(args.url);
 
-    return Effect.retry(fetchJson<T>(args), schedule).pipe(
+    return Effect.retry(fetchJson<T>(args), {
+        while: isRetryableFetchError,
+        times: maxRetries,
+        schedule: Schedule.exponential(baseDelay),
+    }).pipe(
         Effect.tap(() =>
-            Effect.sync(() => emitExternalCall({
-                provider: args.service,
-                endpoint,
-                status: null,
-                duration_ms: Date.now() - started,
-                ok: true,
-            })),
+            Effect.service(CurrentRequestId).pipe(
+                Effect.map(requestId =>
+                    emitExternalCall({
+                        provider: args.service,
+                        endpoint,
+                        status: null,
+                        duration_ms: Date.now() - started,
+                        ok: true,
+                        ...(requestId ? { request_id: requestId } : {}),
+                    }),
+                ),
+            ),
         ),
         Effect.tapError(err =>
-            Effect.sync(() => emitExternalCall({
-                provider: args.service,
-                endpoint,
-                status: extractStatus(err),
-                duration_ms: Date.now() - started,
-                ok: false,
-                error_tag: extractErrorTag(err),
-            })),
+            Effect.service(CurrentRequestId).pipe(
+                Effect.map(requestId =>
+                    emitExternalCall({
+                        provider: args.service,
+                        endpoint,
+                        status: extractStatus(err),
+                        duration_ms: Date.now() - started,
+                        ok: false,
+                        error_tag: extractErrorTag(err),
+                        ...(requestId ? { request_id: requestId } : {}),
+                    }),
+                ),
+            ),
         ),
+        Effect.withSpan(`external.${args.service}`),
     );
 }
 
@@ -211,8 +222,9 @@ interface ExternalCallEvent {
     duration_ms: number;
     ok: boolean;
     error_tag?: string;
+    request_id?: string;
 }
 
 function emitExternalCall(fields: ExternalCallEvent): void {
-    console.log(JSON.stringify({ event: 'external_call', ...fields }));
+    emitEvent({ event: 'external_call', ...fields });
 }

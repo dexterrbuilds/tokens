@@ -1,0 +1,33 @@
+name: Close external pull requests
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  close-external-prs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Close pull requests originating outside solana-foundation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate \
+            "/repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
+            --jq '.[] |
+              select(.head.repo.owner.login != "solana-foundation") |
+              .number' |
+          while read -r pr_number; do
+            echo "Closing external PR #${pr_number}"
+            gh api --method PATCH \
+              "/repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
+              -f state=closed
+          done

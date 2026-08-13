@@ -121,7 +121,7 @@ export const GET = route(
                 },
                 maxRetries: 2,
             }).pipe(
-                Effect.catchAll(error =>
+                Effect.catch(error =>
                     Effect.gen(function* () {
                         const shouldLog = yield* Effect.tryPromise(() =>
                             shouldLogOnce('coingecko:news:upstream-error', 5 * 60),

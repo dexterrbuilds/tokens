@@ -1,3 +1,5 @@
+import { Effect } from 'effect';
+
 import {
     assetCollectionsGetMemberMints,
     getSolanaDefaultVariantsViewForApi,
@@ -33,7 +35,7 @@ async function getDynamicCappedLstMints(): Promise<string[]> {
     const staticFallback = getStaticListAddresses('lsts');
 
     try {
-        const cachedView = await getSolanaDefaultVariantsViewForApi();
+        const cachedView = await Effect.runPromise(getSolanaDefaultVariantsViewForApi());
         const cachedMints = uniqueStrings(
             (cachedView?.variants ?? [])
                 .filter((variant: { kind: string; mint: string }) => variant.kind === 'yield')
@@ -45,7 +47,7 @@ async function getDynamicCappedLstMints(): Promise<string[]> {
     }
 
     try {
-        const liveView = await listSolanaVariantsForApi({ kind: 'yield' });
+        const liveView = await Effect.runPromise(listSolanaVariantsForApi({ kind: 'yield' }));
         const liveMints = uniqueStrings((liveView?.variants ?? []).map((variant: { mint: string }) => variant.mint));
         return liveMints.length > 0 ? liveMints : staticFallback;
     } catch {

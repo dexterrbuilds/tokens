@@ -10,7 +10,10 @@
  * `/api/v1/assets/curated` response shape by construction.
  */
 
-import { getCloudRunClient } from './client';
+import type { Effect } from 'effect';
+
+import { cloudRunQuery } from './client';
+import type { CloudRunError } from './errors';
 
 // Re-export the authoritative shape from the Cloud Run handler so the wrapper
 // and the server agree by construction.
@@ -34,8 +37,8 @@ import type { CuratedPrefetchArgs, CuratedPrefetchResult } from '../../../../clo
  */
 const CURATED_PREFETCH_TIMEOUT_MS = 10_000;
 
-export async function curatedPrefetchForApi(args: CuratedPrefetchArgs): Promise<CuratedPrefetchResult> {
-    return getCloudRunClient().query<CuratedPrefetchResult>(
+export function curatedPrefetchForApi(args: CuratedPrefetchArgs): Effect.Effect<CuratedPrefetchResult, CloudRunError> {
+    return cloudRunQuery<CuratedPrefetchResult>(
         'assets',
         'assetsApiCuratedPrefetchForApi',
         { ...args },

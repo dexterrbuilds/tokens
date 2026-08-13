@@ -191,7 +191,7 @@ interface AssetsSearchResponse {
 - When available, `primaryVariant.market.metricsSource="clickhouse_trades"` indicates price, volume, trade-count, wallet-count, price-change, `lastTradeAt`, and `asOf` fields were materialized from the internal Solana trades cache. Public API routes still read these fields from Convex.
 - `executionQuality` is cached from ClickHouse fill-quality windows in Convex. Current coverage uses curated base mints, USDC quote, `24h` range, and `5s` horizon. `markout*` fields are exposed as raw cached data and are not used for primary ranking yet.
 - `stats.volume30dUSD` is a nullable rolling 30-day USD volume sum from cached daily candles for the canonical group. When populated, clients do not need to sum candles themselves.
-- `canonicalMarket.source` can be `coingecko` or `clickhouse_stock`.
+- `canonicalMarket.source` can be `coingecko`, `clickhouse_stock`, or `prestocks`. The `prestocks` source (tokenized pre-IPO equities) reports `marketCap` as the implied company valuation derived from the PreStocks reference mark, plus `markPriceUsd`, `markValuationUsd`, `impliedValuationUsd`, and `premiumToMarkPercent`. Consumers with exhaustive `switch(source)` handling should add a default branch.
 - Tokens that are not part of any canonical asset may appear as **singleton assets** with deterministic IDs of the form `solana-<mint>` (with a single Solana variant).
 
 ### Example

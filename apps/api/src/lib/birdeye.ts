@@ -3,6 +3,7 @@ import { Effect } from 'effect';
 
 import { BadRequestError } from '@tokens/effect';
 import { fetchJsonWithRetry } from '@tokens/effect';
+import { BirdeyeOverviewResponseSchema } from './birdeye.schemas';
 import type { MarketStats, Token } from '@/lib/types';
 import { cleanTokenName, getTokenLogoURL } from '@/lib/logo-overrides';
 
@@ -62,6 +63,7 @@ interface BirdeyeOverviewResponse {
 
 function fetchTokenOverview(apiKey: string, address: string) {
     return fetchJsonWithRetry<BirdeyeOverviewResponse>({
+        schema: BirdeyeOverviewResponseSchema,
         url: `${BIRDEYE_API_URL}/defi/token_overview?address=${address}`,
         service: 'birdeye',
         init: {
@@ -446,7 +448,7 @@ export async function getTokensByAddresses(addresses: readonly string[]): Promis
             uniqueAddresses.map(address =>
                 fetchTokenOverview(apiKey, address).pipe(
                     Effect.ensuring(Effect.sleep('200 millis')),
-                    Effect.catchAll(() => Effect.succeed(null)),
+                    Effect.catch(() => Effect.succeed(null)),
                     Effect.map(overview => (overview ? tokenOverviewToToken(overview) : null)),
                 ),
             ),

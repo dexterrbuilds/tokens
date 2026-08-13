@@ -190,7 +190,7 @@ export const POST = route((request: Request) =>
 
         function summarizeAddress(address: string): Effect.Effect<Result, never> {
             return Effect.gen(function* () {
-                const token = yield* Effect.tryPromise(() => tokensGetByAddress({ address }));
+                const token = yield* tokensGetByAddress({ address });
                 if (!token) return resultSkipped(address, 'missing_token');
 
                 const name = (token.name ?? '').trim();
@@ -210,9 +210,7 @@ export const POST = route((request: Request) =>
                 }
 
                 const sourceHash = sha256Hex(normalizedSource);
-                const existingSummary = yield* Effect.tryPromise(() =>
-                    tokenDescriptionSummariesGetByAddress({ address }),
-                );
+                const existingSummary = yield* tokenDescriptionSummariesGetByAddress({ address });
                 if (!force && existingSummary?.sourceHash === sourceHash) {
                     return resultSkipped(address, 'up_to_date');
                 }
@@ -239,7 +237,7 @@ export const POST = route((request: Request) =>
 
                 return resultOk(address, summary);
             }).pipe(
-                Effect.catchAll(error =>
+                Effect.catch(error =>
                     Effect.succeed(resultError(address, error instanceof Error ? error.message : String(error))),
                 ),
             );

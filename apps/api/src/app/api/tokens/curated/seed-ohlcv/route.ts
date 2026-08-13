@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Array as Arr, Effect } from 'effect';
 
 import { ohlcvBounds } from '@/lib/cloudrun';
 import { getTokenOHLCV, type TimeInterval } from '@/lib/birdeye';
@@ -39,12 +39,6 @@ function intervalToSeconds(interval: TimeInterval): number {
         default:
             return 60 * 60;
     }
-}
-
-function chunk<T>(items: readonly T[], size: number): T[][] {
-    const result: T[][] = [];
-    for (let i = 0; i < items.length; i += size) result.push(items.slice(i, i + size));
-    return result;
 }
 
 export const POST = route((request: Request) =>
@@ -111,7 +105,7 @@ export const POST = route((request: Request) =>
             return Effect.gen(function* () {
                 const stats: AddressStats = { inserted: 0, updated: 0, skipped: 0, fetchedCandles: 0 };
 
-                const bounds = yield* Effect.tryPromise(() => ohlcvBounds({ address, interval }));
+                const bounds = yield* ohlcvBounds({ address, interval });
 
                 const segmentsToFetch: Array<{ from: number; to: number }> = [];
 
@@ -136,14 +130,14 @@ export const POST = route((request: Request) =>
                     // Write path removed with Convex; add an `ohlcvUpsertMany`
                     // cloudrun-assets mutation and route through it when this
                     // endpoint needs to actually seed OHLCV again.
-                    for (const candlesChunk of chunk(candles, 500)) {
+                    for (const candlesChunk of Arr.chunksOf(candles, 500)) {
                         void candlesChunk;
                     }
                 }
 
                 return { address, ok: true, stats };
             }).pipe(
-                Effect.catchAll(() =>
+                Effect.catch(() =>
                     Effect.succeed({
                         address,
                         ok: false,

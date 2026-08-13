@@ -39,6 +39,8 @@ import type {
     StockReadsRepo,
 } from './handlers/stockReads';
 import type { OhlcvCandleRow, OhlcvReadsRepo, TimeInterval } from './handlers/ohlcvReads';
+import type { PrestocksPriceRow, PrestocksReadsRepo } from './handlers/prestocksReads';
+import type { PrestocksRepo } from './handlers/crons.prestocks';
 import type {
     AssetsApiAssetMarketRow,
     AssetsApiAssetRow,
@@ -2777,6 +2779,55 @@ export function makePostgresStockReadsRepo(sql: Sql): StockReadsRepo {
     };
 }
 
+
+export function makePostgresPrestocksRepo(sql: Sql): PrestocksRepo {
+    return {
+        async upsertLatest(row) {
+            await sql`
+                INSERT INTO prestocks_prices_latest (
+                    id, mint, symbol, name,
+                    mark_price_usd, mark_valuation_usd, token_price_usd, implied_valuation_usd,
+                    supply, image_url, external_url,
+                    last_fetched_at, source
+                )
+                VALUES (
+                    ${randomId('psl')}, ${row.mint}, ${row.symbol}, ${row.name},
+                    ${row.markPriceUsd}, ${row.markValuationUsd}, ${row.tokenPriceUsd}, ${row.impliedValuationUsd},
+                    ${row.supply}, ${row.imageUrl}, ${row.externalUrl},
+                    ${row.lastFetchedAt}, 'prestocks'
+                )
+                ON CONFLICT (mint) DO UPDATE SET
+                    symbol = EXCLUDED.symbol,
+                    name = EXCLUDED.name,
+                    mark_price_usd = EXCLUDED.mark_price_usd,
+                    mark_valuation_usd = EXCLUDED.mark_valuation_usd,
+                    token_price_usd = EXCLUDED.token_price_usd,
+                    implied_valuation_usd = EXCLUDED.implied_valuation_usd,
+                    supply = EXCLUDED.supply,
+                    image_url = EXCLUDED.image_url,
+                    external_url = EXCLUDED.external_url,
+                    last_fetched_at = EXCLUDED.last_fetched_at,
+                    updated_at = now()
+            `;
+        },
+    };
+}
+
+export function makePostgresPrestocksReadsRepo(sql: Sql): PrestocksReadsRepo {
+    return {
+        async findLatestByMints(mints) {
+            if (mints.length === 0) return [];
+            const rows = await sql<PrestocksPriceRow[]>`
+                SELECT mint, symbol, name,
+                       mark_price_usd, mark_valuation_usd, token_price_usd, implied_valuation_usd,
+                       supply, last_fetched_at, source
+                FROM prestocks_prices_latest
+                WHERE mint IN ${sql(mints)}
+            `;
+            return rows;
+        },
+    };
+}
 
 export function makePostgresOhlcvReadsRepo(sql: Sql): OhlcvReadsRepo {
     return {

@@ -27,6 +27,14 @@ interface AssetMarketSnapshot {
     priceChange24hPercent: number | null;
     lastTradeAt?: number | null;
     asOf?: number | null;
+    /** PreStocks reference data for tokenized pre-IPO exposure. */
+    preStocks?: {
+        markPriceUsd: number | null;
+        markValuationUsd: number | null;
+        impliedValuationUsd: number | null;
+        premiumToMarkPercent: number | null;
+        asOf?: number | null;
+    } | null;
 }
 
 interface AssetStatsSectionProps {
@@ -104,6 +112,22 @@ export function AssetStatsSection({ market, globalStats, mode = 'variant' }: Ass
     const asOf = pickPositive(market?.asOf, null);
     const hasTradeMetrics = Boolean(volume1h ?? trade1h ?? trade24h ?? uniqueWallet24h ?? lastTradeAt ?? asOf);
 
+    const preStocks = market?.preStocks ?? null;
+    const impliedValuation = preStocks ? pickPositive(preStocks.impliedValuationUsd, null) : null;
+    const markValuation = preStocks ? pickPositive(preStocks.markValuationUsd, null) : null;
+    const markPrice = preStocks ? pickPositive(preStocks.markPriceUsd, null) : null;
+    const premiumToMark = preStocks ? pickFinite(preStocks.premiumToMarkPercent, null) : null;
+    // When the implied valuation is available it takes the headline slot and the
+    // token float moves to the FDV slot with an unambiguous label.
+    const showImpliedValuation = impliedValuation !== null;
+    const tokenizedFloat = pickPositive(market?.marketCap, null);
+    const premiumTone: StatCardProps['badgeTone'] =
+        premiumToMark === null || Math.abs(premiumToMark) <= 0.05
+            ? 'neutral'
+            : premiumToMark > 0
+              ? 'positive'
+              : 'negative';
+
     const tooltips =
         mode === 'canonical'
             ? {
@@ -141,7 +165,26 @@ export function AssetStatsSection({ market, globalStats, mode = 'variant' }: Ass
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 overflow-hidden mb-px [&>*]:border-border-light [&>*:nth-child(even)]:border-l md:[&>*:nth-child(n+2)]:border-l max-md:[&>*:nth-child(n+3)]:border-t">
-                <StatCard label="Market Cap" tooltip={tooltips.marketCap} value={formatUsd(marketCap)} />
+                {showImpliedValuation ? (
+                    <StatCard
+                        label="Implied Valuation"
+                        tooltip={
+                            <div className="max-w-[260px]">
+                                <p>
+                                    Company valuation implied by the token&apos;s market price: PreStocks reference
+                                    valuation × token price ÷ reference (mark) price.
+                                </p>
+                                <p className="mt-1 text-white/80">
+                                    Reference data from PreStocks — not an official company valuation.
+                                </p>
+                            </div>
+                        }
+                        value={formatUsd(impliedValuation)}
+                        badge={markValuation !== null ? `${formatUsd(markValuation)} mark` : undefined}
+                    />
+                ) : (
+                    <StatCard label="Market Cap" tooltip={tooltips.marketCap} value={formatUsd(marketCap)} />
+                )}
                 <StatCard label="Liquidity" tooltip={tooltips.liquidity} value={formatUsd(liquidity)} />
                 <StatCard
                     label="24H Volume"
@@ -159,9 +202,35 @@ export function AssetStatsSection({ market, globalStats, mode = 'variant' }: Ass
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 border-t border-border-light overflow-hidden [&>*]:border-border-light [&>*:nth-child(even)]:border-l md:[&>*:nth-child(n+2)]:border-l max-md:[&>*:nth-child(n+3)]:border-t">
-                <StatCard label="Price" tooltip={tooltips.price} value={formatPrice(price)} />
+                <StatCard
+                    label="Price"
+                    tooltip={
+                        premiumToMark !== null ? (
+                            <div className="max-w-[260px]">
+                                <p>Token price from Solana markets.</p>
+                                <p className="mt-1 text-white/80">
+                                    The chip shows the token&apos;s premium or discount to the PreStocks reference
+                                    (mark) price{markPrice !== null ? ` of ${formatPrice(markPrice)}` : ''}.
+                                </p>
+                            </div>
+                        ) : (
+                            tooltips.price
+                        )
+                    }
+                    value={formatPrice(price)}
+                    badge={premiumToMark !== null ? `${formatPercent(premiumToMark)} vs mark` : undefined}
+                    badgeTone={premiumToMark !== null ? premiumTone : undefined}
+                />
                 <StatCard label="24H Change" tooltip={tooltips.priceChange24h} value={formatPercent(priceChange24h)} />
-                <StatCard label="FDV" tooltip={tooltips.fdv} value={formatUsd(fdv)} />
+                {showImpliedValuation ? (
+                    <StatCard
+                        label="Tokenized Float"
+                        tooltip="Value of the issued Solana token float (token price × issued token supply). This is the tokenized float, not the company's valuation."
+                        value={formatUsd(tokenizedFloat)}
+                    />
+                ) : (
+                    <StatCard label="FDV" tooltip={tooltips.fdv} value={formatUsd(fdv)} />
+                )}
                 <StatCard label="Total Supply" tooltip={tooltips.totalSupply} value={formatNumber(totalSupply)} />
             </div>
 
@@ -206,9 +275,16 @@ interface StatCardProps {
     tooltip: ReactNode;
     value: string;
     badge?: string;
+    badgeTone?: 'positive' | 'negative' | 'neutral';
 }
 
-function StatCard({ label, tooltip, value, badge }: StatCardProps) {
+const BADGE_TONE_CLASSES: Record<NonNullable<StatCardProps['badgeTone']>, string> = {
+    positive: 'bg-green-50 text-green-800 hover:bg-green-100',
+    negative: 'bg-red-50 text-red-800 hover:bg-red-100',
+    neutral: 'bg-[#F2F3F5] text-text-medium hover:bg-[#E8EAED]',
+};
+
+function StatCard({ label, tooltip, value, badge, badgeTone }: StatCardProps) {
     return (
         <div className="pl-6 pr-6 py-5 first:pl-0 max-md:odd:pl-0">
             <div className="flex items-center gap-1.5 mb-2">
@@ -226,7 +302,9 @@ function StatCard({ label, tooltip, value, badge }: StatCardProps) {
             <div className="flex flex-wrap items-center gap-2">
                 <p className="text-title-sm text-text-extra-high">{value}</p>
                 {badge ? (
-                    <span className="inline-flex max-w-full items-center rounded-full bg-[#F2F3F5] px-2 py-0.5 text-[11px] font-semibold leading-none text-text-medium opacity-55 tabular-nums transition-[background-color,opacity] hover:bg-[#E8EAED] hover:opacity-100">
+                    <span
+                        className={`inline-flex max-w-full items-center rounded-full px-2 py-0.5 text-[11px] font-semibold leading-none opacity-55 tabular-nums transition-[background-color,opacity] hover:opacity-100 ${BADGE_TONE_CLASSES[badgeTone ?? 'neutral']}`}
+                    >
                         {badge}
                     </span>
                 ) : null}

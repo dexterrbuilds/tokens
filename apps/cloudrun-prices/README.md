@@ -14,7 +14,9 @@ The query names match the corresponding Convex export names (e.g. `getLatestByCo
 | --- | --- | --- |
 | `getLatestByCoinId` | query | template, parity with `convex/coingeckoPrices.ts:getLatestByCoinId` |
 
-The remaining `coingeckoPrices.*`, `coingeckoCoins.*`, `coingeckoTickers.*`, `coingeckoOhlcv.*` etc. land in follow-up PRs.
+The remaining `coingeckoPrices.*`, `coingeckoCoins.*`, `coingeckoTickers.*`,
+`coingeckoOhlcv.*`, and related functionality will be implemented incrementally
+by the maintainers.
 
 ## Env
 

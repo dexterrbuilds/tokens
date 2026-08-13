@@ -860,7 +860,7 @@ async function runBestEffort(label: string, fn: () => Promise<void>): Promise<vo
     try {
         await fn();
     } catch (err) {
-        console.error(`[adminActions] ${label} failed`, err instanceof Error ? err.message : String(err));
+        console.error(`[adminActions] ${label} failed`, err);
     }
 }
 

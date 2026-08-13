@@ -190,7 +190,7 @@ function useInlinePriceChartData({
     });
 
     const shouldEnableCanonicalFallback =
-        hasEnteredView && shouldUseCanonical && !canonicalQuery.isLoading && (canonicalQuery.data?.length ?? 0) === 0;
+        hasEnteredView && shouldUseCanonical && !canonicalQuery.isLoading && (canonicalQuery.data?.length ?? 0) < 2;
     const canonicalFallbackQuery = useAssetPriceChart(normalizedAssetId, FALLBACK_INTERVAL, DAYS, {
         enabled: shouldEnableCanonicalFallback,
     });
@@ -201,8 +201,8 @@ function useInlinePriceChartData({
         shouldUseCanonical &&
         !canonicalQuery.isLoading &&
         !canonicalFallbackQuery.isLoading &&
-        (canonicalQuery.data?.length ?? 0) === 0 &&
-        (canonicalFallbackQuery.data?.length ?? 0) === 0;
+        (canonicalQuery.data?.length ?? 0) < 2 &&
+        (canonicalFallbackQuery.data?.length ?? 0) < 2;
     const canonicalExtendedQuery = useAssetPriceChart(normalizedAssetId, FALLBACK_INTERVAL, EXTENDED_DAYS ?? DAYS, {
         enabled: shouldEnableCanonicalExtended,
     });
@@ -217,7 +217,7 @@ function useInlinePriceChartData({
         shouldUseAssetApi &&
         !shouldUseCanonical &&
         !assetQuery.isLoading &&
-        (assetQuery.data?.length ?? 0) === 0;
+        (assetQuery.data?.length ?? 0) < 2;
     const assetFallbackQuery = useAssetOHLCV(normalizedAssetId, FALLBACK_INTERVAL, DAYS, {
         mint: address,
         enabled: shouldEnableAssetFallback,
@@ -230,16 +230,35 @@ function useInlinePriceChartData({
         !shouldUseCanonical &&
         !assetQuery.isLoading &&
         !assetFallbackQuery.isLoading &&
-        (assetQuery.data?.length ?? 0) === 0 &&
-        (assetFallbackQuery.data?.length ?? 0) === 0;
+        (assetQuery.data?.length ?? 0) < 2 &&
+        (assetFallbackQuery.data?.length ?? 0) < 2;
     const assetExtendedQuery = useAssetOHLCV(normalizedAssetId, FALLBACK_INTERVAL, EXTENDED_DAYS ?? DAYS, {
         mint: address,
         enabled: shouldEnableAssetExtended,
     });
 
+    // Last resort for asset-backed cards: the mint-pinned OHLCV cache can be
+    // empty for thinly traded variants (e.g. Ondo RWA mints), while the asset
+    // page still charts fine via /price-chart's server-side fallback chain
+    // (stock → CoinGecko → primary mint). Rescue with that same endpoint so a
+    // card never shows an empty chart when its asset page has one.
+    const shouldEnableCanonicalRescue =
+        hasEnteredView &&
+        shouldUseAssetApi &&
+        !shouldUseCanonical &&
+        !assetQuery.isLoading &&
+        !assetFallbackQuery.isLoading &&
+        (EXTENDED_DAYS === null || !assetExtendedQuery.isLoading) &&
+        (assetQuery.data?.length ?? 0) < 2 &&
+        (assetFallbackQuery.data?.length ?? 0) < 2 &&
+        (assetExtendedQuery.data?.length ?? 0) < 2;
+    const canonicalRescueQuery = useAssetPriceChart(normalizedAssetId, FALLBACK_INTERVAL, EXTENDED_DAYS ?? DAYS, {
+        enabled: shouldEnableCanonicalRescue,
+    });
+
     const mintQuery = useOHLCV(address, PRIMARY_INTERVAL, DAYS, { enabled: hasEnteredView && !shouldUseAssetApi });
     const shouldEnableMintFallback =
-        hasEnteredView && !shouldUseAssetApi && !mintQuery.isLoading && (mintQuery.data?.length ?? 0) === 0;
+        hasEnteredView && !shouldUseAssetApi && !mintQuery.isLoading && (mintQuery.data?.length ?? 0) < 2;
     const mintFallbackQuery = useOHLCV(address, FALLBACK_INTERVAL, DAYS, { enabled: shouldEnableMintFallback });
 
     const primaryData = shouldUseCanonical ? canonicalQuery.data : shouldUseAssetApi ? assetQuery.data : mintQuery.data;
@@ -253,9 +272,11 @@ function useInlinePriceChartData({
         : shouldUseAssetApi
           ? assetExtendedQuery.data
           : undefined;
-    const primaryHasData = (primaryData?.length ?? 0) > 0;
-    const fallbackHasData = (fallbackData?.length ?? 0) > 0;
-    const extendedHasData = (extendedData?.length ?? 0) > 0;
+    const rescueData = shouldUseAssetApi && !shouldUseCanonical ? canonicalRescueQuery.data : undefined;
+    const primaryHasData = (primaryData?.length ?? 0) >= 2;
+    const fallbackHasData = (fallbackData?.length ?? 0) >= 2;
+    const extendedHasData = (extendedData?.length ?? 0) >= 2;
+    const rescueHasData = (rescueData?.length ?? 0) >= 2;
 
     const ohlcvData = primaryHasData
         ? primaryData
@@ -263,7 +284,9 @@ function useInlinePriceChartData({
           ? fallbackData
           : extendedHasData
             ? extendedData
-            : (fallbackData ?? primaryData);
+            : rescueHasData
+              ? rescueData
+              : (fallbackData ?? primaryData);
     const isLoading = shouldUseCanonical
         ? canonicalQuery.isLoading ||
           (!primaryHasData && canonicalFallbackQuery.isLoading) ||
@@ -271,7 +294,8 @@ function useInlinePriceChartData({
         : shouldUseAssetApi
           ? assetQuery.isLoading ||
             (!primaryHasData && assetFallbackQuery.isLoading) ||
-            (!primaryHasData && !fallbackHasData && assetExtendedQuery.isLoading)
+            (!primaryHasData && !fallbackHasData && assetExtendedQuery.isLoading) ||
+            (!primaryHasData && !fallbackHasData && !extendedHasData && canonicalRescueQuery.isLoading)
           : mintQuery.isLoading || (!primaryHasData && mintFallbackQuery.isLoading);
 
     return { ohlcvData, isLoading, normalizedAssetId };

@@ -536,6 +536,17 @@ const TREND_TRIANGLE_PATH =
 
 export async function getTokenSocialImageResponse(request: Request, name: string): Promise<Response> {
     try {
+        // Next's image optimizer hardens the process-wide sharp instance by
+        // blocking every libvips loader except bitmap formats (see getSharp()
+        // in next/dist/server/image-optimizer.js), which also breaks SVG
+        // rasterization here: both our chart PNG and ImageResponse itself
+        // (@vercel/og rasterizes satori's SVG via sharp when it's installed)
+        // start throwing "Input buffer contains unsupported image format" as
+        // soon as any next/image optimization has run in this process. The
+        // SVG buffers in this route are exclusively self-generated (satori
+        // output + our own chart markup), never user-supplied, so re-enable
+        // the SVG loader per render — after the optimizer's one-time block.
+        sharp.unblock({ operation: ['VipsForeignLoadSvg'] });
         const requestedName = name.trim();
         const requestHost = getRequestHost(request.headers);
         const origin = getOrigin(request.headers, requestHost);

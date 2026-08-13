@@ -1,4 +1,4 @@
-import { Effect, Schedule } from 'effect';
+import { Array as Arr, Effect, Schedule } from 'effect';
 
 import { route } from '@/effect/next-route';
 import { withStaleFallback } from '@/effect/stale-response-cache';
@@ -26,6 +26,8 @@ import {
     type GetByAssetIdsResult,
     type StockInstrumentsGetByAssetIdsResult,
     type StockPricesGetLatestByAssetIdsResult,
+    type TokenMarketsGetLatestByMintsResult,
+    type VariantMarketsGetLatestByMintsResult,
 } from '@/lib/cloudrun';
 
 import {
@@ -129,13 +131,6 @@ function uniqueStrings(values: readonly string[]): string[] {
 
 function normalizeRef(value: string): string {
     return value.trim().toLowerCase();
-}
-
-function chunkArray<T>(items: ReadonlyArray<T>, chunkSize: number): Array<Array<T>> {
-    if (chunkSize <= 0) return [items.slice()];
-    const chunks: Array<Array<T>> = [];
-    for (let i = 0; i < items.length; i += chunkSize) chunks.push(items.slice(i, i + chunkSize));
-    return chunks;
 }
 
 function assetForCanonicalPriceSelection(asset: CanonicalAsset): CanonicalAsset {
@@ -281,8 +276,7 @@ export const GET = route(
             // Convex path preserved below.
             const shouldLoadSanctumForPrefetch = listId === 'all' || listId === 'lsts';
             const includeStockForPrefetch = listId === 'all' || listId === 'stocks';
-            const prefetch: CuratedPrefetchResult | null = yield* Effect.tryPromise(() =>
-                curatedPrefetchForApi({
+            const prefetch: CuratedPrefetchResult | null = yield* curatedPrefetchForApi({
                     listId,
                     memberMints,
                     memberAssetIds,
@@ -291,9 +285,8 @@ export const GET = route(
                     ...(registryCoingeckoIds.length > 0
                         ? { additionalCoingeckoIds: registryCoingeckoIds }
                         : {}),
-                }),
-            ).pipe(
-                Effect.retry(Schedule.intersect(Schedule.exponential('250 millis'), Schedule.recurs(1))),
+                }).pipe(
+                Effect.retry({ schedule: Schedule.exponential('250 millis'), times: 1 }),
                 tapErrorAndDefault<CuratedPrefetchResult | null>('assets.curated.composite', null, { listId }),
             );
 
@@ -301,7 +294,7 @@ export const GET = route(
                 ? prefetch.collectionAssetIds
                 : (yield* Effect.all(
                       memberListIds.map(id =>
-                          Effect.tryPromise(() => assetCollectionsGetMembers({ slug: id, limit: 2000 })).pipe(
+                          assetCollectionsGetMembers({ slug: id, limit: 2000 }).pipe(
                               tapErrorAndDefault('assets.curated.collections', [] as string[], { listId: id }),
                           ),
                       ),
@@ -313,10 +306,8 @@ export const GET = route(
                 ? prefetch.deletedAssetRefs
                 : rawAssetIds.length > 0
                   ? (yield* Effect.all(
-                        chunkArray(rawAssetIds, 500).map(chunk =>
-                            Effect.tryPromise(() =>
-                                listDeletedRefs({ refs: chunk }),
-                            ).pipe(Effect.catchAll(() => Effect.succeed([] as string[]))),
+                        Arr.chunksOf(rawAssetIds, 500).map(chunk =>
+                            listDeletedRefs({ refs: chunk }).pipe(Effect.catch(() => Effect.succeed([] as string[]))),
                         ),
                         { concurrency: 2 },
                     )).flat()
@@ -334,9 +325,7 @@ export const GET = route(
                 } else {
                     for (let i = 0; i < assetIds.length; i += 500) {
                         const chunk = assetIds.slice(i, i + 500);
-                        const rows = yield* Effect.tryPromise(() =>
-                            cloudRunGetByAssetIds({ assetIds: chunk }),
-                        ).pipe(tapErrorAndDefault('assets.curated.assets', [] as GetByAssetIdsResult, { count: chunk.length }));
+                        const rows = yield* cloudRunGetByAssetIds({ assetIds: chunk }).pipe(tapErrorAndDefault('assets.curated.assets', [] as GetByAssetIdsResult, { count: chunk.length }));
                         assetRows.push(...rows);
                     }
                 }
@@ -353,9 +342,7 @@ export const GET = route(
                     const variantAssetIds = dbAssets.map(a => a.assetId);
                     for (let i = 0; i < variantAssetIds.length; i += 250) {
                         const chunk = variantAssetIds.slice(i, i + 250);
-                        const rows = yield* Effect.tryPromise(() =>
-                            assetVariantsListByAssetIds({ assetIds: chunk }),
-                        ).pipe(tapErrorAndDefault('assets.curated.variants', [] as AssetVariantsListByAssetIdsResult, { count: chunk.length }));
+                        const rows = yield* assetVariantsListByAssetIds({ assetIds: chunk }).pipe(tapErrorAndDefault('assets.curated.variants', [] as AssetVariantsListByAssetIdsResult, { count: chunk.length }));
                         variantsRows.push(...rows);
                     }
                 }
@@ -528,7 +515,7 @@ export const GET = route(
             const sanctumLsts = shouldLoadSanctumLsts
                 ? prefetch && prefetch.sanctumLsts.length > 0
                     ? prefetch.sanctumLsts
-                    : yield* Effect.tryPromise(() => sanctumListActive({ limit: 5000 })).pipe(
+                    : yield* sanctumListActive({ limit: 5000 }).pipe(
                           tapErrorAndDefault('assets.curated.sanctumLsts', [], { listId }),
                       )
                 : [];
@@ -567,9 +554,7 @@ export const GET = route(
                     if (missingMints.length > 0) {
                         for (let i = 0; i < missingMints.length; i += 250) {
                             const chunk = missingMints.slice(i, i + 250);
-                            const rows = yield* Effect.tryPromise(() =>
-                                variantMarketsGetLatestByMints({ mints: chunk }),
-                            ).pipe(tapErrorAndDefault('assets.curated.variantMarkets.gapfill', [] as Awaited<ReturnType<typeof variantMarketsGetLatestByMints>>, { count: chunk.length }));
+                            const rows = yield* variantMarketsGetLatestByMints({ mints: chunk }).pipe(tapErrorAndDefault('assets.curated.variantMarkets.gapfill', [] as VariantMarketsGetLatestByMintsResult, { count: chunk.length }));
                             for (const row of rows) {
                                 const market = row.market;
                                 if (!market) continue;
@@ -580,9 +565,7 @@ export const GET = route(
                         }
                         for (let i = 0; i < missingMints.length; i += 250) {
                             const chunk = missingMints.slice(i, i + 250);
-                            const rows = yield* Effect.tryPromise(() =>
-                                variantFillQualityGetLatestByMints({ mints: chunk }),
-                            ).pipe(tapErrorAndDefault('assets.curated.fillQuality.gapfill', [], { count: chunk.length }));
+                            const rows = yield* variantFillQualityGetLatestByMints({ mints: chunk }).pipe(tapErrorAndDefault('assets.curated.fillQuality.gapfill', [], { count: chunk.length }));
                             for (const row of rows) {
                                 const snapshot = executionQualitySnapshotFromConvexFillQuality(row.fillQuality);
                                 if (snapshot) fillQualityByMint.set(row.mint, snapshot);
@@ -597,9 +580,7 @@ export const GET = route(
                     // Convex query caps at 250 mints; chunk to ensure full coverage for large curated lists.
                     for (let i = 0; i < uniqueMints.length; i += 250) {
                         const chunk = uniqueMints.slice(i, i + 250);
-                        const rows = yield* Effect.tryPromise(() =>
-                            variantMarketsGetLatestByMints({ mints: chunk }),
-                        ).pipe(tapErrorAndDefault('assets.curated.variantMarkets', [] as Awaited<ReturnType<typeof variantMarketsGetLatestByMints>>, { count: chunk.length }));
+                        const rows = yield* variantMarketsGetLatestByMints({ mints: chunk }).pipe(tapErrorAndDefault('assets.curated.variantMarkets', [] as VariantMarketsGetLatestByMintsResult, { count: chunk.length }));
                         for (const row of rows) {
                             const market = row.market;
                             if (!market) continue;
@@ -612,9 +593,7 @@ export const GET = route(
 
                     for (let i = 0; i < uniqueMints.length; i += 250) {
                         const chunk = uniqueMints.slice(i, i + 250);
-                        const rows = yield* Effect.tryPromise(() =>
-                            variantFillQualityGetLatestByMints({ mints: chunk }),
-                        ).pipe(tapErrorAndDefault('assets.curated.variantFillQuality', [], { count: chunk.length }));
+                        const rows = yield* variantFillQualityGetLatestByMints({ mints: chunk }).pipe(tapErrorAndDefault('assets.curated.variantFillQuality', [], { count: chunk.length }));
                         for (const row of rows) {
                             const snapshot = executionQualitySnapshotFromConvexFillQuality(row.fillQuality);
                             if (snapshot) fillQualityByMint.set(row.mint, snapshot);
@@ -669,20 +648,16 @@ export const GET = route(
             // derive a snapshot from cached DEX markets (limited to keep the endpoint predictable).
             const uniqueMissing = Array.from(new Set(missingMints.map(m => m.trim()).filter(Boolean))).slice(0, 25);
             if (uniqueMissing.length > 0) {
-                let tokenMarketsDocs: Awaited<ReturnType<typeof tokenMarketsGetLatestByMints>>;
+                let tokenMarketsDocs: TokenMarketsGetLatestByMintsResult;
                 if (prefetch) {
                     const covered = new Set(prefetch.tokenMarketsDocs.map(d => d.mint));
                     const gap = uniqueMissing.filter(m => !covered.has(m));
                     const gapDocs = gap.length > 0
-                        ? yield* Effect.tryPromise(() =>
-                              tokenMarketsGetLatestByMints({ mints: gap }),
-                          ).pipe(tapErrorAndDefault('assets.curated.tokenMarkets.gapfill', [] as Awaited<ReturnType<typeof tokenMarketsGetLatestByMints>>, { count: gap.length }))
+                        ? yield* tokenMarketsGetLatestByMints({ mints: gap }).pipe(tapErrorAndDefault('assets.curated.tokenMarkets.gapfill', [] as TokenMarketsGetLatestByMintsResult, { count: gap.length }))
                         : [];
                     tokenMarketsDocs = [...prefetch.tokenMarketsDocs, ...gapDocs];
                 } else {
-                    tokenMarketsDocs = yield* Effect.tryPromise(() =>
-                        tokenMarketsGetLatestByMints({ mints: uniqueMissing }),
-                    ).pipe(tapErrorAndDefault('assets.curated.tokenMarkets', [] as Awaited<ReturnType<typeof tokenMarketsGetLatestByMints>>, { count: uniqueMissing.length }));
+                    tokenMarketsDocs = yield* tokenMarketsGetLatestByMints({ mints: uniqueMissing }).pipe(tapErrorAndDefault('assets.curated.tokenMarkets', [] as TokenMarketsGetLatestByMintsResult, { count: uniqueMissing.length }));
                 }
 
                 for (const { mint, doc } of tokenMarketsDocs) {
@@ -780,9 +755,7 @@ export const GET = route(
             } else {
                 for (let i = 0; i < aggregateAssetIds.length; i += 500) {
                     const chunk = aggregateAssetIds.slice(i, i + 500);
-                    const rows = yield* Effect.tryPromise(() =>
-                        assetMarketsGetLatestByAssetIds({ assetIds: chunk }),
-                    ).pipe(tapErrorAndDefault('assets.curated.assetAggregates', [] as AssetMarketsGetLatestByAssetIdsResult, { count: chunk.length }));
+                    const rows = yield* assetMarketsGetLatestByAssetIds({ assetIds: chunk }).pipe(tapErrorAndDefault('assets.curated.assetAggregates', [] as AssetMarketsGetLatestByAssetIdsResult, { count: chunk.length }));
                     assetAggregatesRows.push(...rows);
                 }
             }
@@ -802,10 +775,10 @@ export const GET = route(
                     const chunk = stockAssetIds.slice(i, i + 500);
                     if (chunk.length === 0) continue;
                     const [instrumentRows, priceRows] = yield* Effect.all([
-                        Effect.tryPromise(() => stockInstrumentsGetByAssetIds({ assetIds: chunk })).pipe(
+                        stockInstrumentsGetByAssetIds({ assetIds: chunk }).pipe(
                             tapErrorAndDefault('assets.curated.stockInstruments', [], { count: chunk.length }),
                         ),
-                        Effect.tryPromise(() => stockPricesGetLatestByAssetIds({ assetIds: chunk })).pipe(
+                        stockPricesGetLatestByAssetIds({ assetIds: chunk }).pipe(
                             tapErrorAndDefault('assets.curated.stockPrices', [], { count: chunk.length }),
                         ),
                     ]);
@@ -891,13 +864,13 @@ export const GET = route(
                     )
                     .filter(Boolean),
             );
-            const priceChunks = chunkArray(coinIds, 50);
+            const priceChunks = Arr.chunksOf(coinIds, 50);
             const canonicalPriceRows: CoingeckoGetPriceLatestByCoinIdsResult = prefetch
                 ? prefetch.coingeckoPrices
                 : priceChunks.length > 0
                   ? (yield* Effect.all(
                         priceChunks.map(chunk =>
-                            Effect.tryPromise(() => coingeckoGetPriceLatestByCoinIds({ coinIds: chunk })).pipe(
+                            coingeckoGetPriceLatestByCoinIds({ coinIds: chunk }).pipe(
                                 tapErrorAndDefault(
                                     'assets.curated.coingeckoPrices',
                                     [] as CoingeckoGetPriceLatestByCoinIdsResult,

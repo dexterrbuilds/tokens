@@ -258,6 +258,7 @@ export const CURATED_TOKEN_LISTS = {
             'XsP7xzNPvEHS1m6qfanPUGjNmdnmsLKEoNAnHjdxxyZ', // MicroStrategy
             'MSTRdWXMeZxdE8osAQy3fA4rvTY5rgummDSMEx6U7Nz', // MicroStrategy (Backpack Securities)
             'XsyusqQvb8RDULsY9szwvUv2CxrDKa642w7kecZPdRM', // Monster
+            'NBiSF3UaVUFtRzHwAfxyHsBCAZWGEKnMpewAE4oh7BG', // Nebius Group (Backpack Securities)
             'XsEH7wWfJJu2ZT3UCFeVfALnVA6CP5ur7Ee11KmzVpL', // Netflix
             'XsfAzPzYrYjd4Dpa9BU3cusBsvWfVB9gBcyGC87S57n', // Novo Nordisk
             'Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh', // NVIDIA
@@ -498,6 +499,7 @@ export const CURATED_TOKEN_LISTS = {
             'PresTj4Yc2bAR197Er7wz4UUKSfqt6FryBEdAriBoQB',
             'Pre8AREmFPtoJFT8mQSXQLh56cwJmM7CFDRuoGBZiUP',
             'PreLWGkkeqG1s4HEfFZSy9moCrJ7btsHuUtfcCeoRua',
+            'PreC1KtJ1sBPPqaeeqL6Qb15GTLCYVvyYEwxhdfTwfx', // xAI (PreStocks)
             'y6kSRF4i9tfMMjZziPHtQE1PeUS6bWEHTzZMFgXondo', // STRCon
 
             // Ondo stocks batch (2026-06-18).

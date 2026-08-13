@@ -1,20 +1,23 @@
 import { Effect, Schema } from 'effect';
-import { BadRequestError } from './api-errors';
+import { BadRequestError, UpstreamDataError } from './api-errors';
 
 // -----------------------------------------------------------------------------
 // Common schemas
 // -----------------------------------------------------------------------------
 
 // Base58 (no 0,O,I,l) and common Solana mint length range.
-export const SolanaAddress = Schema.String.pipe(Schema.pattern(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/));
+export const SolanaAddress = Schema.String.check(Schema.isPattern(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/));
 
-export const TimeInterval = Schema.Literal('1m', '5m', '15m', '1H', '4H', '1D', '1W');
+export const TimeInterval = Schema.Literals(['1m', '5m', '15m', '1H', '4H', '1D', '1W']);
 
 export const NonEmptyString = Schema.NonEmptyString;
 
-export const NonNegativeIntFromString = Schema.NumberFromString.pipe(Schema.int(), Schema.nonNegative());
+export const NonNegativeIntFromString = Schema.NumberFromString.check(
+    Schema.isInt(),
+    Schema.isGreaterThanOrEqualTo(0),
+);
 
-export const PositiveIntFromString = Schema.NumberFromString.pipe(Schema.int(), Schema.positive());
+export const PositiveIntFromString = Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThan(0));
 
 // -----------------------------------------------------------------------------
 // Decode helpers (Schema -> BadRequestError)
@@ -28,35 +31,86 @@ function parseErrorToMessage(error: unknown): string {
     return String(error);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function decodeUnknownOrBadRequest<S extends Schema.Schema<any, any, any>>(
+export function decodeUnknownOrBadRequest<S extends Schema.ConstraintDecoder<unknown>>(
     schema: S,
     input: unknown,
     message: string,
-): Effect.Effect<Schema.Schema.Type<S>, BadRequestError, Schema.Schema.Context<S>> {
-    return Schema.decodeUnknown(schema)(input).pipe(
+): Effect.Effect<S['Type'], BadRequestError, S['DecodingServices']> {
+    return Schema.decodeUnknownEffect(schema)(input).pipe(
         Effect.mapError(parseError => new BadRequestError({ message, details: parseErrorToMessage(parseError) })),
     );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function decodeRequiredSearchParam<S extends Schema.Schema<any, any, any>>(
+export function decodeRequiredSearchParam<S extends Schema.ConstraintDecoder<unknown>>(
     schema: S,
     params: URLSearchParams,
     key: string,
-): Effect.Effect<Schema.Schema.Type<S>, BadRequestError, Schema.Schema.Context<S>> {
+): Effect.Effect<S['Type'], BadRequestError, S['DecodingServices']> {
     const raw = params.get(key);
     if (raw == null) return Effect.fail(new BadRequestError({ message: `${key} is required` }));
     return decodeUnknownOrBadRequest(schema, raw, `Invalid ${key}`);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function decodeOptionalSearchParam<S extends Schema.Schema<any, any, any>>(
+export function decodeOptionalSearchParam<S extends Schema.ConstraintDecoder<unknown>>(
     schema: S,
     params: URLSearchParams,
     key: string,
-): Effect.Effect<Schema.Schema.Type<S> | null, BadRequestError, Schema.Schema.Context<S>> {
+): Effect.Effect<S['Type'] | null, BadRequestError, S['DecodingServices']> {
     const raw = params.get(key);
     if (raw == null) return Effect.succeed(null);
     return decodeUnknownOrBadRequest(schema, raw, `Invalid ${key}`);
+}
+
+// -----------------------------------------------------------------------------
+// Upstream (outbound) response decoding
+// -----------------------------------------------------------------------------
+
+/**
+ * Strictly decode an upstream response. Failure becomes a tagged
+ * `UpstreamDataError` (mapped to 500). Note that Schema decoding drops excess
+ * properties, so additive upstream changes never fail — only missing/wrong
+ * fields do. Use for first-party contracts (e.g. our Cloud Run services).
+ */
+export function decodeUpstreamOrFail<S extends Schema.ConstraintDecoder<unknown>>(
+    schema: S,
+    service: string,
+): (input: unknown) => Effect.Effect<S['Type'], UpstreamDataError, S['DecodingServices']> {
+    return input =>
+        Schema.decodeUnknownEffect(schema)(input).pipe(
+            Effect.mapError(
+                parseError =>
+                    new UpstreamDataError({
+                        message: `${service} response failed schema validation`,
+                        service,
+                        issue: parseErrorToMessage(parseError),
+                    }),
+            ),
+        );
+}
+
+/**
+ * Shadow-mode decode for third-party responses: on mismatch, log a structured
+ * `upstream_decode_failed` event and return the raw input (cast) so behavior
+ * is unchanged while schemas bed in. Flip callers to `decodeUpstreamOrFail`
+ * once the event is quiet in logs.
+ */
+export function decodeUpstreamOrWarn<S extends Schema.ConstraintDecoder<unknown>>(
+    schema: S,
+    service: string,
+): (input: unknown) => Effect.Effect<S['Type'], never, S['DecodingServices']> {
+    return input =>
+        Schema.decodeUnknownEffect(schema)(input).pipe(
+            Effect.catch(parseError =>
+                Effect.sync(() => {
+                    console.warn(
+                        JSON.stringify({
+                            event: 'upstream_decode_failed',
+                            service,
+                            issue: parseErrorToMessage(parseError).slice(0, 512),
+                        }),
+                    );
+                    return input as S['Type'];
+                }),
+            ),
+        );
 }

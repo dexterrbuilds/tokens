@@ -1,7 +1,9 @@
 import 'server-only';
 
-import { Cause, Chunk, Effect } from 'effect';
-import { after, NextResponse } from 'next/server';
+import { Cause, Effect } from 'effect';
+import { NextResponse } from 'next/server';
+
+import { runAfterResponse } from './after-response';
 
 import { authenticateApiKey, logApiRequest } from '@/lib/cloudrun';
 import { loadEnv } from '@/lib/env';
@@ -23,6 +25,7 @@ import {
     toApiErrorInfo,
     toErrorEnvelope,
     UnauthorizedError,
+    CurrentRequestId,
 } from '@tokens/effect';
 
 export type RouteHandlerEffect<T> = Effect.Effect<T, unknown, never>;
@@ -131,22 +134,28 @@ function isPlatformAuthContext(value: unknown): value is PlatformAuthContext {
     );
 }
 
-async function getCachedPlatformAuth(keyHash: string): Promise<PlatformAuthContext | null> {
-    const ttl = loadEnv().authCacheTtlSeconds;
-    if (ttl <= 0) return null;
+function getCachedPlatformAuth(keyHash: string): Effect.Effect<PlatformAuthContext | null, unknown> {
+    return Effect.gen(function* () {
+        const ttl = loadEnv().authCacheTtlSeconds;
+        if (ttl <= 0) return null;
 
-    const redis = await Effect.runPromise(getRedisClientEffect());
-    const cached = await redis.get<string | PlatformAuthContext>(`api-auth:v1:${keyHash}`);
-    const value = typeof cached === 'string' ? JSON.parse(cached) : cached;
-    return isPlatformAuthContext(value) ? value : null;
+        const redis = yield* getRedisClientEffect();
+        const cached = yield* Effect.tryPromise(() =>
+            redis.get<string | PlatformAuthContext>(`api-auth:v1:${keyHash}`),
+        );
+        const value = typeof cached === 'string' ? JSON.parse(cached) : cached;
+        return isPlatformAuthContext(value) ? value : null;
+    });
 }
 
-async function cachePlatformAuth(keyHash: string, auth: PlatformAuthContext): Promise<void> {
-    const ttl = loadEnv().authCacheTtlSeconds;
-    if (ttl <= 0) return;
+function cachePlatformAuth(keyHash: string, auth: PlatformAuthContext): Effect.Effect<void, unknown> {
+    return Effect.gen(function* () {
+        const ttl = loadEnv().authCacheTtlSeconds;
+        if (ttl <= 0) return;
 
-    const redis = await Effect.runPromise(getRedisClientEffect());
-    await redis.set(`api-auth:v1:${keyHash}`, JSON.stringify(auth), { ex: ttl });
+        const redis = yield* getRedisClientEffect();
+        yield* Effect.tryPromise(() => redis.set(`api-auth:v1:${keyHash}`, JSON.stringify(auth), { ex: ttl }));
+    });
 }
 
 function requirePlatformAuth(request: Request) {
@@ -155,12 +164,12 @@ function requirePlatformAuth(request: Request) {
 
         if (rawKey) {
             const keyHash = yield* Effect.tryPromise(() => sha256Hex(rawKey));
-            const cachedAuth = yield* Effect.tryPromise(() => getCachedPlatformAuth(keyHash)).pipe(
-                Effect.catchAll(() => Effect.succeed(null)),
+            const cachedAuth = yield* getCachedPlatformAuth(keyHash).pipe(
+                Effect.catch(() => Effect.succeed(null)),
             );
             if (cachedAuth) return cachedAuth;
 
-            const auth = yield* Effect.tryPromise(() => authenticateApiKey(keyHash));
+            const auth = yield* authenticateApiKey(keyHash);
             if (!auth) {
                 return yield* Effect.fail(new UnauthorizedError({ message: 'Invalid API key' }));
             }
@@ -174,8 +183,8 @@ function requirePlatformAuth(request: Request) {
                 ...(auth.limits ? { limits: auth.limits } : {}),
             } satisfies PlatformAuthContext;
 
-            yield* Effect.tryPromise(() => cachePlatformAuth(keyHash, authContext)).pipe(
-                Effect.catchAll(() => Effect.succeed(undefined)),
+            yield* cachePlatformAuth(keyHash, authContext).pipe(
+                Effect.catch(() => Effect.succeed(undefined)),
             );
 
             return authContext;
@@ -217,19 +226,14 @@ function enforceUpstashLimits(auth: PlatformAuthContext) {
         // Trade-off: rate-limited (429) requests still increment the quota.
         const [rate, [used]] = yield* Effect.all(
             [
-                Effect.tryPromise(() =>
-                    Promise.race([
-                        slidingWindowLimit({
-                            redis,
-                            identifier: `key:${auth.apiKeyId}`,
-                            tokens: rateLimitCfg.requests,
-                            windowSeconds: rateLimitCfg.windowSeconds,
-                        }),
-                        new Promise<never>((_, reject) =>
-                            setTimeout(() => reject(new Error('rate_limit_timeout')), 1_000),
-                        ),
-                    ]),
-                ),
+                slidingWindowLimit({
+                    redis,
+                    identifier: `key:${auth.apiKeyId}`,
+                    tokens: rateLimitCfg.requests,
+                    windowSeconds: rateLimitCfg.windowSeconds,
+                    // A hung Redis must not hold the request hostage; TimeoutError
+                    // falls into the caller's fail-open catch (only RateLimitedError blocks).
+                }).pipe(Effect.timeout('1 second')),
                 Effect.tryPromise(() =>
                     redis
                         .pipeline()
@@ -324,7 +328,7 @@ async function tryLogRequest(params: {
     errorTag?: string;
 }): Promise<void> {
     try {
-        await logApiRequest({
+        await Effect.runPromise(logApiRequest({
             projectId: params.platformAuth.projectId,
             apiKeyId: params.platformAuth.apiKeyId,
             keyPrefix: params.platformAuth.keyPrefix,
@@ -335,13 +339,13 @@ async function tryLogRequest(params: {
             latencyMs: params.latencyMs,
             ts: params.ts,
             ...(params.errorTag ? { errorTag: params.errorTag } : {}),
-        });
+        }));
     } catch {
         // Best-effort logging; never fail the API request due to analytics.
     }
 }
 
-async function recordUsageAggregate(params: {
+function recordUsageAggregate(params: {
     requestId: string;
     platformAuth: PlatformAuthContext;
     method: string;
@@ -349,12 +353,13 @@ async function recordUsageAggregate(params: {
     status: number;
     latencyMs: number;
     ts: number;
-}): Promise<void> {
+}): Effect.Effect<void, unknown> {
+    return Effect.gen(function* () {
     const env = loadEnv();
-    const redis = await Effect.runPromise(getRedisClientEffect());
+    const redis = yield* getRedisClientEffect();
     const endpoint = normalizeEndpointPath(params.path);
     const day = dateKeyUtc(params.ts);
-    const endpointHash = await sha256Hex(endpoint);
+    const endpointHash = yield* Effect.tryPromise(() => sha256Hex(endpoint));
     const ttl = env.usageAggregationTtlSeconds;
     const dayKey = `usage:v1:day:${day}:${params.platformAuth.projectId}`;
     const endpointKey = `usage:v1:endpoint:${day}:${params.platformAuth.projectId}:${endpointHash}`;
@@ -365,22 +370,25 @@ async function recordUsageAggregate(params: {
     const statusField = statusClassField(params.status);
     const histogramField = `hist:${binLatencyMs(latencyMs)}`;
 
-    await redis
-        .pipeline()
-        .hincrby(dayKey, 'totalCalls', 1)
-        .hincrby(dayKey, 'assetCalls', assetCallDelta)
-        .hincrby(dayKey, 'successCalls', successDelta)
-        .hincrby(dayKey, 'sumLatencyMs', latencyMs)
-        .hincrby(dayKey, statusField, 1)
-        .expire(dayKey, ttl)
-        .hincrby(endpointKey, 'calls', 1)
-        .hincrby(endpointKey, 'successCalls', successDelta)
-        .hincrby(endpointKey, 'sumLatencyMs', latencyMs)
-        .hincrby(endpointKey, statusField, 1)
-        .hincrby(endpointKey, histogramField, 1)
-        .expire(endpointKey, ttl)
-        .set(endpointNameKey, endpoint, { ex: ttl })
-        .exec();
+    yield* Effect.tryPromise(() =>
+        redis
+            .pipeline()
+            .hincrby(dayKey, 'totalCalls', 1)
+            .hincrby(dayKey, 'assetCalls', assetCallDelta)
+            .hincrby(dayKey, 'successCalls', successDelta)
+            .hincrby(dayKey, 'sumLatencyMs', latencyMs)
+            .hincrby(dayKey, statusField, 1)
+            .expire(dayKey, ttl)
+            .hincrby(endpointKey, 'calls', 1)
+            .hincrby(endpointKey, 'successCalls', successDelta)
+            .hincrby(endpointKey, 'sumLatencyMs', latencyMs)
+            .hincrby(endpointKey, statusField, 1)
+            .hincrby(endpointKey, histogramField, 1)
+            .expire(endpointKey, ttl)
+            .set(endpointNameKey, endpoint, { ex: ttl })
+            .exec(),
+    );
+    });
 }
 
 async function recordApiRequestUsage(params: {
@@ -398,7 +406,7 @@ async function recordApiRequestUsage(params: {
 
     if (env.usageLogMode === 'aggregated') {
         try {
-            await recordUsageAggregate(params);
+            await Effect.runPromise(recordUsageAggregate(params));
         } catch (error) {
             logUsageAggregationDegraded({
                 requestId: params.requestId,
@@ -425,17 +433,19 @@ function scheduleUsageRecording(params: {
     errorTag?: string;
 }): void {
     if (!params.platformAuth || !params.path) return;
-    after(() =>
-        recordApiRequestUsage({
-            requestId: params.requestId,
-            platformAuth: params.platformAuth as PlatformAuthContext,
-            method: params.method,
-            path: params.path as string,
-            status: params.status,
-            latencyMs: params.latencyMs,
-            ts: params.ts,
-            ...(params.errorTag ? { errorTag: params.errorTag } : {}),
-        }),
+    runAfterResponse(
+        Effect.tryPromise(() =>
+            recordApiRequestUsage({
+                requestId: params.requestId,
+                platformAuth: params.platformAuth as PlatformAuthContext,
+                method: params.method,
+                path: params.path as string,
+                status: params.status,
+                latencyMs: params.latencyMs,
+                ts: params.ts,
+                ...(params.errorTag ? { errorTag: params.errorTag } : {}),
+            }),
+        ).pipe(Effect.catch(() => Effect.void)),
     );
 }
 
@@ -477,7 +487,7 @@ export function route<T, Ctx = unknown>(
                           // Fail open: only RateLimitedError (a real 429) blocks the request.
                           // Any other failure (Redis down, missing env, timeout) is logged as a
                           // degradation metric and the request proceeds without limit metadata.
-                          Effect.catchAll(error =>
+                          Effect.catch(error =>
                               error instanceof RateLimitedError
                                   ? Effect.fail(error)
                                   : Effect.sync(() => {
@@ -506,7 +516,10 @@ export function route<T, Ctx = unknown>(
               )
             : handler(request, ctx as Ctx);
 
-        const exit = await Effect.runPromiseExit(effect, { signal: request.signal });
+        const exit = await Effect.runPromiseExit(
+            effect.pipe(Effect.provideService(CurrentRequestId, requestId)),
+            { signal: request.signal },
+        );
 
         const latencyMs = Date.now() - startedAt;
         const url = (() => {
@@ -557,7 +570,7 @@ export function route<T, Ctx = unknown>(
             return res;
         }
 
-        const failures = Chunk.toArray(Cause.failures(exit.cause));
+        const failures = exit.cause.reasons.filter(Cause.isFailReason).map(reason => reason.error);
         const firstFailure = failures[0];
 
         if (firstFailure !== undefined) {
@@ -691,3 +704,11 @@ export function route<T, Ctx = unknown>(
         });
     };
 }
+
+/** @internal test-only exports for the auth/limits hot-path matrices. */
+export const __internals = {
+    requirePlatformAuth,
+    enforceUpstashLimits,
+    getCachedPlatformAuth,
+    cachePlatformAuth,
+};

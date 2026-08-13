@@ -60,9 +60,7 @@ export const GET = route(
                     const cached = deletedRefCache.get(normalizedRef);
                     if (cached !== undefined) return cached;
 
-                    const deletedRefs = yield* Effect.tryPromise(() =>
-                        listDeletedRefs({ refs: [normalizedRef] }),
-                    ).pipe(Effect.catchAll(() => Effect.succeed([] as string[])));
+                    const deletedRefs = yield* listDeletedRefs({ refs: [normalizedRef] }).pipe(Effect.catch(() => Effect.succeed([] as string[])));
                     const isDeleted = deletedRefs.includes(normalizedRef);
                     deletedRefCache.set(normalizedRef, isDeleted);
                     return isDeleted;
@@ -93,12 +91,8 @@ export const GET = route(
             ) {
                 const singletonAssetId = mintToSingletonAssetId(mint);
                 return Effect.gen(function* () {
-                    const token = yield* Effect.tryPromise(() =>
-                        tokensGetByAddress({ address: mint }),
-                    ).pipe(tapErrorAndDefault('assets.resolve.singletonToken', null, { mint }));
-                    const marketRows = yield* Effect.tryPromise(() =>
-                        variantMarketsGetLatestByMints({ mints: [mint] }),
-                    ).pipe(tapErrorAndDefault('assets.resolve.singletonMarket', [], { mint }));
+                    const token = yield* tokensGetByAddress({ address: mint }).pipe(tapErrorAndDefault('assets.resolve.singletonToken', null, { mint }));
+                    const marketRows = yield* variantMarketsGetLatestByMints({ mints: [mint] }).pipe(tapErrorAndDefault('assets.resolve.singletonMarket', [], { mint }));
                     const market = marketRows[0]?.market ?? null;
 
                     const symbol = optionalSymbol(token?.symbol);
@@ -137,9 +131,7 @@ export const GET = route(
                     return yield* buildSingletonResponse(singletonMint, resolved);
                 }
 
-                const assetDoc = yield* Effect.tryPromise(() =>
-                    cloudRunGetByAssetId({ assetId: resolved.assetId }),
-                );
+                const assetDoc = yield* cloudRunGetByAssetId({ assetId: resolved.assetId });
                 if (!assetDoc) {
                     const registryAsset = registryAssetFromRef(resolved.assetId) ?? registryAssetFromRef(refRaw);
                     if (!registryAsset) {
@@ -183,27 +175,21 @@ export const GET = route(
 
                 const stockInstrument =
                     assetDoc.category === 'equity'
-                        ? yield* Effect.tryPromise(() =>
-                              stockInstrumentsGetByAssetId({ assetId: assetDoc.assetId }),
-                          ).pipe(
+                        ? yield* stockInstrumentsGetByAssetId({ assetId: assetDoc.assetId }).pipe(
                               tapErrorAndDefault('assets.resolve.stockInstrument', null, {
                                   assetId: assetDoc.assetId,
                               }),
                           )
                         : null;
 
-                const variantsRows = yield* Effect.tryPromise(() =>
-                    assetVariantsListByAssetIds({ assetIds: [assetDoc.assetId] }),
-                );
+                const variantsRows = yield* assetVariantsListByAssetIds({ assetIds: [assetDoc.assetId] });
                 const variants = variantsRows[0]?.variants ?? [];
 
                 const tokenByMint = new Map<string, TokenMarketSnapshot>();
                 if (variants.length > 0) {
                     const mints: string[] = [];
                     for (const variant of variants) mints.push(variant.mint);
-                    const rows = yield* Effect.tryPromise(() =>
-                        variantMarketsGetLatestByMints({ mints }),
-                    );
+                    const rows = yield* variantMarketsGetLatestByMints({ mints });
 
                     const fallbackSymbol = (assetDoc.symbol ?? '').trim();
                     const fallbackName = (assetDoc.name ?? '').trim() || fallbackSymbol;
@@ -304,7 +290,7 @@ export const GET = route(
 
             const mint = yield* decodeUnknownOrBadRequest(SolanaAddress, mintRaw, 'Invalid mint');
 
-            const variant = yield* Effect.tryPromise(() => assetVariantsGetByMint({ mint }));
+            const variant = yield* assetVariantsGetByMint({ mint });
             if (!variant) {
                 const registryMatch = getVariantByMint(mint);
                 if (registryMatch) {
@@ -341,9 +327,7 @@ export const GET = route(
                 return yield* buildSingletonResponse(mint, { ref: mint, resolvedBy: 'singleton', mint });
             }
 
-            const assetDoc = yield* Effect.tryPromise(() =>
-                cloudRunGetByAssetId({ assetId: variant.assetId }),
-            );
+            const assetDoc = yield* cloudRunGetByAssetId({ assetId: variant.assetId });
             if (!assetDoc) {
                 return yield* Effect.fail(new NotFoundError({ message: 'Asset not found', resource: 'asset' }));
             }
@@ -354,14 +338,10 @@ export const GET = route(
 
             const stockInstrument =
                 assetDoc.category === 'equity'
-                    ? yield* Effect.tryPromise(() =>
-                          stockInstrumentsGetByAssetId({ assetId: assetDoc.assetId }),
-                      ).pipe(tapErrorAndDefault('assets.resolve.stockInstrument', null, { assetId: assetDoc.assetId }))
+                    ? yield* stockInstrumentsGetByAssetId({ assetId: assetDoc.assetId }).pipe(tapErrorAndDefault('assets.resolve.stockInstrument', null, { assetId: assetDoc.assetId }))
                     : null;
 
-            const marketRows = yield* Effect.tryPromise(() =>
-                variantMarketsGetLatestByMints({ mints: [variant.mint] }),
-            ).pipe(tapErrorAndDefault('assets.resolve.variantMarket', [], { mint: variant.mint }));
+            const marketRows = yield* variantMarketsGetLatestByMints({ mints: [variant.mint] }).pipe(tapErrorAndDefault('assets.resolve.variantMarket', [], { mint: variant.mint }));
             const market = marketRows[0]?.market ?? null;
             const variantWithIdentity = variant as typeof variant & {
                 symbol?: string | null;

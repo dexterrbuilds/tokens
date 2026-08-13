@@ -6,6 +6,7 @@ import {
     makeBirdeyeOhlcvClient,
     makeClickhouseClient,
     makeCoingeckoClient,
+    makePreStocksClient,
     makeRwaXyzClient,
     makeSanctumClient,
     makeWebacyClient,
@@ -36,6 +37,8 @@ import {
     makePostgresTrendingReadsRepo,
     makePostgresTrendingRepo,
     makePostgresClickhouseExtrasRepo,
+    makePostgresPrestocksReadsRepo,
+    makePostgresPrestocksRepo,
     makePostgresStockReadsRepo,
     makePostgresVariantMarketsRepo,
 } from './db';
@@ -48,6 +51,7 @@ import type { AssetVariantsCronDeps } from './handlers/crons.assetVariants';
 import type { SeedCronDeps } from './handlers/crons.seed';
 import type { TrendingCronDeps } from './handlers/crons.trending';
 import type { ClickhouseExtrasCronDeps } from './handlers/crons.clickhouse.extras';
+import type { PrestocksCronDeps } from './handlers/crons.prestocks';
 import { makeGoogleOidcVerifier } from './oidc';
 import { createApp } from './server';
 
@@ -73,12 +77,14 @@ const clickhouseUser = process.env.CLICKHOUSE_USER?.trim();
 const clickhousePassword = process.env.CLICKHOUSE_PASSWORD?.trim();
 const clickhouseDatabase = process.env.CLICKHOUSE_DATABASE?.trim();
 
-let cronDeps: (CronDeps & Partial<ClickhouseCronDeps>) | undefined;
+let cronDeps: CronDeps | undefined;
+let clickhouseCronDeps: (CronDeps & ClickhouseCronDeps) | undefined;
 let miscCronDeps: MiscCronDeps | undefined;
 let assetVariantsCronDeps: AssetVariantsCronDeps | undefined;
 let seedCronDeps: SeedCronDeps | undefined;
 let trendingCronDeps: TrendingCronDeps | undefined;
 let clickhouseExtrasCronDeps: ClickhouseExtrasCronDeps | undefined;
+let prestocksCronDeps: PrestocksCronDeps | undefined;
 let verifyOidc: ReturnType<typeof makeGoogleOidcVerifier> | undefined;
 if (birdeyeApiKey) {
     if (!cronAudience && !cronInvokerSa) {
@@ -112,9 +118,10 @@ if (birdeyeApiKey) {
     coingeckoCurated.warmup().catch(err => {
         console.error('[cloudrun-assets] coingecko curated warmup failed', err);
     });
-    let clickhouseExtras: Partial<Omit<ClickhouseCronDeps, 'curated' | 'now'>> = {};
+    cronDeps = baseDeps;
     if (clickhouseUrl && clickhouseUser && clickhousePassword && clickhouseDatabase) {
-        clickhouseExtras = {
+        clickhouseCronDeps = {
+            ...baseDeps,
             clickhouseRepo: makePostgresClickhouseRepo(sql),
             clickhouse: makeClickhouseClient({
                 url: clickhouseUrl,
@@ -139,7 +146,6 @@ if (birdeyeApiKey) {
     } else {
         console.warn('[cloudrun-assets] CLICKHOUSE_* not fully set — clickhouse /jobs/* disabled');
     }
-    cronDeps = { ...baseDeps, ...clickhouseExtras };
     miscCronDeps = {
         base: cronDeps,
         repo: makePostgresMiscJobsRepo(sql),
@@ -158,6 +164,12 @@ if (birdeyeApiKey) {
     });
     trendingCronDeps = {
         repo: makePostgresTrendingRepo(sql),
+        now: () => Date.now(),
+    };
+    // PreStocks needs no API key — the reference endpoint is unauthenticated.
+    prestocksCronDeps = {
+        prestocks: makePreStocksClient(),
+        repo: makePostgresPrestocksRepo(sql),
         now: () => Date.now(),
     };
     if (clickhouseUrl && clickhouseUser && clickhousePassword && clickhouseDatabase) {
@@ -220,9 +232,7 @@ if (cronDeps && miscCronDeps && seedCronDeps) {
     cacheWarmDeps = {
         cron: cronDeps,
         misc: miscCronDeps,
-        ...(cronDeps.clickhouseRepo && cronDeps.clickhouse && cronDeps.env
-            ? { clickhouse: cronDeps as CronDeps & ClickhouseCronDeps }
-            : {}),
+        ...(clickhouseCronDeps ? { clickhouse: clickhouseCronDeps } : {}),
         ...(clickhouseExtrasCronDeps ? { clickhouseExtras: clickhouseExtrasCronDeps } : {}),
         seed: seedCronDeps,
         stockReadsRepo: makePostgresStockReadsRepo(sql),
@@ -281,14 +291,17 @@ const app = createApp({
     coingeckoReadsRepo: makePostgresCoingeckoReadsRepo(sql),
     stockReadsRepo: makePostgresStockReadsRepo(sql),
     ohlcvReadsRepo: makePostgresOhlcvReadsRepo(sql),
+    prestocksReadsRepo: makePostgresPrestocksReadsRepo(sql),
     authToken,
     ...(cronDeps && verifyOidc ? { cronDeps, verifyOidc } : {}),
     ...(rpcVerifyOidc ? { rpcVerifyOidc } : {}),
+    ...(clickhouseCronDeps ? { clickhouseCronDeps } : {}),
     ...(miscCronDeps ? { miscCronDeps } : {}),
     ...(assetVariantsCronDeps ? { assetVariantsCronDeps } : {}),
     ...(seedCronDeps ? { seedCronDeps } : {}),
     ...(trendingCronDeps ? { trendingCronDeps } : {}),
     ...(clickhouseExtrasCronDeps ? { clickhouseExtrasCronDeps } : {}),
+    ...(prestocksCronDeps ? { prestocksCronDeps } : {}),
     ...(cacheWarmDeps ? { cacheWarmDeps } : {}),
     ...(adminActionsDeps ? { adminActionsDeps } : {}),
 });

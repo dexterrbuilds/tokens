@@ -10,6 +10,7 @@ import type { AssetsApiRepo } from './handlers/assetsApi';
 import type { CoingeckoReadsRepo } from './handlers/coingeckoReads';
 import type { StockReadsRepo } from './handlers/stockReads';
 import type { OhlcvReadsRepo } from './handlers/ohlcvReads';
+import type { PrestocksReadsRepo } from './handlers/prestocksReads';
 import type { TokensReadsRepo } from './handlers/tokensReads';
 import type { TrendingReadsRepo } from './handlers/trendingReads';
 import type { FillQualityReadsRepo } from './handlers/fillQualityReads';
@@ -77,6 +78,9 @@ const noopOhlcvReadsRepo: OhlcvReadsRepo = {
     async getBoundsByAddressAndInterval() { return { minTime: null, maxTime: null }; },
     async listByAssetIdAndInterval() { return []; },
 };
+const noopPrestocksReadsRepo: PrestocksReadsRepo = {
+    async findLatestByMints() { return []; },
+};
 const noopTokensReadsRepo: TokensReadsRepo = {
     async findTokenByAddress() { return null; },
     async findTokensByAddresses() { return []; },
@@ -109,6 +113,7 @@ const baseDeps = {
     coingeckoReadsRepo: noopCoingeckoReadsRepo,
     stockReadsRepo: noopStockReadsRepo,
     ohlcvReadsRepo: noopOhlcvReadsRepo,
+    prestocksReadsRepo: noopPrestocksReadsRepo,
     tokensReadsRepo: noopTokensReadsRepo,
     trendingReadsRepo: noopTrendingReadsRepo,
     fillQualityReadsRepo: noopFillQualityReadsRepo,
@@ -228,6 +233,22 @@ async function call(app: ReturnType<typeof createApp>, path: string, init: Reque
 }
 
 describe('POST /jobs/:name', () => {
+    it('returns 404 clickhouse_jobs_disabled for clickhouse jobs when those deps are missing', async () => {
+        const app = createApp({
+            ...baseDeps, repo: noopRepo,
+            authToken: 'tok',
+            cronDeps: emptyCronDeps(),
+            verifyOidc: allowOidc,
+        });
+        const res = await call(app, '/jobs/refresh-solana-clickhouse-trade-snapshots', {
+            method: 'POST',
+            headers: { authorization: 'Bearer x' },
+            body: '{}',
+        });
+        expect(res.status).toBe(404);
+        expect(((await res.json()) as { error: string }).error).toBe('clickhouse_jobs_disabled');
+    });
+
     it('returns 404 jobs_disabled when cronDeps is missing', async () => {
         const app = createApp({ ...baseDeps, repo: noopRepo, authToken: 'tok' });
         const res = await call(app, '/jobs/sync-sanctum-lsts', {

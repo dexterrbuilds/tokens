@@ -15,7 +15,7 @@ export const GET = route(
 
             if (query.length < 2) return { coins: [] };
 
-            const coins = yield* Effect.tryPromise(() => coingeckoSearchCoins({ query, limit }));
+            const coins = yield* coingeckoSearchCoins({ query, limit });
             return { coins };
         }),
     { platform: { requiredScopes: ['internal:read'] } },

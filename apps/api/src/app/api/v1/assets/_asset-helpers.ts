@@ -246,6 +246,41 @@ export function computeCompanyMarketCapUsd(
     return price * shares;
 }
 
+export interface PreStocksDerived {
+    /** Price the premium/implied valuation is derived from: our on-chain token price when finite, else the provider's token price. */
+    basisPriceUsd: number | null;
+    premiumToMarkPercent: number | null;
+    impliedValuationUsd: number | null;
+}
+
+/**
+ * Premium/discount and implied company valuation for a PreStocks token,
+ * derived from the PreStocks reference (mark) fields and the token price we
+ * display. Recomputed from raw fields (not the provider's own
+ * `impliedValuation`) so the premium never disagrees with the displayed
+ * price: impliedValuation = markValuation × tokenPrice ÷ markPrice.
+ */
+export function computePreStocksDerived(
+    snapshot: {
+        markPriceUsd: number | null;
+        markValuationUsd: number | null;
+        tokenPriceUsd: number | null;
+    },
+    onChainPriceUsd: number | null | undefined,
+): PreStocksDerived {
+    const markPrice = positiveFiniteNumber(snapshot.markPriceUsd);
+    const markValuation = positiveFiniteNumber(snapshot.markValuationUsd);
+    const basisPriceUsd = positiveFiniteNumber(onChainPriceUsd ?? null) ?? positiveFiniteNumber(snapshot.tokenPriceUsd);
+    if (basisPriceUsd === null || markPrice === null) {
+        return { basisPriceUsd, premiumToMarkPercent: null, impliedValuationUsd: null };
+    }
+    return {
+        basisPriceUsd,
+        premiumToMarkPercent: (basisPriceUsd / markPrice - 1) * 100,
+        impliedValuationUsd: markValuation === null ? null : (markValuation * basisPriceUsd) / markPrice,
+    };
+}
+
 export function isCanonicalPublicEquityAsset(
     asset: Pick<CanonicalAsset, 'assetId' | 'category' | 'aliases' | 'name' | 'symbol'>,
 ): boolean {
