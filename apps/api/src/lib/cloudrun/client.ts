@@ -1,6 +1,22 @@
 /**
  * HTTP client for the GCP Cloud Run services (see `terraform/modules/cloud_run/`).
+ *
+ * The core API is Effect-native: `cloudRunQuery` / `cloudRunMutation` return
+ * `Effect<T, CloudRunError>` and run against Effect's runtime abort signal, so
+ * a client disconnect (route() runs handlers with `{ signal: request.signal }`)
+ * interrupts in-flight backend calls. A deprecated promise shim
+ * (`getCloudRunClient`) preserves the old callsite contract during migration.
  */
+
+import { Duration, Effect, Schedule } from 'effect';
+import { MissingEnvError } from '@tokens/effect';
+import {
+    CloudRunHttpError,
+    CloudRunTimeoutError,
+    CloudRunTransportError,
+    isRetryableCloudRunError,
+    type CloudRunError,
+} from './errors';
 
 export type CloudRunService = 'assets' | 'prices' | 'usage' | 'admin';
 
@@ -21,7 +37,7 @@ export interface CloudRunCallOptions {
      * mutations are never retried, since they may not be safe to replay.
      */
     maxRetries?: number;
-    /** Base delay between retry attempts in ms (grows linearly, plus jitter). Defaults to 150. */
+    /** Base delay between retry attempts in ms (exponential with jitter). Defaults to 150. */
     retryDelayMs?: number;
 }
 
@@ -43,6 +59,255 @@ export interface CloudRunClientConfig {
     fetch?: typeof fetch;
 }
 
+const DEFAULT_TIMEOUT_MS = 15_000;
+
+export interface CloudRunCaller {
+    query<TResult = unknown>(
+        service: CloudRunService,
+        name: string,
+        args?: Record<string, unknown>,
+        options?: CloudRunCallOptions,
+    ): Effect.Effect<TResult, CloudRunError>;
+    mutation<TResult = unknown>(
+        service: CloudRunService,
+        name: string,
+        args?: Record<string, unknown>,
+        options?: CloudRunCallOptions,
+    ): Effect.Effect<TResult, CloudRunError>;
+}
+
+/** Build a caller from explicit config (test seam; production uses the env-backed singleton). */
+export function makeCloudRunCaller(cfg: CloudRunClientConfig): CloudRunCaller {
+    const fetchImpl = cfg.fetch ?? fetch;
+    const defaultTimeoutMs = cfg.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
+    function callOnce<T>(
+        base: string,
+        service: CloudRunService,
+        kind: CloudRunCallKind,
+        name: string,
+        args: Record<string, unknown>,
+        timeoutMs: number,
+        identity: CloudRunCallerIdentity | undefined,
+    ): Effect.Effect<T, CloudRunError> {
+        const url = `${base.replace(/\/$/, '')}/${kind}/${encodeURIComponent(name)}`;
+        const headers: Record<string, string> = {
+            'content-type': 'application/json',
+            authorization: `Bearer ${cfg.authToken}`,
+            'accept-encoding': 'gzip, deflate',
+        };
+        if (identity) {
+            headers[CLOUDRUN_IDENTITY_HEADER] = encodeCallerIdentity(identity);
+        }
+
+        return Effect.tryPromise({
+            try: (signal: AbortSignal) =>
+                fetchImpl(url, {
+                    method: 'POST',
+                    signal,
+                    headers,
+                    body: JSON.stringify(args),
+                }),
+            catch: err =>
+                new CloudRunTransportError({
+                    message: `CloudRun ${kind} ${service}.${name} threw: ${String(err)}`,
+                    service,
+                    kind,
+                    callName: name,
+                    cause: err instanceof Error ? err.message : String(err),
+                }),
+        }).pipe(
+            Effect.flatMap(res => {
+                if (!res.ok) {
+                    return Effect.tryPromise(() => res.text()).pipe(
+                        Effect.catch(() => Effect.succeed('')),
+                        Effect.flatMap(body =>
+                            Effect.fail(
+                                new CloudRunHttpError({
+                                    message: `CloudRun ${kind} ${service}.${name} failed: HTTP ${res.status}`,
+                                    service,
+                                    kind,
+                                    callName: name,
+                                    status: res.status,
+                                    body: body.slice(0, 1024),
+                                }),
+                            ),
+                        ),
+                    ) as Effect.Effect<T, CloudRunError>;
+                }
+                return Effect.tryPromise({
+                    try: () => res.json() as Promise<T>,
+                    catch: err =>
+                        new CloudRunTransportError({
+                            message: `CloudRun ${kind} ${service}.${name} returned invalid JSON`,
+                            service,
+                            kind,
+                            callName: name,
+                            cause: err instanceof Error ? err.message : String(err),
+                        }),
+                });
+            }),
+            Effect.timeout(Duration.millis(timeoutMs)),
+            Effect.catchTag('TimeoutError', () =>
+                Effect.fail(
+                    new CloudRunTimeoutError({
+                        message: `CloudRun ${kind} ${service}.${name} timed out after ${timeoutMs}ms`,
+                        service,
+                        kind,
+                        callName: name,
+                        timeoutMs,
+                    }),
+                ),
+            ),
+        );
+    }
+
+    function call<T>(
+        service: CloudRunService,
+        kind: CloudRunCallKind,
+        name: string,
+        args: Record<string, unknown>,
+        options: CloudRunCallOptions,
+    ): Effect.Effect<T, CloudRunError> {
+        return Effect.suspend(() => {
+            const base = cfg.baseUrls[service];
+            if (!base) {
+                return Effect.fail(
+                    new MissingEnvError({
+                        message: `CloudRunClient: no base URL configured for service '${service}'`,
+                        name: `TOKENS_CLOUDRUN_${service.toUpperCase()}_URL`,
+                    }),
+                );
+            }
+
+            const timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
+            const attempt = callOnce<T>(base, service, kind, name, args, timeoutMs, options.identity);
+
+            // Mutations are never retried regardless of options — replaying a
+            // non-idempotent call is worse than failing it.
+            const maxRetries = kind === 'query' ? Math.max(0, options.maxRetries ?? 0) : 0;
+            if (maxRetries === 0) return attempt;
+
+            const retryDelayMs = Math.max(0, options.retryDelayMs ?? 150);
+            // Jitter de-synchronizes retries across concurrent callers so a
+            // shared upstream blip doesn't turn into a thundering herd.
+            return Effect.retry(attempt, {
+                while: isRetryableCloudRunError,
+                times: maxRetries,
+                schedule: Schedule.exponential(Duration.millis(Math.max(1, retryDelayMs))).pipe(Schedule.jittered),
+            });
+        });
+    }
+
+    return {
+        query: (service, name, args = {}, options = {}) => call(service, 'query', name, args, options),
+        mutation: (service, name, args = {}, options = {}) => call(service, 'mutation', name, args, options),
+    };
+}
+
+// -----------------------------------------------------------------------------
+// Env-backed singleton
+// -----------------------------------------------------------------------------
+
+let cachedConfig: CloudRunClientConfig | null = null;
+let cachedCaller: CloudRunCaller | null = null;
+
+function readConfigFromEnv(): CloudRunClientConfig | MissingEnvError {
+    const read = (name: string): string | MissingEnvError => {
+        const v = process.env[name]?.trim();
+        if (!v) return new MissingEnvError({ message: `CloudRun client: missing required env var ${name}`, name });
+        return v;
+    };
+
+    const assets = read('TOKENS_CLOUDRUN_ASSETS_URL');
+    if (typeof assets !== 'string') return assets;
+    const prices = read('TOKENS_CLOUDRUN_PRICES_URL');
+    if (typeof prices !== 'string') return prices;
+    const usage = read('TOKENS_CLOUDRUN_USAGE_URL');
+    if (typeof usage !== 'string') return usage;
+    const authToken = read('TOKENS_CLOUDRUN_AUTH_TOKEN');
+    if (typeof authToken !== 'string') return authToken;
+
+    const adminUrl = process.env.TOKENS_CLOUDRUN_ADMIN_URL?.trim();
+    const timeout = Number(process.env.TOKENS_CLOUDRUN_TIMEOUT_MS) || undefined;
+
+    return {
+        baseUrls: {
+            assets,
+            prices,
+            usage,
+            ...(adminUrl ? { admin: adminUrl } : {}),
+        },
+        authToken,
+        ...(timeout !== undefined ? { timeoutMs: timeout } : {}),
+    };
+}
+
+/**
+ * Resolve the CloudRun client config from the environment (cached).
+ *
+ * Required env:
+ * - TOKENS_CLOUDRUN_AUTH_TOKEN
+ * - TOKENS_CLOUDRUN_{ASSETS,PRICES,USAGE}_URL
+ *
+ * Optional:
+ * - TOKENS_CLOUDRUN_ADMIN_URL
+ * - TOKENS_CLOUDRUN_TIMEOUT_MS (default 15000)
+ */
+export function getCloudRunConfig(): Effect.Effect<CloudRunClientConfig, MissingEnvError> {
+    return Effect.suspend(() => {
+        if (cachedConfig) return Effect.succeed(cachedConfig);
+        const config = readConfigFromEnv();
+        if (config instanceof MissingEnvError) return Effect.fail(config);
+        cachedConfig = config;
+        return Effect.succeed(config);
+    });
+}
+
+function getCaller(): Effect.Effect<CloudRunCaller, MissingEnvError> {
+    return Effect.suspend(() => {
+        if (cachedCaller) return Effect.succeed(cachedCaller);
+        return getCloudRunConfig().pipe(
+            Effect.map(config => {
+                cachedCaller = makeCloudRunCaller(config);
+                return cachedCaller;
+            }),
+        );
+    });
+}
+
+/** Run a query against a Cloud Run service. Fails with a tagged `CloudRunError`. */
+export function cloudRunQuery<TResult = unknown>(
+    service: CloudRunService,
+    name: string,
+    args: Record<string, unknown> = {},
+    options: CloudRunCallOptions = {},
+): Effect.Effect<TResult, CloudRunError> {
+    return getCaller().pipe(Effect.flatMap(caller => caller.query<TResult>(service, name, args, options)));
+}
+
+/** Run a mutation against a Cloud Run service. Never retried. */
+export function cloudRunMutation<TResult = unknown>(
+    service: CloudRunService,
+    name: string,
+    args: Record<string, unknown> = {},
+    options: CloudRunCallOptions = {},
+): Effect.Effect<TResult, CloudRunError> {
+    return getCaller().pipe(Effect.flatMap(caller => caller.mutation<TResult>(service, name, args, options)));
+}
+
+/** Test helper — reset the singletons between tests that toggle env vars. */
+export function __resetCloudRunClientForTesting() {
+    cachedConfig = null;
+    cachedCaller = null;
+    cachedShim = null;
+}
+
+// -----------------------------------------------------------------------------
+// Deprecated promise shim (removed once all callsites use the Effect API)
+// -----------------------------------------------------------------------------
+
+/** @deprecated Discriminate on the tagged `CloudRunError` union from `./errors` instead. */
 export class CloudRunCallError extends Error {
     readonly callName: string;
 
@@ -60,13 +325,30 @@ export class CloudRunCallError extends Error {
     }
 }
 
-export class CloudRunClient {
-    private readonly fetchImpl: typeof fetch;
-    private readonly timeoutMs: number;
+function toCloudRunCallError(
+    err: unknown,
+    service: CloudRunService,
+    kind: CloudRunCallKind,
+    name: string,
+): CloudRunCallError {
+    if (err instanceof CloudRunHttpError) {
+        return new CloudRunCallError(err.message, err.service, err.kind, err.callName, err.status, err.body);
+    }
+    if (err instanceof CloudRunTimeoutError || err instanceof CloudRunTransportError) {
+        return new CloudRunCallError(err.message, err.service, err.kind, err.callName);
+    }
+    if (err instanceof MissingEnvError) {
+        return new CloudRunCallError(err.message, service, kind, name);
+    }
+    return new CloudRunCallError(`CloudRun ${kind} ${service}.${name} threw: ${String(err)}`, service, kind, name);
+}
 
-    constructor(private readonly cfg: CloudRunClientConfig) {
-        this.fetchImpl = cfg.fetch ?? fetch;
-        this.timeoutMs = cfg.timeoutMs ?? 15_000;
+/** @deprecated Use `cloudRunQuery` / `cloudRunMutation` (Effect API). */
+export class CloudRunClient {
+    private readonly caller: CloudRunCaller;
+
+    constructor(cfg: CloudRunClientConfig) {
+        this.caller = makeCloudRunCaller(cfg);
     }
 
     query<TResult = unknown>(
@@ -75,7 +357,9 @@ export class CloudRunClient {
         args: Record<string, unknown> = {},
         options: CloudRunCallOptions = {},
     ): Promise<TResult> {
-        return this.call<TResult>(service, 'query', name, args, options);
+        return Effect.runPromise(this.caller.query<TResult>(service, name, args, options)).catch(err => {
+            throw toCloudRunCallError(err, service, 'query', name);
+        });
     }
 
     mutation<TResult = unknown>(
@@ -84,148 +368,22 @@ export class CloudRunClient {
         args: Record<string, unknown> = {},
         options: CloudRunCallOptions = {},
     ): Promise<TResult> {
-        return this.call<TResult>(service, 'mutation', name, args, options);
-    }
-
-    private async call<T>(
-        service: CloudRunService,
-        kind: CloudRunCallKind,
-        name: string,
-        args: Record<string, unknown>,
-        options: CloudRunCallOptions,
-    ): Promise<T> {
-        const base = this.cfg.baseUrls[service];
-        if (!base) {
-            throw new CloudRunCallError(
-                `CloudRunClient: no base URL configured for service '${service}'`,
-                service,
-                kind,
-                name,
-            );
-        }
-        // Mutations are never retried regardless of options — replaying a
-        // non-idempotent call is worse than failing it.
-        const maxRetries = kind === 'query' ? Math.max(0, options.maxRetries ?? 0) : 0;
-        const retryDelayMs = Math.max(0, options.retryDelayMs ?? 150);
-
-        let lastError: CloudRunCallError;
-        for (let attempt = 0; ; attempt++) {
-            try {
-                return await this.callOnce<T>(base, service, kind, name, args, options);
-            } catch (err) {
-                // callOnce only ever throws CloudRunCallError.
-                lastError = err as CloudRunCallError;
-                // Timeouts and network failures have no status; upstream 5xx is
-                // transient-shaped. 4xx is caller/data-dependent — do not retry.
-                const retryable = lastError.status === undefined || lastError.status >= 500;
-                if (!retryable || attempt >= maxRetries) throw lastError;
-                // Jitter de-synchronizes retries across concurrent callers so a
-                // shared upstream blip doesn't turn into a thundering herd.
-                const jitter = Math.random() * retryDelayMs * 0.5;
-                await new Promise(resolve => setTimeout(resolve, retryDelayMs * (attempt + 1) + jitter));
-            }
-        }
-    }
-
-    private async callOnce<T>(
-        base: string,
-        service: CloudRunService,
-        kind: CloudRunCallKind,
-        name: string,
-        args: Record<string, unknown>,
-        options: CloudRunCallOptions,
-    ): Promise<T> {
-        const url = `${base.replace(/\/$/, '')}/${kind}/${encodeURIComponent(name)}`;
-        const timeoutMs = options.timeoutMs ?? this.timeoutMs;
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), timeoutMs);
-        const headers: Record<string, string> = {
-            'content-type': 'application/json',
-            authorization: `Bearer ${this.cfg.authToken}`,
-            'accept-encoding': 'gzip, deflate',
-        };
-        if (options.identity) {
-            headers[CLOUDRUN_IDENTITY_HEADER] = encodeCallerIdentity(options.identity);
-        }
-        try {
-            const res = await this.fetchImpl(url, {
-                method: 'POST',
-                signal: controller.signal,
-                headers,
-                body: JSON.stringify(args),
-            });
-            if (!res.ok) {
-                const body = await res.text().catch(() => '');
-                throw new CloudRunCallError(
-                    `CloudRun ${kind} ${service}.${name} failed: HTTP ${res.status}`,
-                    service,
-                    kind,
-                    name,
-                    res.status,
-                    body.slice(0, 1024),
-                );
-            }
-            return (await res.json()) as T;
-        } catch (err) {
-            if (err instanceof CloudRunCallError) throw err;
-            if (err instanceof Error && err.name === 'AbortError') {
-                throw new CloudRunCallError(
-                    `CloudRun ${kind} ${service}.${name} timed out after ${timeoutMs}ms`,
-                    service,
-                    kind,
-                    name,
-                );
-            }
-            throw new CloudRunCallError(
-                `CloudRun ${kind} ${service}.${name} threw: ${String(err)}`,
-                service,
-                kind,
-                name,
-            );
-        } finally {
-            clearTimeout(timeout);
-        }
+        return Effect.runPromise(this.caller.mutation<TResult>(service, name, args, options)).catch(err => {
+            throw toCloudRunCallError(err, service, 'mutation', name);
+        });
     }
 }
 
-let cached: CloudRunClient | null = null;
+let cachedShim: CloudRunClient | null = null;
 
-/**
- * Returns the singleton CloudRunClient. Cloud Run is the only backend.
- *
- * Required env:
- * - TOKENS_CLOUDRUN_AUTH_TOKEN
- * - TOKENS_CLOUDRUN_{ASSETS,PRICES,USAGE}_URL
- *
- * Optional:
- * - TOKENS_CLOUDRUN_ADMIN_URL
- * - TOKENS_CLOUDRUN_TIMEOUT_MS (default 15000)
- */
+/** @deprecated Use `cloudRunQuery` / `cloudRunMutation` (Effect API). */
 export function getCloudRunClient(): CloudRunClient {
-    if (cached) return cached;
-    const adminUrl = process.env.TOKENS_CLOUDRUN_ADMIN_URL?.trim();
-    const baseUrls: Partial<Record<CloudRunService, string>> = {
-        assets: requireEnv('TOKENS_CLOUDRUN_ASSETS_URL'),
-        prices: requireEnv('TOKENS_CLOUDRUN_PRICES_URL'),
-        usage: requireEnv('TOKENS_CLOUDRUN_USAGE_URL'),
-        ...(adminUrl ? { admin: adminUrl } : {}),
-    };
-    const timeout = Number(process.env.TOKENS_CLOUDRUN_TIMEOUT_MS) || undefined;
-    cached = new CloudRunClient({
-        baseUrls,
-        authToken: requireEnv('TOKENS_CLOUDRUN_AUTH_TOKEN'),
-        timeoutMs: timeout,
-    });
-    return cached;
-}
-
-/** Test helper — reset the singleton between tests that toggle env vars. */
-export function __resetCloudRunClientForTesting() {
-    cached = null;
-}
-
-function requireEnv(name: string): string {
-    const v = process.env[name]?.trim();
-    if (!v) throw new Error(`CloudRun client: missing required env var ${name}`);
-    return v;
+    if (cachedShim) return cachedShim;
+    // Preserve the historical contract: missing env throws a plain Error
+    // synchronously at first call.
+    const config = readConfigFromEnv();
+    if (config instanceof MissingEnvError) throw new Error(config.message);
+    cachedConfig ??= config;
+    cachedShim = new CloudRunClient(config);
+    return cachedShim;
 }
