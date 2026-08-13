@@ -306,14 +306,16 @@ describe('refreshPublicEquityStockPrices', () => {
         expect(state.upsertedPrices![0]!.priceUsd).toBe(190);
     });
 
-    it('counts CH errors as failed without throwing', async () => {
+    it('counts CH errors as failed without throwing; total failure reports ok=false', async () => {
         const { deps, state } = makeDeps({
             state: { stockMappings: [{ assetId: 'aapl', symbol: 'AAPL', normalizedSymbol: 'AAPL' }] },
             clickhouse: { failStockSnapshot: true },
         });
 
         const res = await refreshPublicEquityStockPrices(deps, { delayMs: 0 });
-        expect(res.ok).toBe(true);
+        // Every attempted mapping failed -> total failure -> ok=false so the
+        // scheduler counts the run as failed (500) and can retry.
+        expect(res.ok).toBe(false);
         expect(res.failed).toBe(1);
         expect(state.upsertedPrices).toHaveLength(0);
     });

@@ -9,6 +9,7 @@ locals {
         minAgeMs    = 1800000
         concurrency = 2
         delayMs     = 200
+        budgetMs    = 500000
       })
       attempt_deadline = "540s"
     },
@@ -24,6 +25,7 @@ locals {
         delayMs           = 200
         maxMarketsPerMint = 20
         selectionWindowMs = 1800000
+        budgetMs          = 500000
       })
       attempt_deadline = "540s"
     },
