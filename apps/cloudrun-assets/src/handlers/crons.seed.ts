@@ -1,3 +1,6 @@
+import { Effect } from 'effect';
+import { isShuttingDown } from '@tokens/cloudrun-shutdown';
+import { runJobPool } from '@tokens/effect/job-runner';
 import type { CanonicalAsset, TrustTier } from '@tokens/asset-registry';
 import { listAssets } from '@tokens/asset-registry';
 import {
@@ -398,11 +401,6 @@ export function deriveFallbackName(asset: CanonicalAsset, symbol: string | null)
     return symbol;
 }
 
-function sleep(ms: number): Promise<void> {
-    if (ms <= 0) return Promise.resolve();
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 function chunkArray<T>(items: readonly T[], size: number): T[][] {
     const out: T[][] = [];
     for (let i = 0; i < items.length; i += size) {
@@ -491,29 +489,29 @@ export async function backfillMissingAssetIdentity(
 
     let updated = 0;
     let skipped = 0;
-    let failed = 0;
     const errors: Array<{ assetId: string; message: string }> = [];
 
-    let nextIndex = 0;
-    async function worker(): Promise<void> {
-        while (true) {
-            const idx = nextIndex;
-            if (idx >= requestedAssetIds.length) return;
-            nextIndex += 1;
-            const assetId = requestedAssetIds[idx]!;
-            try {
+    const summary = await Effect.runPromise(
+        runJobPool({
+            label: 'backfillMissingAssetIdentity',
+            items: requestedAssetIds,
+            concurrency,
+            delayMs,
+            shouldStop: isShuttingDown,
+            process: assetId =>
+                Effect.tryPromise(async () => {
                 const asset = assetById.get(assetId);
                 const registryAsset = registryById.get(assetId);
                 const mint = preferredMintByAssetId.get(assetId);
                 if (!asset || !registryAsset || !mint) {
                     skipped += 1;
-                    continue;
+                    return;
                 }
                 const hasSymbol = typeof asset.symbol === 'string' && asset.symbol.trim().length > 0;
                 const hasName = typeof asset.name === 'string' && asset.name.trim().length > 0;
                 if (!force && hasSymbol && hasName) {
                     skipped += 1;
-                    continue;
+                    return;
                 }
                 const marketIdentity = marketIdentityByMint.get(mint);
                 const marketSymbol = marketIdentity?.symbol ?? null;
@@ -526,7 +524,7 @@ export async function backfillMissingAssetIdentity(
                         force,
                     });
                     updated += 1;
-                    continue;
+                    return;
                 }
                 if (deps.birdeyeIdentity) {
                     const birdeye = await deps.birdeyeIdentity.fetchIdentityByMint(mint);
@@ -538,7 +536,7 @@ export async function backfillMissingAssetIdentity(
                             force,
                         });
                         updated += 1;
-                        continue;
+                        return;
                     }
                 }
                 const fallbackSymbol = deriveFallbackSymbol(registryAsset);
@@ -551,34 +549,30 @@ export async function backfillMissingAssetIdentity(
                         force,
                     });
                     updated += 1;
-                    continue;
+                    return;
                 }
                 skipped += 1;
-            } catch (error) {
-                failed += 1;
-                errors.push({
-                    assetId,
-                    message: error instanceof Error ? error.message : String(error),
-                });
-            } finally {
-                if (delayMs > 0) await sleep(delayMs);
-            }
-        }
-    }
-
-    await Promise.all(
-        Array.from({ length: Math.min(concurrency, requestedAssetIds.length) }, () => worker()),
+                }),
+            onItemError: (assetId, error) =>
+                Effect.sync(() => {
+                    errors.push({
+                        assetId,
+                        message: error instanceof Error ? error.message : String(error),
+                    });
+                }),
+        }),
     );
 
     return {
-        ok: true,
+        ok: !(summary.attempted > 0 && updated === 0 && skipped === 0 && summary.failed >= summary.attempted),
         processed: requestedAssetIds.length,
         durationMs: deps.now() - start,
         requested: requestedAssetIds.length,
         updated,
         skipped,
-        failed,
+        failed: summary.failed,
         errors: errors.slice(0, 100),
+        ...(summary.partial ? { partial: true } : {}),
     };
 }
 
