@@ -1,6 +1,7 @@
 import { Duration, Effect, Schedule, type Schema } from 'effect';
 import { mergeSignals } from './abort';
 import { FetchFailedError, JsonParseError, RateLimitedError, UpstreamDataError, UpstreamHttpError } from './api-errors';
+import { CurrentRequestId, emitEvent } from './observability';
 import { decodeUpstreamOrFail, decodeUpstreamOrWarn } from './schema';
 
 type NextFetchInit = RequestInit & { next?: { revalidate?: number } };
@@ -146,24 +147,35 @@ export function fetchJsonWithRetry<T = unknown>(
         schedule: Schedule.exponential(baseDelay),
     }).pipe(
         Effect.tap(() =>
-            Effect.sync(() => emitExternalCall({
-                provider: args.service,
-                endpoint,
-                status: null,
-                duration_ms: Date.now() - started,
-                ok: true,
-            })),
+            Effect.service(CurrentRequestId).pipe(
+                Effect.map(requestId =>
+                    emitExternalCall({
+                        provider: args.service,
+                        endpoint,
+                        status: null,
+                        duration_ms: Date.now() - started,
+                        ok: true,
+                        ...(requestId ? { request_id: requestId } : {}),
+                    }),
+                ),
+            ),
         ),
         Effect.tapError(err =>
-            Effect.sync(() => emitExternalCall({
-                provider: args.service,
-                endpoint,
-                status: extractStatus(err),
-                duration_ms: Date.now() - started,
-                ok: false,
-                error_tag: extractErrorTag(err),
-            })),
+            Effect.service(CurrentRequestId).pipe(
+                Effect.map(requestId =>
+                    emitExternalCall({
+                        provider: args.service,
+                        endpoint,
+                        status: extractStatus(err),
+                        duration_ms: Date.now() - started,
+                        ok: false,
+                        error_tag: extractErrorTag(err),
+                        ...(requestId ? { request_id: requestId } : {}),
+                    }),
+                ),
+            ),
         ),
+        Effect.withSpan(`external.${args.service}`),
     );
 }
 
@@ -194,8 +206,9 @@ interface ExternalCallEvent {
     duration_ms: number;
     ok: boolean;
     error_tag?: string;
+    request_id?: string;
 }
 
 function emitExternalCall(fields: ExternalCallEvent): void {
-    console.log(JSON.stringify({ event: 'external_call', ...fields }));
+    emitEvent({ event: 'external_call', ...fields });
 }

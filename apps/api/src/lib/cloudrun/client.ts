@@ -8,7 +8,7 @@
  */
 
 import { Duration, Effect, Schedule, type Schema } from 'effect';
-import { MissingEnvError, type UpstreamDataError, decodeUpstreamOrFail } from '@tokens/effect';
+import { CurrentRequestId, MissingEnvError, type UpstreamDataError, decodeUpstreamOrFail, emitEvent } from '@tokens/effect';
 import { loadEnv, resetEnvForTests } from '../env';
 import {
     CloudRunHttpError,
@@ -210,13 +210,53 @@ export function makeCloudRunCaller(cfg: CloudRunClientConfig): CloudRunCaller {
                 times: maxRetries,
                 schedule: Schedule.exponential(Duration.millis(Math.max(1, retryDelayMs))).pipe(Schedule.jittered),
             });
-        });
+        }).pipe(withCloudRunTelemetry(service, kind, name));
     }
 
     return {
         query: (service, name, args = {}, options = {}) => call(service, 'query', name, args, options),
         mutation: (service, name, args = {}, options = {}) => call(service, 'mutation', name, args, options),
     };
+}
+
+
+/** True unless TOKENS_LOG_CLOUDRUN_CALLS=false — cloudrun calls were previously invisible in logs. */
+function shouldLogCloudRunCalls(): boolean {
+    return (process.env.TOKENS_LOG_CLOUDRUN_CALLS ?? 'true').trim().toLowerCase() !== 'false';
+}
+
+function withCloudRunTelemetry(service: CloudRunService, kind: CloudRunCallKind, name: string) {
+    return <A, E>(effect: Effect.Effect<A, E>): Effect.Effect<A, E> =>
+        Effect.suspend(() => {
+            if (!shouldLogCloudRunCalls()) {
+                return effect.pipe(Effect.withSpan(`cloudrun.${service}.${name}`));
+            }
+            const startedAt = Date.now();
+            const emit = (ok: boolean, status: number | null, errorTag?: string) =>
+                Effect.service(CurrentRequestId).pipe(
+                    Effect.map(requestId =>
+                        emitEvent({
+                            event: 'external_call',
+                            provider: `cloudrun:${service}`,
+                            endpoint: name,
+                            status,
+                            duration_ms: Date.now() - startedAt,
+                            ok,
+                            ...(errorTag ? { error_tag: errorTag } : {}),
+                            ...(requestId ? { request_id: requestId } : {}),
+                        }),
+                    ),
+                );
+            return effect.pipe(
+                Effect.tap(() => emit(true, null)),
+                Effect.tapError(error => {
+                    const tagged = error as { _tag?: string; status?: number };
+                    return emit(false, typeof tagged.status === 'number' ? tagged.status : null, tagged._tag);
+                }),
+                // Spans are inert without a tracer — near-zero cost future-proofing.
+                Effect.withSpan(`cloudrun.${service}.${name}`, { attributes: { 'cloudrun.kind': kind } }),
+            );
+        });
 }
 
 // -----------------------------------------------------------------------------
