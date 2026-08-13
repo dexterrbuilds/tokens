@@ -1,3 +1,4 @@
+import { emitEvent } from '@tokens/effect';
 const SLOW_REQUEST_THRESHOLD_MS = 1_000;
 
 export function shouldSkipHttpMetrics(pathname: string): boolean {
@@ -70,7 +71,7 @@ export function normalizeEndpointPath(pathname: string): string {
 }
 
 function log(entry: Record<string, unknown>) {
-    console.log(JSON.stringify(entry));
+    emitEvent(entry);
 }
 
 export function logHttpRequest(params: {

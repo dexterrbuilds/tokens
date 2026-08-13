@@ -1,6 +1,7 @@
 import { Duration, Effect, Schedule, type Schema } from 'effect';
 import { mergeSignals } from './abort';
 import { FetchFailedError, JsonParseError, RateLimitedError, UpstreamDataError, UpstreamHttpError } from './api-errors';
+import { CurrentRequestId, emitEvent } from './observability';
 import { decodeUpstreamOrFail, decodeUpstreamOrWarn } from './schema';
 
 type NextFetchInit = RequestInit & { next?: { revalidate?: number } };
@@ -18,6 +19,8 @@ export interface FetchJsonArgs {
      */
     schema?: Schema.ConstraintDecoder<unknown>;
     decodeMode?: 'fail' | 'warn';
+    /** Per-attempt timeout. A timed-out attempt fails as FetchFailedError (retryable). */
+    timeout?: Duration.Input;
 }
 
 export type FetchJsonError = RateLimitedError | UpstreamHttpError | FetchFailedError | JsonParseError | UpstreamDataError;
@@ -57,7 +60,7 @@ function isRetryableFetchError(error: unknown): boolean {
 }
 
 export function fetchJson<T = unknown>(args: FetchJsonArgs): Effect.Effect<T, FetchJsonError> {
-    return Effect.tryPromise({
+    const attempt = Effect.tryPromise({
         try: (signal: AbortSignal) => {
             const merged = mergeSignals(signal, args.signal);
             return Promise.resolve()
@@ -129,6 +132,20 @@ export function fetchJson<T = unknown>(args: FetchJsonArgs): Effect.Effect<T, Fe
             );
         }),
     );
+
+    if (args.timeout === undefined) return attempt;
+    return attempt.pipe(
+        Effect.timeout(args.timeout),
+        Effect.catchTag('TimeoutError', () =>
+            Effect.fail(
+                new FetchFailedError({
+                    service: args.service,
+                    message: `${args.service} request timed out`,
+                    cause: 'timeout',
+                }),
+            ),
+        ),
+    );
 }
 
 export function fetchJsonWithRetry<T = unknown>(
@@ -146,24 +163,35 @@ export function fetchJsonWithRetry<T = unknown>(
         schedule: Schedule.exponential(baseDelay),
     }).pipe(
         Effect.tap(() =>
-            Effect.sync(() => emitExternalCall({
-                provider: args.service,
-                endpoint,
-                status: null,
-                duration_ms: Date.now() - started,
-                ok: true,
-            })),
+            Effect.service(CurrentRequestId).pipe(
+                Effect.map(requestId =>
+                    emitExternalCall({
+                        provider: args.service,
+                        endpoint,
+                        status: null,
+                        duration_ms: Date.now() - started,
+                        ok: true,
+                        ...(requestId ? { request_id: requestId } : {}),
+                    }),
+                ),
+            ),
         ),
         Effect.tapError(err =>
-            Effect.sync(() => emitExternalCall({
-                provider: args.service,
-                endpoint,
-                status: extractStatus(err),
-                duration_ms: Date.now() - started,
-                ok: false,
-                error_tag: extractErrorTag(err),
-            })),
+            Effect.service(CurrentRequestId).pipe(
+                Effect.map(requestId =>
+                    emitExternalCall({
+                        provider: args.service,
+                        endpoint,
+                        status: extractStatus(err),
+                        duration_ms: Date.now() - started,
+                        ok: false,
+                        error_tag: extractErrorTag(err),
+                        ...(requestId ? { request_id: requestId } : {}),
+                    }),
+                ),
+            ),
         ),
+        Effect.withSpan(`external.${args.service}`),
     );
 }
 
@@ -194,8 +222,9 @@ interface ExternalCallEvent {
     duration_ms: number;
     ok: boolean;
     error_tag?: string;
+    request_id?: string;
 }
 
 function emitExternalCall(fields: ExternalCallEvent): void {
-    console.log(JSON.stringify({ event: 'external_call', ...fields }));
+    emitEvent({ event: 'external_call', ...fields });
 }
