@@ -1,15 +1,14 @@
 'use client';
 
-import { Data, Effect } from 'effect';
-import { FetchFailedError, JsonParseError, mergeSignals, type ApiErrorInfo, isApiErrorEnvelope } from '@tokens/effect';
+import { Effect } from 'effect';
+import { ApiResponseError, FetchFailedError, JsonParseError, mergeSignals } from '@tokens/effect';
+import { decodeApiResponse } from './api-response';
+
+// Re-export so existing importers (hooks) keep working; the class itself
+// lives in @tokens/effect so server modules can use it too.
+export { ApiResponseError };
 
 type NextFetchInit = RequestInit & { next?: { revalidate?: number } };
-
-export class ApiResponseError extends Data.TaggedError('ApiResponseError')<{
-    message: string;
-    status: number;
-    error: ApiErrorInfo;
-}> {}
 
 export interface ApiJsonArgs {
     url: string;
@@ -26,22 +25,6 @@ export interface ApiJsonArgs {
      * Optional extra AbortSignal to merge with Effect's runtime signal.
      */
     signal?: AbortSignal;
-}
-
-function safeJsonStringify(value: unknown): string | null {
-    try {
-        return JSON.stringify(value);
-    } catch {
-        return null;
-    }
-}
-
-function tryParseJson(text: string): unknown | undefined {
-    try {
-        return JSON.parse(text) as unknown;
-    } catch {
-        return undefined;
-    }
 }
 
 function buildInitWithJson(init: NextFetchInit | undefined, json: unknown): NextFetchInit {
@@ -74,66 +57,5 @@ export function apiJson<T = unknown>(
                 message: 'Failed to fetch API',
                 cause: error instanceof Error ? error.message : String(error),
             }),
-    }).pipe(
-        Effect.flatMap(res => {
-            const bodyTextEffect = Effect.tryPromise({
-                try: () => res.text(),
-                catch: error =>
-                    new FetchFailedError({
-                        service: 'api',
-                        message: 'Failed to read API response body',
-                        cause: error instanceof Error ? error.message : String(error),
-                    }),
-            }).pipe(Effect.catch(() => Effect.succeed('')));
-
-            return bodyTextEffect.pipe(
-                Effect.flatMap(bodyText => {
-                    type ApiJsonBodyError = ApiResponseError | JsonParseError;
-
-                    const contentType = res.headers.get('content-type') ?? '';
-                    const isJson = contentType.includes('application/json') && bodyText.length > 0;
-                    const parsed = isJson ? tryParseJson(bodyText) : undefined;
-
-                    if (res.ok) {
-                        if (parsed !== undefined) {
-                            return Effect.succeed(parsed as T) as Effect.Effect<T, ApiJsonBodyError, never>;
-                        }
-
-                        return Effect.fail(
-                            new JsonParseError({
-                                message: 'Expected JSON from API',
-                                ...(bodyText.length > 0 ? { body: bodyText } : {}),
-                            }),
-                        ) as Effect.Effect<T, ApiJsonBodyError, never>;
-                    }
-
-                    if (parsed !== undefined && isApiErrorEnvelope(parsed)) {
-                        return Effect.fail(
-                            new ApiResponseError({
-                                status: res.status,
-                                error: parsed.error,
-                                message: parsed.error.message,
-                            }),
-                        ) as Effect.Effect<T, ApiJsonBodyError, never>;
-                    }
-
-                    const fallbackMessage =
-                        (parsed !== undefined ? safeJsonStringify(parsed) : null) ??
-                        (bodyText.length > 0 ? bodyText : `${res.status} ${res.statusText}`.trim());
-
-                    return Effect.fail(
-                        new ApiResponseError({
-                            message: fallbackMessage,
-                            status: res.status,
-                            error: {
-                                _tag: 'HttpError',
-                                message: fallbackMessage,
-                                ...(bodyText.length > 0 && parsed === undefined ? { details: bodyText } : {}),
-                            },
-                        }),
-                    ) as Effect.Effect<T, ApiJsonBodyError, never>;
-                }),
-            );
-        }),
-    );
+    }).pipe(Effect.flatMap(res => decodeApiResponse<T>(res)));
 }

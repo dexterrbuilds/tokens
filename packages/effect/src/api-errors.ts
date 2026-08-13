@@ -18,6 +18,16 @@ export interface ApiErrorEnvelope {
 // Tagged errors (typed failures in the Effect error channel)
 // -----------------------------------------------------------------------------
 
+/**
+ * A non-2xx response from the tokens API, with the upstream error envelope
+ * preserved (`error` carries the API's tagged `ApiErrorInfo`).
+ */
+export class ApiResponseError extends Data.TaggedError('ApiResponseError')<{
+    message: string;
+    status: number;
+    error: ApiErrorInfo;
+}> {}
+
 export class BadRequestError extends Data.TaggedError('BadRequestError')<{
     message: string;
     details?: unknown;
