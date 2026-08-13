@@ -7,8 +7,8 @@
  * interrupts in-flight backend calls.
  */
 
-import { Duration, Effect, Schedule } from 'effect';
-import { MissingEnvError } from '@tokens/effect';
+import { Duration, Effect, Schedule, type Schema } from 'effect';
+import { CurrentRequestId, MissingEnvError, type UpstreamDataError, decodeUpstreamOrFail, emitEvent } from '@tokens/effect';
 import { loadEnv, resetEnvForTests } from '../env';
 import {
     CloudRunHttpError,
@@ -29,6 +29,12 @@ export interface CloudRunCallerIdentity {
 
 export interface CloudRunCallOptions {
     identity?: CloudRunCallerIdentity;
+    /**
+     * Optional response schema, decoded STRICTLY (our own contract; excess
+     * keys are dropped, so additive upstream deploys never break us). A
+     * mismatch fails with a tagged UpstreamDataError (500).
+     */
+    schema?: Schema.ConstraintDecoder<unknown>;
     /** Per-call timeout override in ms. Defaults to the client-level timeout (15s). */
     timeoutMs?: number;
     /**
@@ -89,6 +95,7 @@ export function makeCloudRunCaller(cfg: CloudRunClientConfig): CloudRunCaller {
         args: Record<string, unknown>,
         timeoutMs: number,
         identity: CloudRunCallerIdentity | undefined,
+        schema: Schema.ConstraintDecoder<unknown> | undefined,
     ): Effect.Effect<T, CloudRunError> {
         const url = `${base.replace(/\/$/, '')}/${kind}/${encodeURIComponent(name)}`;
         const headers: Record<string, string> = {
@@ -145,7 +152,14 @@ export function makeCloudRunCaller(cfg: CloudRunClientConfig): CloudRunCaller {
                             callName: name,
                             cause: err instanceof Error ? err.message : String(err),
                         }),
-                });
+                }).pipe(
+                    Effect.flatMap(payload => {
+                        if (!schema) return Effect.succeed(payload);
+                        return decodeUpstreamOrFail(schema, `cloudrun:${service}.${name}`)(
+                            payload,
+                        ) as Effect.Effect<T, UpstreamDataError, never>;
+                    }),
+                );
             }),
             Effect.timeout(Duration.millis(timeoutMs)),
             Effect.catchTag('TimeoutError', () =>
@@ -181,7 +195,7 @@ export function makeCloudRunCaller(cfg: CloudRunClientConfig): CloudRunCaller {
             }
 
             const timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
-            const attempt = callOnce<T>(base, service, kind, name, args, timeoutMs, options.identity);
+            const attempt = callOnce<T>(base, service, kind, name, args, timeoutMs, options.identity, options.schema);
 
             // Mutations are never retried regardless of options — replaying a
             // non-idempotent call is worse than failing it.
@@ -196,13 +210,53 @@ export function makeCloudRunCaller(cfg: CloudRunClientConfig): CloudRunCaller {
                 times: maxRetries,
                 schedule: Schedule.exponential(Duration.millis(Math.max(1, retryDelayMs))).pipe(Schedule.jittered),
             });
-        });
+        }).pipe(withCloudRunTelemetry(service, kind, name));
     }
 
     return {
         query: (service, name, args = {}, options = {}) => call(service, 'query', name, args, options),
         mutation: (service, name, args = {}, options = {}) => call(service, 'mutation', name, args, options),
     };
+}
+
+
+/** True unless TOKENS_LOG_CLOUDRUN_CALLS=false — cloudrun calls were previously invisible in logs. */
+function shouldLogCloudRunCalls(): boolean {
+    return (process.env.TOKENS_LOG_CLOUDRUN_CALLS ?? 'true').trim().toLowerCase() !== 'false';
+}
+
+function withCloudRunTelemetry(service: CloudRunService, kind: CloudRunCallKind, name: string) {
+    return <A, E>(effect: Effect.Effect<A, E>): Effect.Effect<A, E> =>
+        Effect.suspend(() => {
+            if (!shouldLogCloudRunCalls()) {
+                return effect.pipe(Effect.withSpan(`cloudrun.${service}.${name}`));
+            }
+            const startedAt = Date.now();
+            const emit = (ok: boolean, status: number | null, errorTag?: string) =>
+                Effect.service(CurrentRequestId).pipe(
+                    Effect.map(requestId =>
+                        emitEvent({
+                            event: 'external_call',
+                            provider: `cloudrun:${service}`,
+                            endpoint: name,
+                            status,
+                            duration_ms: Date.now() - startedAt,
+                            ok,
+                            ...(errorTag ? { error_tag: errorTag } : {}),
+                            ...(requestId ? { request_id: requestId } : {}),
+                        }),
+                    ),
+                );
+            return effect.pipe(
+                Effect.tap(() => emit(true, null)),
+                Effect.tapError(error => {
+                    const tagged = error as { _tag?: string; status?: number };
+                    return emit(false, typeof tagged.status === 'number' ? tagged.status : null, tagged._tag);
+                }),
+                // Spans are inert without a tracer — near-zero cost future-proofing.
+                Effect.withSpan(`cloudrun.${service}.${name}`, { attributes: { 'cloudrun.kind': kind } }),
+            );
+        });
 }
 
 // -----------------------------------------------------------------------------
