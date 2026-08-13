@@ -51,7 +51,7 @@ export const GET = route(
             const coinId = (id ?? '').trim();
             if (!coinId) return yield* Effect.fail(new BadRequestError({ message: 'id is required' }));
 
-            const coinDoc = yield* Effect.tryPromise(() => coingeckoGetCoinById({ id: coinId }));
+            const coinDoc = yield* coingeckoGetCoinById({ id: coinId });
             if (!coinDoc)
                 return yield* Effect.fail(new NotFoundError({ message: 'Coin not found', resource: 'coingeckoCoin' }));
 

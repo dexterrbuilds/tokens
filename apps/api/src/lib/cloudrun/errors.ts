@@ -1,5 +1,5 @@
 import { Data } from 'effect';
-import type { MissingEnvError } from '@tokens/effect';
+import type { MissingEnvError, UpstreamDataError } from '@tokens/effect';
 import type { CloudRunCallKind, CloudRunService } from './client';
 
 /** Upstream responded with a non-2xx status. */
@@ -30,7 +30,12 @@ export class CloudRunTransportError extends Data.TaggedError('CloudRunTransportE
     cause?: string;
 }> {}
 
-export type CloudRunError = CloudRunHttpError | CloudRunTimeoutError | CloudRunTransportError | MissingEnvError;
+export type CloudRunError =
+    | CloudRunHttpError
+    | CloudRunTimeoutError
+    | CloudRunTransportError
+    | MissingEnvError
+    | UpstreamDataError;
 
 /** Timeouts and network failures are transient; upstream 5xx is transient-shaped. 4xx is caller/data-dependent. */
 export function isRetryableCloudRunError(error: CloudRunError): boolean {
@@ -41,6 +46,7 @@ export function isRetryableCloudRunError(error: CloudRunError): boolean {
         case 'CloudRunHttpError':
             return error.status >= 500;
         case 'MissingEnvError':
+        case 'UpstreamDataError':
             return false;
     }
 }

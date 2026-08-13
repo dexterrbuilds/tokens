@@ -105,7 +105,7 @@ export const POST = route((request: Request) =>
             return Effect.gen(function* () {
                 const stats: AddressStats = { inserted: 0, updated: 0, skipped: 0, fetchedCandles: 0 };
 
-                const bounds = yield* Effect.tryPromise(() => ohlcvBounds({ address, interval }));
+                const bounds = yield* ohlcvBounds({ address, interval });
 
                 const segmentsToFetch: Array<{ from: number; to: number }> = [];
 

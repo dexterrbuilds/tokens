@@ -2,6 +2,7 @@ import { Effect } from 'effect';
 
 import { fetchJsonWithRetry, tapErrorAndDefault } from '@tokens/effect';
 import { route } from '@/effect/next-route';
+import { resolveXBearerToken, runXRequest } from '@/lib/x-auth';
 import { buildMediaByKey, getPostImage, type XMedia, type XPostMediaAttachment } from '@/lib/x-media';
 import {
     articleMatchesTerms,
@@ -69,12 +70,6 @@ const MAX_X_RESULTS = 100;
 const MAX_COINGECKO_NEWS_PER_PAGE = 20;
 const MAX_COINGECKO_NEWS_PAGES = 20;
 
-let cachedBearerToken: string | null = null;
-
-function invalidateCachedBearerToken(): void {
-    cachedBearerToken = null;
-}
-
 function parseTerms(url: URL): string[] {
     const values = [
         ...url.searchParams.getAll('term'),
@@ -116,46 +111,6 @@ function cleanPostText(value: string): string {
 
 function buildXPostUrl(username: string, postId: string): string {
     return `https://x.com/${encodeURIComponent(username)}/status/${encodeURIComponent(postId)}`;
-}
-
-async function runXRequest<T>(request: Effect.Effect<T, unknown, never>): Promise<T> {
-    try {
-        return await Effect.runPromise(request);
-    } catch (error) {
-        invalidateCachedBearerToken();
-        throw error;
-    }
-}
-
-async function resolveXBearerToken(): Promise<string | null> {
-    const existingBearerToken = process.env.X_BEARER_TOKEN?.trim();
-    if (existingBearerToken) return existingBearerToken;
-    if (cachedBearerToken) return cachedBearerToken;
-
-    const apiKey = process.env.X_API_KEY?.trim();
-    const apiSecret = process.env.X_API_SECRET?.trim();
-    if (!apiKey || !apiSecret) return null;
-
-    const credentials = `${encodeURIComponent(apiKey)}:${encodeURIComponent(apiSecret)}`;
-    const authorization = Buffer.from(credentials).toString('base64');
-    const response = await fetch('https://api.x.com/oauth2/token', {
-        method: 'POST',
-        headers: {
-            Authorization: `Basic ${authorization}`,
-            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-        },
-        body: 'grant_type=client_credentials',
-    });
-
-    if (!response.ok) throw new Error(`Failed to resolve X bearer token (${response.status})`);
-
-    const data = (await response.json()) as { token_type?: string; access_token?: string };
-    if (data.token_type?.toLowerCase() !== 'bearer' || !data.access_token) {
-        throw new Error('X bearer token response was invalid');
-    }
-
-    cachedBearerToken = data.access_token;
-    return cachedBearerToken;
 }
 
 function mapCoinGeckoNewsArticle(article: CoinGeckoNewsArticle): FeedArticle {
@@ -247,7 +202,7 @@ function getCandidateFetchCounts(params: { limit: number; tweetReserve: number; 
 }
 
 async function fetchTokensFeed(limit: number): Promise<FeedArticle[]> {
-    const bearerToken = await resolveXBearerToken();
+    const bearerToken = await Effect.runPromise(resolveXBearerToken());
     if (!bearerToken) return [];
 
     const authHeaders = {
@@ -258,7 +213,7 @@ async function fetchTokensFeed(limit: number): Promise<FeedArticle[]> {
     const userUrl = new URL(`https://api.x.com/2/users/by/username/${X_USERNAME}`);
     userUrl.searchParams.set('user.fields', 'id,name,username,profile_image_url');
 
-    const userResponse = await runXRequest(fetchJsonWithRetry<XUserLookupResponse>({
+    const userResponse = await Effect.runPromise(runXRequest(fetchJsonWithRetry<XUserLookupResponse>({
         url: userUrl.toString(),
         service: 'x',
         init: {
@@ -266,7 +221,7 @@ async function fetchTokensFeed(limit: number): Promise<FeedArticle[]> {
             next: { revalidate: 60 },
         },
         maxRetries: 2,
-    }));
+    })));
 
     const user = userResponse.data;
     if (!user?.id) return [];
@@ -278,7 +233,7 @@ async function fetchTokensFeed(limit: number): Promise<FeedArticle[]> {
     postsUrl.searchParams.set('expansions', 'attachments.media_keys');
     postsUrl.searchParams.set('media.fields', 'media_key,preview_image_url,type,url');
 
-    const postsResponse = await runXRequest(fetchJsonWithRetry<XUserPostsResponse>({
+    const postsResponse = await Effect.runPromise(runXRequest(fetchJsonWithRetry<XUserPostsResponse>({
         url: postsUrl.toString(),
         service: 'x',
         init: {
@@ -286,7 +241,7 @@ async function fetchTokensFeed(limit: number): Promise<FeedArticle[]> {
             next: { revalidate: 60 },
         },
         maxRetries: 2,
-    }));
+    })));
     const mediaByKey = buildMediaByKey(postsResponse.includes?.media);
 
     return (postsResponse.data ?? [])

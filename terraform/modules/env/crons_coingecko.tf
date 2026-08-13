@@ -21,6 +21,7 @@ locals {
         selectionWindowMs = 21600000
         localization      = false
         marketData        = true
+        budgetMs          = 500000
       })
       attempt_deadline = "540s"
     },
@@ -35,6 +36,7 @@ locals {
         delayMs           = 250
         selectionWindowMs = 21600000
         maxTickers        = 200
+        budgetMs          = 500000
       })
       attempt_deadline = "540s"
     },
@@ -48,6 +50,7 @@ locals {
         chunkSize         = 200
         delayMs           = 150
         selectionWindowMs = 300000
+        budgetMs          = 500000
       })
       attempt_deadline = "540s"
     },
@@ -63,6 +66,7 @@ locals {
         concurrency       = 2
         delayMs           = 250
         selectionWindowMs = 1800000
+        budgetMs          = 500000
       })
       attempt_deadline = "540s"
     },
@@ -78,6 +82,7 @@ locals {
         concurrency       = 3
         delayMs           = 150
         selectionWindowMs = 3600000
+        budgetMs          = 500000
       })
       attempt_deadline = "540s"
     },
@@ -92,6 +97,7 @@ locals {
         concurrency       = 2
         delayMs           = 250
         selectionWindowMs = 43200000
+        budgetMs          = 500000
       })
       attempt_deadline = "540s"
     },
@@ -106,6 +112,7 @@ locals {
         concurrency       = 2
         delayMs           = 250
         selectionWindowMs = 86400000
+        budgetMs          = 500000
       })
       attempt_deadline = "540s"
     },
@@ -120,6 +127,7 @@ locals {
         concurrency       = 2
         delayMs           = 250
         selectionWindowMs = 86400000
+        budgetMs          = 500000
       })
       attempt_deadline = "540s"
     },

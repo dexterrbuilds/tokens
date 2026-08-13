@@ -6,7 +6,10 @@ import type {
     ResolveAssetRefForApiResult as HandlerResolveAssetRefForApiResult,
 } from '../../../../cloudrun-assets/src/handlers/assets';
 
-import { getCloudRunClient } from './client';
+import type { Effect } from 'effect';
+
+import { cloudRunQuery } from './client';
+import type { CloudRunError } from './errors';
 
 export type AssetCategory =
     | 'crypto'
@@ -25,8 +28,8 @@ export type GetByAssetIdArgs = {
 
 export type GetByAssetIdResult = AssetResult | null;
 
-export async function getByAssetId(args: GetByAssetIdArgs): Promise<GetByAssetIdResult> {
-    return getCloudRunClient().query<GetByAssetIdResult>('assets', 'getByAssetId', { ...args });
+export function getByAssetId(args: GetByAssetIdArgs): Effect.Effect<GetByAssetIdResult, CloudRunError> {
+    return cloudRunQuery<GetByAssetIdResult>('assets', 'getByAssetId', { ...args });
 }
 
 export type GetByAssetIdsArgs = {
@@ -36,8 +39,8 @@ export type GetByAssetIdsArgs = {
 
 export type GetByAssetIdsResult = GetByAssetIdsEntry[];
 
-export async function getByAssetIds(args: GetByAssetIdsArgs): Promise<GetByAssetIdsResult> {
-    return getCloudRunClient().query<GetByAssetIdsResult>('assets', 'getByAssetIds', { ...args });
+export function getByAssetIds(args: GetByAssetIdsArgs): Effect.Effect<GetByAssetIdsResult, CloudRunError> {
+    return cloudRunQuery<GetByAssetIdsResult>('assets', 'getByAssetIds', { ...args });
 }
 
 export type SearchArgs = {
@@ -49,8 +52,8 @@ export type SearchArgs = {
 
 export type SearchResult = AssetResult[];
 
-export async function search(args: SearchArgs): Promise<SearchResult> {
-    return getCloudRunClient().query<SearchResult>('assets', 'search', { ...args });
+export function search(args: SearchArgs): Effect.Effect<SearchResult, CloudRunError> {
+    return cloudRunQuery<SearchResult>('assets', 'search', { ...args });
 }
 
 export type ResolveAssetRefArgs = {
@@ -60,8 +63,8 @@ export type ResolveAssetRefArgs = {
 
 export type ResolveAssetRefResult = HandlerResolveAssetRefResult | null;
 
-export async function resolveAssetRef(args: ResolveAssetRefArgs): Promise<ResolveAssetRefResult> {
-    return getCloudRunClient().query<ResolveAssetRefResult>('assets', 'resolveAssetRef', { ...args });
+export function resolveAssetRef(args: ResolveAssetRefArgs): Effect.Effect<ResolveAssetRefResult, CloudRunError> {
+    return cloudRunQuery<ResolveAssetRefResult>('assets', 'resolveAssetRef', { ...args });
 }
 
 export type ResolveAssetRefForApiArgs = {
@@ -71,10 +74,10 @@ export type ResolveAssetRefForApiArgs = {
 
 export type ResolveAssetRefForApiResult = HandlerResolveAssetRefForApiResult | null;
 
-export async function resolveAssetRefForApi(
+export function resolveAssetRefForApi(
     args: ResolveAssetRefForApiArgs,
-): Promise<ResolveAssetRefForApiResult> {
-    return getCloudRunClient().query<ResolveAssetRefForApiResult>(
+): Effect.Effect<ResolveAssetRefForApiResult, CloudRunError> {
+    return cloudRunQuery<ResolveAssetRefForApiResult>(
         'assets',
         'resolveAssetRefForApi',
         { ...args },
@@ -87,10 +90,10 @@ export type ListActiveWithCoinGeckoIdsArgs = {
 
 export type ListActiveWithCoinGeckoIdsResult = AssetCoinGeckoEntry[];
 
-export async function listActiveWithCoinGeckoIds(
+export function listActiveWithCoinGeckoIds(
     args: ListActiveWithCoinGeckoIdsArgs = {},
-): Promise<ListActiveWithCoinGeckoIdsResult> {
-    return getCloudRunClient().query<ListActiveWithCoinGeckoIdsResult>(
+): Effect.Effect<ListActiveWithCoinGeckoIdsResult, CloudRunError> {
+    return cloudRunQuery<ListActiveWithCoinGeckoIdsResult>(
         'assets',
         'listActiveWithCoinGeckoIds',
         { ...args },
@@ -105,6 +108,6 @@ export type ListByCategoryArgs = {
 
 export type ListByCategoryResult = AssetResult[];
 
-export async function listByCategory(args: ListByCategoryArgs): Promise<ListByCategoryResult> {
-    return getCloudRunClient().query<ListByCategoryResult>('assets', 'listByCategory', { ...args });
+export function listByCategory(args: ListByCategoryArgs): Effect.Effect<ListByCategoryResult, CloudRunError> {
+    return cloudRunQuery<ListByCategoryResult>('assets', 'listByCategory', { ...args });
 }

@@ -77,7 +77,8 @@ const clickhouseUser = process.env.CLICKHOUSE_USER?.trim();
 const clickhousePassword = process.env.CLICKHOUSE_PASSWORD?.trim();
 const clickhouseDatabase = process.env.CLICKHOUSE_DATABASE?.trim();
 
-let cronDeps: (CronDeps & Partial<ClickhouseCronDeps>) | undefined;
+let cronDeps: CronDeps | undefined;
+let clickhouseCronDeps: (CronDeps & ClickhouseCronDeps) | undefined;
 let miscCronDeps: MiscCronDeps | undefined;
 let assetVariantsCronDeps: AssetVariantsCronDeps | undefined;
 let seedCronDeps: SeedCronDeps | undefined;
@@ -117,9 +118,10 @@ if (birdeyeApiKey) {
     coingeckoCurated.warmup().catch(err => {
         console.error('[cloudrun-assets] coingecko curated warmup failed', err);
     });
-    let clickhouseExtras: Partial<Omit<ClickhouseCronDeps, 'curated' | 'now'>> = {};
+    cronDeps = baseDeps;
     if (clickhouseUrl && clickhouseUser && clickhousePassword && clickhouseDatabase) {
-        clickhouseExtras = {
+        clickhouseCronDeps = {
+            ...baseDeps,
             clickhouseRepo: makePostgresClickhouseRepo(sql),
             clickhouse: makeClickhouseClient({
                 url: clickhouseUrl,
@@ -144,7 +146,6 @@ if (birdeyeApiKey) {
     } else {
         console.warn('[cloudrun-assets] CLICKHOUSE_* not fully set — clickhouse /jobs/* disabled');
     }
-    cronDeps = { ...baseDeps, ...clickhouseExtras };
     miscCronDeps = {
         base: cronDeps,
         repo: makePostgresMiscJobsRepo(sql),
@@ -231,9 +232,7 @@ if (cronDeps && miscCronDeps && seedCronDeps) {
     cacheWarmDeps = {
         cron: cronDeps,
         misc: miscCronDeps,
-        ...(cronDeps.clickhouseRepo && cronDeps.clickhouse && cronDeps.env
-            ? { clickhouse: cronDeps as CronDeps & ClickhouseCronDeps }
-            : {}),
+        ...(clickhouseCronDeps ? { clickhouse: clickhouseCronDeps } : {}),
         ...(clickhouseExtrasCronDeps ? { clickhouseExtras: clickhouseExtrasCronDeps } : {}),
         seed: seedCronDeps,
         stockReadsRepo: makePostgresStockReadsRepo(sql),
@@ -284,6 +283,7 @@ const app = createApp({
     prestocksReadsRepo: makePostgresPrestocksReadsRepo(sql),
     authToken,
     ...(cronDeps && verifyOidc ? { cronDeps, verifyOidc } : {}),
+    ...(clickhouseCronDeps ? { clickhouseCronDeps } : {}),
     ...(miscCronDeps ? { miscCronDeps } : {}),
     ...(assetVariantsCronDeps ? { assetVariantsCronDeps } : {}),
     ...(seedCronDeps ? { seedCronDeps } : {}),

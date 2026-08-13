@@ -10,9 +10,7 @@ export const GET = route(
             const { assetId: rawAssetId } = yield* Effect.tryPromise(() => ctx.params);
             const loaded = yield* loadAssetWithSelectedVariant({ request, rawAssetId });
 
-            const summary = yield* Effect.tryPromise(() =>
-                tokenDescriptionSummariesGetByAddress({ address: loaded.selectedMint }),
-            );
+            const summary = yield* tokenDescriptionSummariesGetByAddress({ address: loaded.selectedMint });
 
             return {
                 assetId: loaded.assetDoc.assetId,

@@ -12,7 +12,7 @@ export const GET = route(
             const q = query.trim();
             if (q.length < 2) return { tokens: [] };
 
-            const tokens = yield* Effect.tryPromise(() => tokensSearchTokens({ query: q, limit: 20 }));
+            const tokens = yield* tokensSearchTokens({ query: q, limit: 20 });
             return { tokens };
         }),
     { platform: { requiredScopes: ['internal:read'] } },

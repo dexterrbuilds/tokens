@@ -1,10 +1,7 @@
 export {
-    CloudRunCallError,
-    CloudRunClient,
     cloudRunMutation,
     cloudRunQuery,
     encodeCallerIdentity,
-    getCloudRunClient,
     getCloudRunConfig,
     makeCloudRunCaller,
     type CloudRunCaller,

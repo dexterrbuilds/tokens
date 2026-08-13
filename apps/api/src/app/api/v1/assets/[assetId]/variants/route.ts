@@ -110,7 +110,7 @@ async function loadExecutionQualityByMints(mints: string[]): Promise<Map<string,
 
     const out = new Map<string, VariantExecutionQualitySnapshot>();
     for (const chunk of Arr.chunksOf(uniqueMints, 250)) {
-        const rows = await variantFillQualityGetLatestByMints({ mints: chunk });
+        const rows = await Effect.runPromise(variantFillQualityGetLatestByMints({ mints: chunk }));
         for (const row of rows) {
             const snapshot = executionQualitySnapshotFromConvexFillQuality(row.fillQuality);
             if (snapshot) out.set(row.mint, snapshot);
@@ -373,20 +373,14 @@ export const GET = route(
             if (singletonMint) {
                 if (kind && kind !== 'native') return { assetId, sortBy, variants: [] };
 
-                const rows = yield* Effect.tryPromise(() =>
-                    variantMarketsGetLatestByMints({ mints: [singletonMint] }),
-                );
+                const rows = yield* variantMarketsGetLatestByMints({ mints: [singletonMint] });
                 const market = rows[0]?.market ?? null;
                 const marketSnapshot = market ? toMarketSnapshot(market) : null;
 
-                const doc = yield* Effect.tryPromise(() =>
-                    tokenMarketsGetLatestByMint({ mint: singletonMint }),
-                ).pipe(tapErrorAndDefault('assets.variants.singletonTokenMarkets', null, { mint: singletonMint }));
+                const doc = yield* tokenMarketsGetLatestByMint({ mint: singletonMint }).pipe(tapErrorAndDefault('assets.variants.singletonTokenMarkets', null, { mint: singletonMint }));
                 const derived = marketSnapshot ? null : deriveSnapshotFromTokenMarkets(doc, singletonMint);
 
-                const token = yield* Effect.tryPromise(() =>
-                    tokensGetByAddress({ address: singletonMint }),
-                ).pipe(tapErrorAndDefault('assets.variants.singletonToken', null, { mint: singletonMint }));
+                const token = yield* tokensGetByAddress({ address: singletonMint }).pipe(tapErrorAndDefault('assets.variants.singletonToken', null, { mint: singletonMint }));
                 const symbol =
                     typeof token?.symbol === 'string' && token.symbol.trim() ? token.symbol.trim() : undefined;
                 const name = typeof token?.name === 'string' && token.name.trim() ? token.name.trim() : undefined;
@@ -430,9 +424,7 @@ export const GET = route(
 
             if (assetId === 'solana' && variantsMode !== 'all' && !stockVariantTier) {
                 if (!kind && !tierFilter && !requestedMint) {
-                    const view = yield* Effect.tryPromise(() =>
-                        getSolanaDefaultVariantsViewForApi(),
-                    ).pipe(tapErrorAndDefault('assets.variants.solanaDefaultView', null, { assetId }));
+                    const view = yield* getSolanaDefaultVariantsViewForApi().pipe(tapErrorAndDefault('assets.variants.solanaDefaultView', null, { assetId }));
 
                     if (view) {
                         const fillQualityByMint = yield* Effect.tryPromise(() =>
@@ -452,14 +444,12 @@ export const GET = route(
                     }
                 }
 
-                const result: SolanaVariantsForApiResult | null = yield* Effect.tryPromise(() =>
-                    listSolanaVariantsForApi({
+                const result: SolanaVariantsForApiResult | null = yield* listSolanaVariantsForApi({
                         ...(kind ? { kind } : {}),
                         ...(tierFilter ? { tierFilter } : {}),
                         ...(requestedMint ? { requestedMint } : {}),
                         ...(variantsMode ? { variantsMode } : {}),
-                    }),
-                ).pipe(tapErrorAndDefault('assets.variants.solanaListView', null, { assetId, variantsMode }));
+                    }).pipe(tapErrorAndDefault('assets.variants.solanaListView', null, { assetId, variantsMode }));
 
                 if (result) {
                     if (!result.requestedMintIsVariant) {
@@ -490,20 +480,16 @@ export const GET = route(
             const [assetDoc, variantsRowsForRegistry] = registryAsset
                 ? yield* Effect.all(
                       [
-                          Effect.tryPromise(() => cloudRunGetByAssetId({ assetId })),
-                          Effect.tryPromise(() =>
-                              assetVariantsListByAssetIds({ assetIds: [registryAsset.assetId] }),
-                          ),
+                          cloudRunGetByAssetId({ assetId }),
+                          assetVariantsListByAssetIds({ assetIds: [registryAsset.assetId] }),
                       ] as const,
                       { concurrency: 2 },
                   )
-                : [yield* Effect.tryPromise(() => cloudRunGetByAssetId({ assetId })), null];
+                : [yield* cloudRunGetByAssetId({ assetId }), null];
 
             const variantsRows = assetDoc
                 ? (variantsRowsForRegistry ??
-                  (yield* Effect.tryPromise(() =>
-                      assetVariantsListByAssetIds({ assetIds: [assetDoc.assetId] }),
-                  )))
+                  (yield* assetVariantsListByAssetIds({ assetIds: [assetDoc.assetId] })))
                 : [];
             const dbVariants: AssetVariant[] = (variantsRows[0]?.variants ?? []) as unknown as AssetVariant[];
 
@@ -574,7 +560,7 @@ export const GET = route(
             );
             const rowsByChunk = yield* Effect.all(
                 marketChunks.map(chunk =>
-                    Effect.tryPromise(() => variantMarketsGetLatestByMints({ mints: chunk })),
+                    variantMarketsGetLatestByMints({ mints: chunk }),
                 ),
                 { concurrency: CLOUDRUN_BULK_QUERY_CONCURRENCY },
             );
@@ -665,9 +651,7 @@ export const GET = route(
                     const tokenMarketChunks = Arr.chunksOf(uniqueMints, TOKEN_MARKETS_CHUNK_SIZE);
                     const tokenMarketRowsByChunk = yield* Effect.all(
                         tokenMarketChunks.map(chunk =>
-                            Effect.tryPromise(() =>
-                                tokenMarketsGetTopMarketsByMints({ mints: chunk }),
-                            ).pipe(Effect.catch(() => Effect.succeed([] as TokenMarketTopRow[]))),
+                            tokenMarketsGetTopMarketsByMints({ mints: chunk }).pipe(Effect.catch(() => Effect.succeed([] as TokenMarketTopRow[]))),
                         ),
                         { concurrency: CLOUDRUN_BULK_QUERY_CONCURRENCY },
                     );
