@@ -1,3 +1,6 @@
+import { Effect } from 'effect';
+import { isShuttingDown } from '@tokens/cloudrun-shutdown';
+import { runJobPool } from '@tokens/effect/job-runner';
 import { ClickhouseApiError } from '../clients';
 import {
     computeVariantExecutionScore,
@@ -530,6 +533,7 @@ export async function refreshSolanaClickhouseTrendingMarkets(
     const maxMints = clampNumber(args.maxMints, 1000, 1, 1000);
     const concurrency = clampNumber(args.concurrency, 3, 1, 8);
     const delayMs = clampNumber(args.delayMs, 25, 0, 5_000);
+    const budgetMs = clampNumber(args.budgetMs, 0, 0, 3_600_000);
 
     const explicitMints = Array.isArray(args.mints) ? uniqueStringsRaw(args.mints as string[]) : [];
     const mints =
@@ -572,7 +576,6 @@ export async function refreshSolanaClickhouseTrendingMarkets(
     const chunks = chunkArr(mints, 50);
     const snapshotsByMint = new Map<string, TrendingSnapshot>();
     let failed = 0;
-    let nextIndex = 0;
 
     async function fetchChunkRecursive(mintsChunk: string[]): Promise<void> {
         try {
@@ -603,25 +606,24 @@ export async function refreshSolanaClickhouseTrendingMarkets(
         }
     }
 
-    async function worker(workerIdx: number): Promise<void> {
-        if (workerIdx > 0) await sleep(workerIdx * WORKER_STARTUP_STAGGER_MS);
-        while (true) {
-            const idx = nextIndex;
-            if (idx >= chunks.length) return;
-            nextIndex += 1;
-            try {
-                await fetchChunkRecursive(chunks[idx]!);
-            } finally {
-                await sleep(delayMs);
-            }
-        }
-    }
-
-    await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, (_, i) => worker(i)));
+    await Effect.runPromise(
+        runJobPool({
+            label: 'refreshSolanaClickhouseTrendingMarkets',
+            items: chunks,
+            concurrency,
+            delayMs,
+            staggerMs: WORKER_STARTUP_STAGGER_MS,
+            ...(budgetMs > 0 ? { budgetMs } : {}),
+            shouldStop: isShuttingDown,
+            // fetchChunkRecursive owns bisect-on-failure and per-mint failure
+            // accounting; it never throws, so the pool only paces and drains.
+            process: mintsChunk => Effect.tryPromise(() => fetchChunkRecursive(mintsChunk)),
+        }),
+    );
 
     if (failed > 0 && snapshotsByMint.size === 0) {
         return {
-            ok: true,
+            ok: false,
             processed: mints.length,
             durationMs: deps.now() - start,
             requested: mints.length,
@@ -883,6 +885,7 @@ export async function refreshClickhouseFillQualityVariants(
     const maxMints = clampNumber(args.maxMints, 1000, 1, 1000);
     const concurrency = clampNumber(args.concurrency, 3, 1, 8);
     const delayMs = clampNumber(args.delayMs, 25, 0, 5_000);
+    const budgetMs = clampNumber(args.budgetMs, 0, 0, 3_600_000);
 
     const explicitMints = Array.isArray(args.mints) ? uniqueMints(args.mints as string[]) : [];
     const mints =
@@ -928,35 +931,31 @@ export async function refreshClickhouseFillQualityVariants(
     const chunks = chunkArr(mints, 100);
     const snapshotsByMint = new Map<string, FillQualitySnapshot>();
     let failed = 0;
-    let nextIndex = 0;
 
-    async function worker(): Promise<void> {
-        while (true) {
-            const idx = nextIndex;
-            if (idx >= chunks.length) return;
-            nextIndex += 1;
-            const mintsChunk = chunks[idx]!;
-            try {
-                const snapshots = await fetchFillQualitySnapshotsChunk({
-                    clickhouse: deps.clickhouse,
-                    mints: mintsChunk,
-                    quoteMint: FILL_QUALITY_USDC_QUOTE_MINT,
-                    asOfMs,
-                });
-                for (const snapshot of snapshots) snapshotsByMint.set(snapshot.mint, snapshot);
-            } catch (err) {
-                failed += mintsChunk.length;
-                console.error(
-                    `[refreshClickhouseFillQualityVariants] chunk size=${mintsChunk.length}`,
-                    err instanceof Error ? err.message : String(err),
-                );
-            } finally {
-                await sleep(delayMs);
-            }
-        }
-    }
-
-    await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, () => worker()));
+    await Effect.runPromise(
+        runJobPool({
+            label: 'refreshClickhouseFillQualityVariants',
+            items: chunks,
+            concurrency,
+            delayMs,
+            ...(budgetMs > 0 ? { budgetMs } : {}),
+            shouldStop: isShuttingDown,
+            process: mintsChunk =>
+                Effect.tryPromise(async () => {
+                    const snapshots = await fetchFillQualitySnapshotsChunk({
+                        clickhouse: deps.clickhouse,
+                        mints: mintsChunk,
+                        quoteMint: FILL_QUALITY_USDC_QUOTE_MINT,
+                        asOfMs,
+                    });
+                    for (const snapshot of snapshots) snapshotsByMint.set(snapshot.mint, snapshot);
+                }),
+            onItemError: mintsChunk =>
+                Effect.sync(() => {
+                    failed += mintsChunk.length;
+                }),
+        }),
+    );
 
     const asOf = Math.floor(asOfMs / 1000);
     const lastComputedAt = deps.now();
@@ -1069,6 +1068,7 @@ export async function refreshClickhouseVariantMarketMetrics(
     const maxMints = clampNumber(args.maxMints, 500, 1, 1000);
     const chunkSize = clampNumber(args.chunkSize, 100, 10, 250);
     const delayMs = clampNumber(args.delayMs, 100, 0, 5_000);
+    const budgetMs = clampNumber(args.budgetMs, 0, 0, 3_600_000);
 
     const mints = uniqueMints(deps.curated.getAllCuratedMintsInOrder()).slice(0, maxMints);
     if (mints.length === 0) {
@@ -1080,7 +1080,12 @@ export async function refreshClickhouseVariantMarketMetrics(
     let failed = 0;
     let fetched = 0;
 
+    let budgetExhausted = false;
     for (const chunk of chunkArr(mints, chunkSize)) {
+        if ((budgetMs > 0 && deps.now() - start >= budgetMs) || isShuttingDown()) {
+            budgetExhausted = true;
+            break;
+        }
         try {
             const snapshots = await deps.clickhouse.fetchSolanaMintSnapshots({ mints: chunk, stableMints });
             fetched += snapshots.length;
@@ -1113,13 +1118,14 @@ export async function refreshClickhouseVariantMarketMetrics(
     }
 
     const result = {
-        ok: true as const,
+        ok: !(failed >= mints.length && updated === 0),
         processed: mints.length,
         durationMs: deps.now() - start,
         fetched,
         updated,
         failed,
         disabled: false,
+        ...(budgetExhausted ? { partial: true } : {}),
     };
     console.log('[refreshClickhouseVariantMarketMetrics] run complete', JSON.stringify(result));
     return result;
@@ -1251,6 +1257,7 @@ export async function refreshSolanaClickhouseOhlcv(
     const priorityCount = clampNumber(args.priorityCount, 25, 0, 100);
     const concurrency = clampNumber(args.concurrency, 2, 1, 5);
     const delayMs = clampNumber(args.delayMs, 50, 0, 5_000);
+    const budgetMs = clampNumber(args.budgetMs, 0, 0, 3_600_000);
     const selectionWindowMs = clampNumber(args.selectionWindowMs, 60 * 60_000, 10_000, 24 * 60 * 60_000);
     const upsertChunkSize = clampNumber(args.upsertChunkSize, 500, 50, 2000);
 
@@ -1290,16 +1297,21 @@ export async function refreshSolanaClickhouseOhlcv(
     let inserted = 0;
     let updated = 0;
     let skippedTotal = 0;
-    let nextIndex = 0;
+    // 4xx (unknown preset / bad params) fails identically for every mint —
+    // abort the run instead of hammering.
+    let abortedPermanently = false;
 
-    async function worker(workerIdx: number): Promise<void> {
-        if (workerIdx > 0) await sleep(workerIdx * WORKER_STARTUP_STAGGER_MS);
-        while (true) {
-            const idx = nextIndex;
-            if (idx >= mints.length) return;
-            nextIndex += 1;
-            const mint = mints[idx]!;
-            try {
+    const summary = await Effect.runPromise(
+        runJobPool({
+            label: `refreshSolanaClickhouseOhlcv:${interval}`,
+            items: mints,
+            concurrency,
+            delayMs,
+            staggerMs: WORKER_STARTUP_STAGGER_MS,
+            ...(budgetMs > 0 ? { budgetMs } : {}),
+            shouldStop: () => abortedPermanently || isShuttingDown(),
+            process: mint =>
+                Effect.tryPromise(async () => {
                 const bounds = await deps.repo.getSolanaOhlcvBounds(mint, interval);
                 const segments: Array<{ from: number; to: number }> = [];
                 if (bounds.minTime === null || bounds.maxTime === null) {
@@ -1314,7 +1326,7 @@ export async function refreshSolanaClickhouseOhlcv(
                 }
                 if (segments.length === 0) {
                     skippedTotal += 1;
-                    continue;
+                    return;
                 }
                 for (const segment of segments) {
                     const candles = await fetchSolanaCandlesForMint({
@@ -1338,29 +1350,21 @@ export async function refreshSolanaClickhouseOhlcv(
                     }
                 }
                 refreshed += 1;
-            } catch (err) {
-                failed += 1;
-                console.error(
-                    `[refreshSolanaClickhouseOhlcv] mint=${mint} interval=${interval}`,
-                    err instanceof Error ? err.message : String(err),
-                );
-                if (err instanceof ClickhouseApiError && err.permanent) {
-                    // 4xx (unknown preset / bad params) fails identically for
-                    // every mint — abort the run instead of hammering.
-                    failed += Math.max(0, mints.length - nextIndex);
-                    nextIndex = mints.length;
-                    return;
-                }
-            } finally {
-                await sleep(delayMs);
-            }
-        }
-    }
+                }),
+            onItemError: (_mint, err) =>
+                Effect.sync(() => {
+                    if (err instanceof ClickhouseApiError && err.permanent) {
+                        abortedPermanently = true;
+                    }
+                }),
+        }),
+    );
 
-    await Promise.all(Array.from({ length: Math.min(concurrency, mints.length) }, (_, i) => worker(i)));
-
+    // Aborted runs count the drained remainder as failed (parity with the old
+    // `failed += remaining; nextIndex = mints.length` fast-exit).
+    failed = summary.failed + (abortedPermanently ? summary.deadlineSkipped : 0);
     return {
-        ok: true,
+        ok: !(summary.attempted > 0 && refreshed === 0 && skippedTotal === 0 && failed >= summary.attempted),
         processed: mints.length,
         durationMs: deps.now() - start,
         interval,
@@ -1371,6 +1375,7 @@ export async function refreshSolanaClickhouseOhlcv(
         updated,
         skipped: skippedTotal,
         disabled: false,
+        ...(summary.partial && !abortedPermanently ? { partial: true } : {}),
     };
 }
 
@@ -1628,6 +1633,7 @@ export async function refreshPublicEquityStockOhlcv(
     const maxAssets = clampNumber(args.maxAssets, 250, 1, 1000);
     const concurrency = clampNumber(args.concurrency, 2, 1, 5);
     const delayMs = clampNumber(args.delayMs, 0, 0, 5_000);
+    const budgetMs = clampNumber(args.budgetMs, 0, 0, 3_600_000);
     const selectionWindowMs = clampNumber(args.selectionWindowMs, 60 * 60_000, 10_000, 24 * 60 * 60_000);
     const upsertChunkSize = clampNumber(args.upsertChunkSize, 1000, 50, 2000);
     const explicitAssetIds = parseExplicitTargets(args.assetIds, 'assetIds');
@@ -1668,15 +1674,16 @@ export async function refreshPublicEquityStockOhlcv(
     let inserted = 0;
     let updated = 0;
     let skippedTotal = 0;
-    let nextIndex = 0;
-
-    async function worker(): Promise<void> {
-        while (true) {
-            const idx = nextIndex;
-            if (idx >= selected.length) return;
-            nextIndex += 1;
-            const mapping = selected[idx]!;
-            try {
+    const summary = await Effect.runPromise(
+        runJobPool({
+            label: `refreshPublicEquityStockOhlcv:${interval}`,
+            items: selected,
+            concurrency,
+            delayMs,
+            ...(budgetMs > 0 ? { budgetMs } : {}),
+            shouldStop: isShuttingDown,
+            process: mapping =>
+                Effect.tryPromise(async () => {
                 const bounds = await deps.repo.getStockOhlcvBounds(mapping.assetId, interval);
                 const segments: Array<{ from: number; to: number }> = [];
                 if (bounds.minTime === null || bounds.maxTime === null) {
@@ -1691,7 +1698,7 @@ export async function refreshPublicEquityStockOhlcv(
                 }
                 if (segments.length === 0) {
                     skippedTotal += 1;
-                    continue;
+                    return;
                 }
                 for (const segment of segments) {
                     const candles = await fetchStockCandles({
@@ -1717,22 +1724,13 @@ export async function refreshPublicEquityStockOhlcv(
                     }
                 }
                 refreshed += 1;
-            } catch (err) {
-                failed += 1;
-                console.error(
-                    `[refreshPublicEquityStockOhlcv] assetId=${mapping.assetId} symbol=${mapping.symbol} interval=${interval}`,
-                    err instanceof Error ? err.message : String(err),
-                );
-            } finally {
-                await sleep(delayMs);
-            }
-        }
-    }
+                }),
+        }),
+    );
 
-    await Promise.all(Array.from({ length: Math.min(concurrency, selected.length) }, () => worker()));
-
+    failed = summary.failed;
     return {
-        ok: true,
+        ok: !(summary.attempted > 0 && refreshed === 0 && skippedTotal === 0 && failed >= summary.attempted),
         processed: selected.length,
         durationMs: deps.now() - start,
         interval,
@@ -1743,6 +1741,7 @@ export async function refreshPublicEquityStockOhlcv(
         updated,
         skipped: skippedTotal,
         disabled: false,
+        ...(summary.partial ? { partial: true } : {}),
     };
 }
 
