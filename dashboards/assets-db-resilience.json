@@ -12,14 +12,14 @@
         {
             "id": 1,
             "type": "timeseries",
-            "title": "Final DB operation failures by code",
+            "title": "Final DB operation failures by revision and code",
             "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
             "datasource": { "type": "loki", "uid": "grafanacloud-logs" },
             "targets": [
                 {
                     "refId": "A",
-                    "expr": "sum by (errorCode) (count_over_time({service=~\"tokens-assets(-jobs)?-prd-us\"} | json | event=\"cloudrun_assets_db_operation_failure\" [$__interval]))",
-                    "legendFormat": "{{errorCode}}"
+                    "expr": "sum by (revision, errorCode) (count_over_time({service=~\"tokens-assets(-jobs)?-prd-us\"} | json | event=\"cloudrun_assets_db_operation_failure\" [$__interval]))",
+                    "legendFormat": "{{revision}} {{errorCode}}"
                 }
             ],
             "fieldConfig": { "defaults": { "unit": "short", "min": 0 } }
@@ -27,14 +27,14 @@
         {
             "id": 2,
             "type": "timeseries",
-            "title": "CONNECT_TIMEOUT by operation",
+            "title": "CONNECT_TIMEOUT by revision and operation",
             "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
             "datasource": { "type": "loki", "uid": "grafanacloud-logs" },
             "targets": [
                 {
                     "refId": "A",
-                    "expr": "sum by (operation) (count_over_time({service=~\"tokens-assets(-jobs)?-prd-us\"} | json | event=\"cloudrun_assets_db_operation_failure\" | errorCode=\"CONNECT_TIMEOUT\" [$__interval]))",
-                    "legendFormat": "{{operation}}"
+                    "expr": "sum by (revision, operation) (count_over_time({service=~\"tokens-assets(-jobs)?-prd-us\"} | json | event=\"cloudrun_assets_db_operation_failure\" | errorCode=\"CONNECT_TIMEOUT\" [$__interval]))",
+                    "legendFormat": "{{revision}} {{operation}}"
                 }
             ],
             "fieldConfig": { "defaults": { "unit": "short", "min": 0 } }

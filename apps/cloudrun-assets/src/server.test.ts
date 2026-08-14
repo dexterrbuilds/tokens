@@ -320,6 +320,8 @@ function deps(overrides: Partial<ServerDeps> = {}): ServerDeps {
         authToken: overrides.authToken ?? 'tok',
         ...(overrides.serviceRole ? { serviceRole: overrides.serviceRole } : {}),
         ...(overrides.checkDatabase ? { checkDatabase: overrides.checkDatabase } : {}),
+        ...(overrides.cronDeps ? { cronDeps: overrides.cronDeps } : {}),
+        ...(overrides.verifyOidc ? { verifyOidc: overrides.verifyOidc } : {}),
         ...(overrides.cacheWarmDeps ? { cacheWarmDeps: overrides.cacheWarmDeps } : {}),
         ...(overrides.adminActionsDeps ? { adminActionsDeps: overrides.adminActionsDeps } : {}),
     };
@@ -387,6 +389,37 @@ describe('createApp - infrastructure', () => {
 
         const api = createApp(deps({ serviceRole: 'api' }));
         expect((await call(api, '/jobs/anything', { method: 'POST' })).status).toBe(404);
+    });
+
+    it('keeps worker job routes behind OIDC authentication', async () => {
+        const verifiedTokens: string[] = [];
+        const worker = createApp(
+            deps({
+                serviceRole: 'worker',
+                cronDeps: {} as NonNullable<ServerDeps['cronDeps']>,
+                verifyOidc: async token => {
+                    verifiedTokens.push(token);
+                    return {
+                        sub: 'scheduler',
+                        email: 'scheduler@example.test',
+                        aud: 'worker-url',
+                        iss: 'https://accounts.google.com',
+                    };
+                },
+            }),
+        );
+
+        expect((await call(worker, '/jobs/not-a-real-job', { method: 'POST' })).status).toBe(401);
+        const response = await call(worker, '/jobs/not-a-real-job', {
+            method: 'POST',
+            headers: {
+                authorization: 'Bearer scheduler-oidc-token',
+                'content-type': 'application/json',
+            },
+            body: '{}',
+        });
+        expect(response.status).toBe(404);
+        expect(verifiedTokens).toEqual(['scheduler-oidc-token']);
     });
 
     it('POST /query/<name> rejects missing/wrong bearer with 401', async () => {

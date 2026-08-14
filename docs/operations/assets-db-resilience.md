@@ -8,11 +8,22 @@ The application changes in this repository are intended to tolerate chronic Post
 2. Load-test `assetsApiCuratedPrefetchForApi` at 150 requests/second for five minutes (45,000 requests) with `scripts/loadtest-assets-resilience.js`.
 3. Merge the phase-one PR. Production deploys the new assets revision with zero traffic; Terraform deliberately leaves `enable_assets_db_startup_probe` and `enable_assets_worker` false so its concurrent apply cannot race the application deploy.
 4. Copy the candidate revision from the deployment workflow summary. Promote it one stage at a time with `scripts/promote-assets-revision.sh <candidate> 10`, then `50`, then `100`. Record the stable revision printed by the script.
-5. Observe at least 15 minutes at each stage. Roll back with `scripts/promote-assets-revision.sh <candidate> rollback <stable>` if assets 5xx exceeds 1%, connection errors or latency regress, memory crosses the current envelope, or stale responses rise unexpectedly.
-6. After the candidate has remained healthy at 100%, set `enable_assets_db_startup_probe = true` and `enable_assets_worker = true` in a small phase-two Terraform PR. Do not route jobs yet.
-7. Apply phase two, sync and smoke-test the worker, then set `route_assets_jobs_to_worker = true` in a final routing change.
+5. Observe at least 15 minutes at each stage. Compare the candidate and stable revisions independently; service-wide metrics are not a valid promotion gate while an incident is active. Roll back with `scripts/promote-assets-revision.sh <candidate> rollback <stable>` if the candidate's normalized 5xx rate, connection-error rate, or latency regresses, memory crosses the current envelope, or stale responses rise unexpectedly.
+6. After the 50% observation window and before promotion to 100%, export the production `TOKENS_API_BASE_URL` and `TOKENS_API_KEY`, then populate or verify last-good entries for every curated list with `bun scripts/warm-curated-last-good.ts`. Do not promote if any list cannot return a valid payload; a cold key cannot serve stale data during a transient database failure.
+7. After the candidate has remained healthy at 100%, set `enable_assets_db_startup_probe = true` and `enable_assets_worker = true` in a small phase-two Terraform PR. Do not route jobs yet.
+8. Apply phase two, sync and smoke-test the worker, then set `route_assets_jobs_to_worker = true` in a final routing change.
 
 Before each promotion, verify the candidate revision is Ready. During each 15-minute observation window check the Assets DB resilience dashboard, Cloud Run instance/memory metrics, and Cloud SQL connections. Do not continue merely because the deployment workflow is green—the workflow smoke test still exercises the stable production URL while the candidate has zero or partial traffic.
+
+The structured database panels split failures by `revision`. For Cloud Run request logs, use the revision resource label directly so an active incident on the stable revision does not hide the candidate result:
+
+```sh
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="tokens-assets-prd-us" AND resource.labels.revision_name="CANDIDATE_REVISION" AND httpRequest.status>=500' \
+  --project=tokensxyz --freshness=15m --limit=1000 --format='value(timestamp,httpRequest.status,httpRequest.latency)'
+```
+
+Run the same query for the recorded stable revision and compare error counts per request, not raw counts, because the traffic shares differ at 10% and 50%.
 
 Do not restart the service during a diagnostic recurrence unless user-facing 5xx impact requires emergency mitigation. A restart destroys evidence and is only a mitigation.
 
@@ -22,7 +33,7 @@ The isolated worker is deliberately a two-step Terraform rollout because several
 
 1. Set `enable_assets_worker = true` and leave `route_assets_jobs_to_worker = false`; apply Terraform.
 2. Run `scripts/sync-assets-worker-env.sh` for the target project. The script copies values without printing them, sets the worker's OIDC audience to its own URL, and restores Secret Manager references.
-3. Invoke one low-impact worker job with Scheduler identity and verify its logs and `application_name=cloudrun-assets-jobs` database attribution.
+3. Confirm an unauthenticated worker `/jobs/*` request returns 401, then invoke one low-impact worker job with Scheduler identity and verify its logs and `application_name=cloudrun-assets-jobs` database attribution. Do not route Scheduler traffic if either authentication check fails.
 4. Set `route_assets_jobs_to_worker = true` and apply Terraform.
 5. Confirm the API role returns 404 for `/jobs/*` and the worker returns 404 for `/query/*` and `/mutation/*`.
 
