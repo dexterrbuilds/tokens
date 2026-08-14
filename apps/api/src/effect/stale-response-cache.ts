@@ -28,6 +28,8 @@ export interface StaleFallbackOptions<A = Record<string, unknown>> {
     cacheKey: string;
     /** How long a last-good payload stays servable, in seconds. */
     ttlSeconds: number;
+    /** Serve a cached success without invoking the live effect while this fresh. */
+    freshSeconds?: number;
     /**
      * Health check for successful payloads. Unhealthy payloads are never
      * cached, and are swapped for the last healthy payload when one exists
@@ -36,6 +38,8 @@ export interface StaleFallbackOptions<A = Record<string, unknown>> {
      * Defaults to treating every success as healthy.
      */
     isHealthy?: (payload: A) => boolean;
+    /** Restrict which 5xx-class errors are eligible for stale substitution. */
+    shouldFallback?: (error: unknown) => boolean;
     /**
      * Minimum interval between cache writes from this process, in ms.
      * Payloads can be large; rewriting on every request is wasteful when the
@@ -88,10 +92,26 @@ function parseEnvelope(raw: unknown): StaleEnvelope | null {
     }
 }
 
-async function writeLastGood(
-    options: StaleFallbackOptions<never>,
-    payload: Record<string, unknown>,
-): Promise<void> {
+function logDegradedResponse(
+    options: Pick<StaleFallbackOptions<never>, 'operation' | 'cacheKey'>,
+    envelope: StaleEnvelope,
+    reason: 'unhealthy_success' | 'transient_error',
+    error?: unknown,
+): void {
+    console.error(
+        JSON.stringify({
+            event: 'tokens_api_degraded_last_good_response',
+            operation: options.operation,
+            cacheKey: options.cacheKey,
+            reason,
+            cachedAt: envelope.cachedAt,
+            staleAgeMs: Date.now() - envelope.cachedAt,
+            ...(error === undefined ? {} : { error: toApiErrorInfo(error) }),
+        }),
+    );
+}
+
+async function writeLastGood(options: StaleFallbackOptions<never>, payload: Record<string, unknown>): Promise<void> {
     const writeIntervalMs = options.writeIntervalMs ?? DEFAULT_WRITE_INTERVAL_MS;
     const lastWriteAt = lastWriteAtByKey.get(options.cacheKey) ?? 0;
     const now = Date.now();
@@ -133,9 +153,7 @@ export function withStaleFallback<A extends Record<string, unknown>, E, R>(
 ): Effect.Effect<A | (A & { stale: true; staleCachedAt: number }), E, R> {
     type Out = A | (A & { stale: true; staleCachedAt: number });
 
-    const readStale = Effect.tryPromise(() => readLastGood(options)).pipe(
-        Effect.catch(() => Effect.succeed(null)),
-    );
+    const readStale = Effect.tryPromise(() => readLastGood(options)).pipe(Effect.catch(() => Effect.succeed(null)));
 
     const asStale = (envelope: StaleEnvelope): Out => ({
         ...(envelope.payload as A),
@@ -143,7 +161,7 @@ export function withStaleFallback<A extends Record<string, unknown>, E, R>(
         staleCachedAt: envelope.cachedAt,
     });
 
-    return effect.pipe(
+    const live = effect.pipe(
         Effect.flatMap((payload): Effect.Effect<Out, never, never> => {
             const healthy = options.isHealthy ? options.isHealthy(payload) : true;
 
@@ -154,12 +172,7 @@ export function withStaleFallback<A extends Record<string, unknown>, E, R>(
                 return readStale.pipe(
                     Effect.map(envelope => {
                         if (!envelope) return payload;
-                        console.error('Serving stale cached response instead of unhealthy payload', {
-                            operation: options.operation,
-                            cacheKey: options.cacheKey,
-                            cachedAt: envelope.cachedAt,
-                            ageMs: Date.now() - envelope.cachedAt,
-                        });
+                        logDegradedResponse(options, envelope, 'unhealthy_success');
                         return asStale(envelope);
                     }),
                 );
@@ -180,21 +193,26 @@ export function withStaleFallback<A extends Record<string, unknown>, E, R>(
         Effect.catch(error => {
             // Never mask client errors (4xx) with stale data — only degrade on
             // server-side failures.
-            if (httpStatusForError(error) < 500) return Effect.fail(error);
+            if (httpStatusForError(error) < 500 || (options.shouldFallback && !options.shouldFallback(error))) {
+                return Effect.fail(error);
+            }
 
             return readStale.pipe(
                 Effect.flatMap(envelope => {
                     if (!envelope) return Effect.fail(error);
-                    console.error('Serving stale cached response after effect error', {
-                        operation: options.operation,
-                        cacheKey: options.cacheKey,
-                        cachedAt: envelope.cachedAt,
-                        ageMs: Date.now() - envelope.cachedAt,
-                        error: toApiErrorInfo(error),
-                    });
+                    logDegradedResponse(options, envelope, 'transient_error', error);
                     return Effect.succeed(asStale(envelope));
                 }),
             );
+        }),
+    );
+
+    const freshSeconds = options.freshSeconds ?? 0;
+    if (freshSeconds <= 0) return live;
+    return readStale.pipe(
+        Effect.flatMap(envelope => {
+            if (!envelope || Date.now() - envelope.cachedAt > freshSeconds * 1_000) return live;
+            return Effect.succeed(envelope.payload as A);
         }),
     );
 }

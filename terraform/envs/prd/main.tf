@@ -63,17 +63,30 @@ module "env" {
   memorystore_tier           = "STANDARD_HA"
   memorystore_memory_size_gb = 1
 
-  cloud_run_max_instances         = 10
-  cloud_run_assets_cpu            = "8"
-  cloud_run_assets_memory         = "4Gi"
-  cloud_run_min_instance_services = ["assets", "usage"]
-  cloud_run_assets_min_instances  = 3
-  cloud_run_ingress               = "INGRESS_TRAFFIC_ALL"
+  cloud_run_max_instances              = 10
+  cloud_run_assets_cpu                 = "8"
+  cloud_run_assets_memory              = "8Gi"
+  cloud_run_assets_request_concurrency = 40
+  cloud_run_min_instance_services      = ["assets", "usage"]
+  cloud_run_assets_min_instances       = 3
+  assets_db_flow_logs = {
+    aggregation_interval = "INTERVAL_30_SEC"
+    flow_sampling        = 0.5
+    metadata             = "INCLUDE_ALL_METADATA"
+    filter_expr          = "connection.dest_ip == '172.20.2.3' && connection.dest_port == 5432"
+  }
+  cloud_run_ingress = "INGRESS_TRAFFIC_ALL"
   cloud_run_unauthenticated_services = [
     "assets",
     "prices",
     "usage",
   ]
+
+  # Phase-two activation. Keep these false while the application revision is
+  # still a no-traffic candidate; otherwise Terraform can race the app deploy.
+  enable_assets_db_startup_probe = false
+  enable_assets_worker           = false
+  route_assets_jobs_to_worker    = false
 
   enable_crons         = true
   enable_load_balancer = true

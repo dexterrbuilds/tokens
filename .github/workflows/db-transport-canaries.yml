@@ -1,0 +1,102 @@
+name: DB transport canaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Deploy or remove the diagnostic canaries
+        required: true
+        type: choice
+        default: deploy
+        options: [deploy, remove]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: db-transport-canaries
+  cancel-in-progress: false
+
+env:
+  PROJECT: tokens-498908
+  REGION: us-east4
+  REPOSITORY: tokens-prd
+  NETWORK: tokens-vpc-prd
+  SUBNET: tokens-subnet-prd-us
+  CONNECTOR: tokens-db-canary-prd-us
+  RUNTIME_SA: cr-runtime-prd@tokens-498908.iam.gserviceaccount.com
+  SCHEDULER_SA: scheduler-prd@tokens-498908.iam.gserviceaccount.com
+
+jobs:
+  canaries:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - id: auth
+        uses: google-github-actions/auth@71f986410dfbc7added4569d411d040a91dc6935 # v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_TF_DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@77e7a554d41e2ee56fc945c52dfd3f33d12def9a # v2
+
+      - name: Remove canaries
+        if: inputs.action == 'remove'
+        run: |
+          set -euo pipefail
+          for name in bun-direct bun-connector node-direct; do
+            gcloud scheduler jobs delete "tokens-db-canary-$name" --location="$REGION" --project="$PROJECT" --quiet || true
+            gcloud run services delete "tokens-db-canary-$name-prd-us" --region="$REGION" --project="$PROJECT" --quiet || true
+          done
+          gcloud compute networks vpc-access connectors delete "$CONNECTOR" --region="$REGION" --project="$PROJECT" --quiet || true
+
+      - name: Configure Docker
+        if: inputs.action == 'deploy'
+        run: gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+
+      - name: Build canary images
+        if: inputs.action == 'deploy'
+        run: |
+          set -euo pipefail
+          BUN_IMAGE="$REGION-docker.pkg.dev/$PROJECT/$REPOSITORY/db-canary-bun:$GITHUB_SHA"
+          NODE_IMAGE="$REGION-docker.pkg.dev/$PROJECT/$REPOSITORY/db-canary-node:$GITHUB_SHA"
+          docker build -t "$BUN_IMAGE" -f apps/cloudrun-db-canary/Dockerfile.bun .
+          docker build -t "$NODE_IMAGE" -f apps/cloudrun-db-canary/Dockerfile.node .
+          docker push "$BUN_IMAGE"
+          docker push "$NODE_IMAGE"
+          echo "BUN_IMAGE=$BUN_IMAGE" >> "$GITHUB_ENV"
+          echo "NODE_IMAGE=$NODE_IMAGE" >> "$GITHUB_ENV"
+
+      - name: Ensure connector
+        if: inputs.action == 'deploy'
+        run: |
+          gcloud compute networks vpc-access connectors describe "$CONNECTOR" --region="$REGION" --project="$PROJECT" >/dev/null 2>&1 || \
+            gcloud compute networks vpc-access connectors create "$CONNECTOR" --region="$REGION" --project="$PROJECT" --network="$NETWORK" --range=10.20.1.0/28 --min-instances=2 --max-instances=3 --machine-type=e2-micro --quiet
+
+      - name: Deploy canary services
+        if: inputs.action == 'deploy'
+        run: |
+          set -euo pipefail
+          common=(--region="$REGION" --project="$PROJECT" --service-account="$RUNTIME_SA" --set-secrets=DATABASE_URL=tokens-database-url-prd:latest --min=1 --max=1 --concurrency=1 --no-allow-unauthenticated --quiet)
+          gcloud run deploy tokens-db-canary-bun-direct-prd-us --image="$BUN_IMAGE" "${common[@]}" --set-env-vars=CANARY_NAME=bun-direct --network="$NETWORK" --subnet="$SUBNET" --vpc-egress=all-traffic
+          gcloud run deploy tokens-db-canary-bun-connector-prd-us --image="$BUN_IMAGE" "${common[@]}" --set-env-vars=CANARY_NAME=bun-connector --vpc-connector="$CONNECTOR" --vpc-egress=all-traffic
+          gcloud run deploy tokens-db-canary-node-direct-prd-us --image="$NODE_IMAGE" "${common[@]}" --set-env-vars=CANARY_NAME=node-direct --network="$NETWORK" --subnet="$SUBNET" --vpc-egress=all-traffic
+
+      - name: Schedule ten fresh connections per minute
+        if: inputs.action == 'deploy'
+        run: |
+          set -euo pipefail
+          for name in bun-direct bun-connector node-direct; do
+            service="tokens-db-canary-$name-prd-us"
+            uri=$(gcloud run services describe "$service" --region="$REGION" --project="$PROJECT" --format='value(status.url)')
+            gcloud run services add-iam-policy-binding "$service" --region="$REGION" --project="$PROJECT" --member="serviceAccount:$SCHEDULER_SA" --role=roles/run.invoker --quiet
+            if gcloud scheduler jobs describe "tokens-db-canary-$name" --location="$REGION" --project="$PROJECT" >/dev/null 2>&1; then
+              gcloud scheduler jobs update http "tokens-db-canary-$name" --location="$REGION" --project="$PROJECT" --schedule='* * * * *' --uri="$uri/probe?count=10" --http-method=GET --oidc-service-account-email="$SCHEDULER_SA" --oidc-token-audience="$uri" --quiet
+            else
+              gcloud scheduler jobs create http "tokens-db-canary-$name" --location="$REGION" --project="$PROJECT" --schedule='* * * * *' --uri="$uri/probe?count=10" --http-method=GET --oidc-service-account-email="$SCHEDULER_SA" --oidc-token-audience="$uri" --quiet
+            fi
+          done

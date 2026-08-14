@@ -21,10 +21,7 @@ import { loadAssetBaseForApi, type AssetsApiRepo } from './handlers/assetsApi';
 import { assetsApiCuratedPrefetchForApi } from './handlers/assetsApiCuratedPrefetch';
 import { assetsApiSearchPrefetchForApi } from './handlers/assetsApiSearchPrefetch';
 import { setAssetDescriptionByAssetId } from './handlers/assetsMutations';
-import {
-    listDeletedRefs,
-    type AssetDeletionTombstonesRepo,
-} from './handlers/assetDeletionTombstones';
+import { listDeletedRefs, type AssetDeletionTombstonesRepo } from './handlers/assetDeletionTombstones';
 import {
     listActive as sanctumListActive,
     resolveRef as sanctumResolveRef,
@@ -35,10 +32,7 @@ import {
     getLatestByAssetIds as assetMarketsGetLatestByAssetIds,
     type AssetMarketsRepo,
 } from './handlers/assetMarkets';
-import {
-    getLatestByMints as variantMarketsGetLatestByMints,
-    type VariantMarketsRepo,
-} from './handlers/variantMarkets';
+import { getLatestByMints as variantMarketsGetLatestByMints, type VariantMarketsRepo } from './handlers/variantMarkets';
 import {
     getByMint as assetVariantsGetByMint,
     getSolanaDefaultVariantsViewForApi,
@@ -88,16 +82,8 @@ import {
     getPriceLatestByAssetIds as stockGetPriceLatestByAssetIds,
     type StockReadsRepo,
 } from './handlers/stockReads';
-import {
-    getOhlcvBounds,
-    listOhlcv,
-    listStockOhlcv,
-    type OhlcvReadsRepo,
-} from './handlers/ohlcvReads';
-import {
-    getLatestByMints as prestocksGetLatestByMints,
-    type PrestocksReadsRepo,
-} from './handlers/prestocksReads';
+import { getOhlcvBounds, listOhlcv, listStockOhlcv, type OhlcvReadsRepo } from './handlers/ohlcvReads';
+import { getLatestByMints as prestocksGetLatestByMints, type PrestocksReadsRepo } from './handlers/prestocksReads';
 import {
     InvalidArgsError as CronInvalidArgsError,
     pruneApiRequestEvents,
@@ -150,6 +136,9 @@ import {
     type CacheWarmDeps,
 } from './handlers/cacheWarm';
 import { OidcAuthError, parseBearer, type VerifyOidc } from './oidc';
+import { runAtomicReadWithRetry, structuredDatabaseFailure } from './transientDb';
+
+export type ServiceRole = 'api' | 'worker' | 'hybrid';
 
 export interface ServerDeps {
     repo: AssetsRepo;
@@ -168,6 +157,12 @@ export interface ServerDeps {
     ohlcvReadsRepo: OhlcvReadsRepo;
     prestocksReadsRepo: PrestocksReadsRepo;
     authToken: string;
+    /** API serves RPC routes; worker serves Cloud Scheduler jobs only. */
+    serviceRole?: ServiceRole;
+    /** Production injects a SELECT 1 check for the Cloud Run startup probe. */
+    checkDatabase?: () => Promise<void>;
+    /** Test seam; production leaves the database-aware startup timeout at 2.8s. */
+    startupDatabaseTimeoutMs?: number;
     cronDeps?: CronDeps;
     clickhouseCronDeps?: CronDeps & ClickhouseCronDeps;
     miscCronDeps?: MiscCronDeps;
@@ -206,6 +201,48 @@ export async function isAuthorizedRpcCaller(
 type Handler = (args: unknown, identity: CallerIdentity | null) => Promise<unknown>;
 type JobHandler = (deps: CronDeps, args: unknown) => Promise<CronResult>;
 
+// Explicit allowlist: every entry performs one idempotent repository read.
+// Wide/multi-step handlers are intentionally absent so a failed connection
+// never replays an entire fan-out.
+const ATOMIC_RETRY_QUERY_NAMES = new Set([
+    'getByAssetId',
+    'getByAssetIds',
+    'listActiveWithCoinGeckoIds',
+    'listByCategory',
+    'listDeletedRefs',
+    'sanctumListActive',
+    'assetMarketsGetLatestByAssetId',
+    'assetMarketsGetLatestByAssetIds',
+    'variantMarketsGetLatestByMints',
+    'assetVariantsListByAssetIds',
+    'assetVariantsGetSolanaDefaultVariantsViewForApi',
+    'tokensGetByAddress',
+    'tokensGetSearchTokensByAddresses',
+    'tokenMarketsGetLatestByMint',
+    'tokenMarketsGetLatestByMints',
+    'tokenMarketsGetTopMarketsByMints',
+    'tokenDescriptionSummariesGetByAddress',
+    'trendingMarketsList',
+    'freshTrendingMarketsList',
+    'variantFillQualityGetLatestByMints',
+    'assetCollectionsGetMembers',
+    'assetCollectionsGetMemberMints',
+    'assetCollectionsGetSummaries',
+    'coingeckoReadsGetCoinById',
+    'coingeckoReadsListOhlcv',
+    'coingeckoReadsGetPriceLatestByCoinId',
+    'coingeckoReadsGetPriceLatestByCoinIds',
+    'coingeckoReadsGetTickersLatestByCoinId',
+    'stockInstrumentsGetByAssetId',
+    'stockInstrumentsGetByAssetIds',
+    'stockPricesGetLatestByAssetId',
+    'stockPricesGetLatestByAssetIds',
+    'prestocksGetLatestByMints',
+    'stockOhlcvList',
+    'ohlcvBounds',
+    'ohlcvList',
+]);
+
 /**
  * `ok: false` means total failure (work attempted, none succeeded) — return
  * 500 so Cloud Scheduler counts the run as failed and retries per its policy.
@@ -227,6 +264,21 @@ function jobErrorResponse(c: Context, name: string, err: unknown) {
     return c.json({ error: 'handler_error' }, 500);
 }
 
+async function checkStartupDatabase(check: () => Promise<void>, timeoutMs: number): Promise<void> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+            () => reject(Object.assign(new Error('startup database check timed out'), { code: 'ETIMEDOUT' })),
+            timeoutMs,
+        );
+    });
+    try {
+        await Promise.race([check(), timedOut]);
+    } finally {
+        if (timeout) clearTimeout(timeout);
+    }
+}
+
 /**
  * SECURITY: trusted-on-arrival by design. This header is a base64 JSON blob
  * decoded WITHOUT cryptographic verification — the caller identity is whatever
@@ -238,14 +290,6 @@ function jobErrorResponse(c: Context, name: string, err: unknown) {
  */
 const IDENTITY_HEADER = 'x-tokens-identity';
 const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
-
-const DEAD_CONNECTION_CODES = new Set(['CONNECTION_CLOSED', 'CONNECTION_ENDED', 'CONNECTION_DESTROYED', 'ECONNRESET']);
-
-function isDeadConnectionError(err: unknown): boolean {
-    if (!err || typeof err !== 'object') return false;
-    const code = (err as { code?: unknown; errno?: unknown }).code ?? (err as { errno?: unknown }).errno;
-    return typeof code === 'string' && DEAD_CONNECTION_CODES.has(code);
-}
 
 function decodeIdentityHeader(raw: string | undefined): CallerIdentity | null | InvalidArgsError {
     if (!raw) return null;
@@ -262,7 +306,11 @@ function decodeIdentityHeader(raw: string | undefined): CallerIdentity | null | 
     if (typeof parsed !== 'object' || parsed === null) {
         return new InvalidArgsError('x-tokens-identity payload must be an object');
     }
-    const p = parsed as { clerkUserId?: unknown; projectId?: unknown; email?: unknown };
+    const p = parsed as {
+        clerkUserId?: unknown;
+        projectId?: unknown;
+        email?: unknown;
+    };
     if (typeof p.clerkUserId !== 'string' || p.clerkUserId.length === 0) {
         return new InvalidArgsError('x-tokens-identity.clerkUserId must be a non-empty string');
     }
@@ -280,6 +328,9 @@ function decodeIdentityHeader(raw: string | undefined): CallerIdentity | null | 
 
 export function createApp(deps: ServerDeps) {
     const app = new Hono();
+    // `hybrid` preserves the direct createApp test seam. The executable always
+    // injects an explicit api/worker role in deployed environments.
+    const serviceRole = deps.serviceRole ?? 'hybrid';
 
     app.use('*', compress());
 
@@ -327,42 +378,31 @@ export function createApp(deps: ServerDeps) {
     queries.listDeletedRefs = args => listDeletedRefs(deps.deletionTombstonesRepo, args);
     queries.sanctumListActive = args => sanctumListActive(deps.sanctumLstsRepo, args);
     queries.sanctumResolveRef = args => sanctumResolveRef(deps.sanctumLstsRepo, args);
-    queries.assetMarketsGetLatestByAssetId = args =>
-        assetMarketsGetLatestByAssetId(deps.assetMarketsRepo, args);
-    queries.assetMarketsGetLatestByAssetIds = args =>
-        assetMarketsGetLatestByAssetIds(deps.assetMarketsRepo, args);
-    queries.variantMarketsGetLatestByMints = args =>
-        variantMarketsGetLatestByMints(deps.variantMarketsRepo, args);
+    queries.assetMarketsGetLatestByAssetId = args => assetMarketsGetLatestByAssetId(deps.assetMarketsRepo, args);
+    queries.assetMarketsGetLatestByAssetIds = args => assetMarketsGetLatestByAssetIds(deps.assetMarketsRepo, args);
+    queries.variantMarketsGetLatestByMints = args => variantMarketsGetLatestByMints(deps.variantMarketsRepo, args);
     queries.assetVariantsGetByMint = args => assetVariantsGetByMint(deps.assetVariantsRepo, args);
-    queries.assetVariantsListByAssetIds = args =>
-        assetVariantsListByAssetIds(deps.assetVariantsRepo, args);
+    queries.assetVariantsListByAssetIds = args => assetVariantsListByAssetIds(deps.assetVariantsRepo, args);
     queries.assetVariantsListByMints = args => assetVariantsListByMints(deps.assetVariantsRepo, args);
     queries.assetVariantsGetSolanaDefaultVariantsViewForApi = args =>
         getSolanaDefaultVariantsViewForApi(deps.assetVariantsRepo, args);
-    queries.assetVariantsListSolanaVariantsForApi = args =>
-        listSolanaVariantsForApi(deps.assetVariantsRepo, args);
+    queries.assetVariantsListSolanaVariantsForApi = args => listSolanaVariantsForApi(deps.assetVariantsRepo, args);
     queries.tokensGetByAddress = args => tokensGetByAddress(deps.tokensReadsRepo, args);
     queries.tokensSearchTokens = args => tokensSearchTokens(deps.tokensReadsRepo, args);
-    queries.tokensGetSearchTokensByAddresses = args =>
-        tokensGetSearchTokensByAddresses(deps.tokensReadsRepo, args);
-    queries.tokenMarketsGetLatestByMint = args =>
-        tokenMarketsGetLatestByMint(deps.tokensReadsRepo, args);
-    queries.tokenMarketsGetLatestByMints = args =>
-        tokenMarketsGetLatestByMints(deps.tokensReadsRepo, args);
-    queries.tokenMarketsGetTopMarketsByMints = args =>
-        tokenMarketsGetTopMarketsByMints(deps.tokensReadsRepo, args);
+    queries.tokensGetSearchTokensByAddresses = args => tokensGetSearchTokensByAddresses(deps.tokensReadsRepo, args);
+    queries.tokenMarketsGetLatestByMint = args => tokenMarketsGetLatestByMint(deps.tokensReadsRepo, args);
+    queries.tokenMarketsGetLatestByMints = args => tokenMarketsGetLatestByMints(deps.tokensReadsRepo, args);
+    queries.tokenMarketsGetTopMarketsByMints = args => tokenMarketsGetTopMarketsByMints(deps.tokensReadsRepo, args);
     queries.tokenDescriptionSummariesGetByAddress = args =>
         tokensGetDescriptionSummaryByAddress(deps.tokensReadsRepo, args);
     queries.trendingMarketsList = args => trendingMarketsList(deps.trendingReadsRepo, args);
     queries.freshTrendingMarketsList = args => freshTrendingMarketsList(deps.trendingReadsRepo, args);
     queries.variantFillQualityGetLatestByMints = args =>
         variantFillQualityGetLatestByMints(deps.fillQualityReadsRepo, args);
-    queries.assetCollectionsGetMembers = args =>
-        assetCollectionsGetMembers(deps.assetCollectionsReadsRepo, args);
+    queries.assetCollectionsGetMembers = args => assetCollectionsGetMembers(deps.assetCollectionsReadsRepo, args);
     queries.assetCollectionsGetMemberMints = args =>
         assetCollectionsGetMemberMints(deps.assetCollectionsReadsRepo, args);
-    queries.assetCollectionsGetSummaries = args =>
-        assetCollectionsGetSummaries(deps.assetCollectionsReadsRepo, args);
+    queries.assetCollectionsGetSummaries = args => assetCollectionsGetSummaries(deps.assetCollectionsReadsRepo, args);
     queries.coingeckoReadsGetCoinById = args => coingeckoReadsGetCoinById(deps.coingeckoReadsRepo, args);
     queries.coingeckoReadsSearchCoins = args => coingeckoReadsSearchCoins(deps.coingeckoReadsRepo, args);
     queries.coingeckoReadsListOhlcv = args => coingeckoReadsListOhlcv(deps.coingeckoReadsRepo, args);
@@ -372,14 +412,10 @@ export function createApp(deps: ServerDeps) {
         coingeckoReadsGetPriceLatestByCoinIds(deps.coingeckoReadsRepo, args);
     queries.coingeckoReadsGetTickersLatestByCoinId = args =>
         coingeckoReadsGetTickersLatestByCoinId(deps.coingeckoReadsRepo, args);
-    queries.stockInstrumentsGetByAssetId = args =>
-        stockGetInstrumentByAssetId(deps.stockReadsRepo, args);
-    queries.stockInstrumentsGetByAssetIds = args =>
-        stockGetInstrumentsByAssetIds(deps.stockReadsRepo, args);
-    queries.stockPricesGetLatestByAssetId = args =>
-        stockGetPriceLatestByAssetId(deps.stockReadsRepo, args);
-    queries.stockPricesGetLatestByAssetIds = args =>
-        stockGetPriceLatestByAssetIds(deps.stockReadsRepo, args);
+    queries.stockInstrumentsGetByAssetId = args => stockGetInstrumentByAssetId(deps.stockReadsRepo, args);
+    queries.stockInstrumentsGetByAssetIds = args => stockGetInstrumentsByAssetIds(deps.stockReadsRepo, args);
+    queries.stockPricesGetLatestByAssetId = args => stockGetPriceLatestByAssetId(deps.stockReadsRepo, args);
+    queries.stockPricesGetLatestByAssetIds = args => stockGetPriceLatestByAssetIds(deps.stockReadsRepo, args);
     queries.prestocksGetLatestByMints = args => prestocksGetLatestByMints(deps.prestocksReadsRepo, args);
     queries.stockOhlcvList = args => listStockOhlcv(deps.ohlcvReadsRepo, args);
     queries.ohlcvBounds = args => getOhlcvBounds(deps.ohlcvReadsRepo, args);
@@ -417,52 +453,88 @@ export function createApp(deps: ServerDeps) {
     if (adminActionsDeps) {
         mutations.adminCheckVariantMintForCanonical = (args, identity) =>
             adminCheckVariantMintForCanonical(adminActionsDeps, args, identity);
-        mutations.adminAddCheckedVariant = (args, identity) =>
-            adminAddCheckedVariant(adminActionsDeps, args, identity);
+        mutations.adminAddCheckedVariant = (args, identity) => adminAddCheckedVariant(adminActionsDeps, args, identity);
         mutations.adminSeedAsset = (args, identity) => adminSeedAsset(adminActionsDeps, args, identity);
-        mutations.adminRefreshChartData = (args, identity) =>
-            adminRefreshChartData(adminActionsDeps, args, identity);
+        mutations.adminRefreshChartData = (args, identity) => adminRefreshChartData(adminActionsDeps, args, identity);
     }
 
     app.get('/health', c => c.json({ ok: true }));
+    app.get('/startup', async c => {
+        const startedAt = Date.now();
+        try {
+            await checkStartupDatabase(deps.checkDatabase ?? (async () => {}), deps.startupDatabaseTimeoutMs ?? 2_800);
+            return c.json({ ok: true });
+        } catch (error) {
+            console.error(
+                JSON.stringify({
+                    ...structuredDatabaseFailure('startup', error, {
+                        attempts: 1,
+                        elapsedMs: Date.now() - startedAt,
+                    }),
+                    event: 'cloudrun_assets_startup_database_unavailable',
+                }),
+            );
+            return c.json({ ok: false }, 503);
+        }
+    });
 
-    const dispatch = (kind: 'query' | 'mutation', table: Record<string, Handler>) =>
-        async (c: Context) => {
-            if (!(await isAuthorizedRpcCaller(c.req.header('authorization'), deps))) {
-                return c.json({ error: 'unauthorized' }, 401);
+    const dispatch = (kind: 'query' | 'mutation', table: Record<string, Handler>) => async (c: Context) => {
+        if (serviceRole === 'worker') return c.json({ error: 'not_found' }, 404);
+        if (!(await isAuthorizedRpcCaller(c.req.header('authorization'), deps))) {
+            return c.json({ error: 'unauthorized' }, 401);
+        }
+        const identityResult = decodeIdentityHeader(c.req.header(IDENTITY_HEADER));
+        if (identityResult instanceof InvalidArgsError) {
+            return c.json({ error: 'invalid_args', message: identityResult.message }, 400);
+        }
+        const name = c.req.param('name') ?? '';
+        if (!name || !Object.hasOwn(table, name)) {
+            return c.json({ error: `unknown ${kind}: ${name}` }, 404);
+        }
+        const handler = table[name]!;
+        const args: unknown = await c.req.json().catch(() => ({}));
+        const startedAt = Date.now();
+        const retryAtomicRead = kind === 'query' && ATOMIC_RETRY_QUERY_NAMES.has(name);
+        let operationAttempts = 1;
+        try {
+            const invoke = () => handler(args, identityResult);
+            const result = retryAtomicRead
+                ? await runAtomicReadWithRetry(name, invoke, {
+                      onRetry: details => {
+                          operationAttempts = 2;
+                          console.warn(
+                              JSON.stringify({
+                                  event: 'cloudrun_assets_db_atomic_read_retry',
+                                  revision: process.env.K_REVISION?.trim() || 'local',
+                                  instanceId: process.env.HOSTNAME?.trim() || 'local',
+                                  ...details,
+                              }),
+                          );
+                      },
+                  })
+                : await invoke();
+            return c.json(result);
+        } catch (err) {
+            if (err instanceof InvalidArgsError || err instanceof CronInvalidArgsError) {
+                return c.json({ error: 'invalid_args', message: err.message }, 400);
             }
-            const identityResult = decodeIdentityHeader(c.req.header(IDENTITY_HEADER));
-            if (identityResult instanceof InvalidArgsError) {
-                return c.json({ error: 'invalid_args', message: identityResult.message }, 400);
+            if (err instanceof IdentityRequiredError) {
+                return c.json({ error: 'identity_required' }, 401);
             }
-            const name = c.req.param('name') ?? '';
-            if (!name || !Object.hasOwn(table, name)) {
-                return c.json({ error: `unknown ${kind}: ${name}` }, 404);
+            if (err instanceof UnauthorizedError) {
+                return c.json({ error: 'unauthorized' }, 403);
             }
-            const handler = table[name]!;
-            const args: unknown = await c.req.json().catch(() => ({}));
-            try {
-                try {
-                    return c.json(await handler(args, identityResult));
-                } catch (err) {
-                    if (kind !== 'query' || !isDeadConnectionError(err)) throw err;
-                    console.warn(`[cloudrun-assets] query ${name} retrying after dead connection`);
-                    return c.json(await handler(args, identityResult));
-                }
-            } catch (err) {
-                if (err instanceof InvalidArgsError || err instanceof CronInvalidArgsError) {
-                    return c.json({ error: 'invalid_args', message: err.message }, 400);
-                }
-                if (err instanceof IdentityRequiredError) {
-                    return c.json({ error: 'identity_required' }, 401);
-                }
-                if (err instanceof UnauthorizedError) {
-                    return c.json({ error: 'unauthorized' }, 403);
-                }
-                console.error(`[cloudrun-assets] ${kind} ${name} threw`, err);
-                return c.json({ error: 'handler_error' }, 500);
-            }
-        };
+            console.error(
+                JSON.stringify(
+                    structuredDatabaseFailure(name, err, {
+                        attempts: operationAttempts,
+                        elapsedMs: Date.now() - startedAt,
+                    }),
+                ),
+            );
+            return c.json({ error: 'handler_error' }, 500);
+        }
+    };
 
     app.post('/query/:name', dispatch('query', queries));
     app.post('/mutation/:name', dispatch('mutation', mutations));
@@ -482,14 +554,22 @@ export function createApp(deps: ServerDeps) {
     jobs['refresh-curated-ohlcv-1w'] = refreshCuratedOhlcv;
     Object.assign(jobs, coingeckoJobs);
 
-    const clickhouseJobsTable: Record<string, ClickhouseJobHandler> = { ...clickhouseJobs };
+    const clickhouseJobsTable: Record<string, ClickhouseJobHandler> = {
+        ...clickhouseJobs,
+    };
 
     const miscJobsTable: Record<string, MiscJobHandler> = { ...miscJobs };
-    const assetVariantsJobsTable: Record<string, AssetVariantsJobHandler> = { ...assetVariantsJobs };
+    const assetVariantsJobsTable: Record<string, AssetVariantsJobHandler> = {
+        ...assetVariantsJobs,
+    };
     const seedJobsTable: Record<string, SeedJobHandler> = { ...seedJobs };
-    const trendingJobsTable: Record<string, TrendingJobHandler> = { ...trendingJobs };
+    const trendingJobsTable: Record<string, TrendingJobHandler> = {
+        ...trendingJobs,
+    };
     const clickhouseExtrasJobsTable: Record<string, ClickhouseExtrasJobHandler> = { ...clickhouseExtrasJobs };
-    const prestocksJobsTable: Record<string, PrestocksJobHandler> = { ...prestocksJobs };
+    const prestocksJobsTable: Record<string, PrestocksJobHandler> = {
+        ...prestocksJobs,
+    };
 
     interface JobGroup {
         has(name: string): boolean;
@@ -526,9 +606,7 @@ export function createApp(deps: ServerDeps) {
         },
         {
             has: name => Object.hasOwn(trendingJobsTable, name),
-            run: deps.trendingCronDeps
-                ? (name, args) => trendingJobsTable[name]!(deps.trendingCronDeps!, args)
-                : null,
+            run: deps.trendingCronDeps ? (name, args) => trendingJobsTable[name]!(deps.trendingCronDeps!, args) : null,
         },
         {
             has: name => Object.hasOwn(clickhouseExtrasJobsTable, name),
@@ -545,6 +623,7 @@ export function createApp(deps: ServerDeps) {
     ];
 
     app.post('/jobs/:name', async (c: Context) => {
+        if (serviceRole === 'api') return c.json({ error: 'not_found' }, 404);
         const verifyOidc = deps.verifyOidc;
         if (!deps.cronDeps || !verifyOidc) {
             return c.json({ error: 'jobs_disabled' }, 404);

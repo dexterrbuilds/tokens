@@ -33,18 +33,46 @@
 
 import { CURATED_LIST_ORDER, type CuratedTokenListId } from '@tokens/asset-registry/compat';
 
+import { createConcurrencyLimiter } from '../concurrencyLimiter';
+import { isTransientDatabaseError } from '../transientDb';
 import { InvalidArgsError } from './assets';
 import { getByAssetIds, type GetByAssetIdsEntry } from './assets';
 import { getMembers } from './assetCollectionsReads';
-import { listByAssetIds as assetVariantsListByAssetIds, type ListByAssetIdsEntry as VariantListEntry } from './assetVariants';
-import { getLatestByMints as variantMarketsGetLatestByMints, type GetLatestByMintsEntry as VariantMarketEntry } from './variantMarkets';
-import { getLatestByMints as fillQualityGetLatestByMints, type GetLatestByMintsEntry as FillQualityEntry } from './fillQualityReads';
-import { getLatestByAssetIds as assetMarketsGetLatestByAssetIds, type GetLatestByAssetIdsEntry as AssetMarketEntry } from './assetMarkets';
+import {
+    listByAssetIds as assetVariantsListByAssetIds,
+    type ListByAssetIdsEntry as VariantListEntry,
+} from './assetVariants';
+import {
+    getLatestByMints as variantMarketsGetLatestByMints,
+    type GetLatestByMintsEntry as VariantMarketEntry,
+} from './variantMarkets';
+import {
+    getLatestByMints as fillQualityGetLatestByMints,
+    type GetLatestByMintsEntry as FillQualityEntry,
+} from './fillQualityReads';
+import {
+    getLatestByAssetIds as assetMarketsGetLatestByAssetIds,
+    type GetLatestByAssetIdsEntry as AssetMarketEntry,
+} from './assetMarkets';
 import { listActive as sanctumListActive, type SanctumLstsRepo, type SanctumLstResult } from './sanctumLsts';
 import { listDeletedRefs, type AssetDeletionTombstonesRepo } from './assetDeletionTombstones';
-import { getInstrumentsByAssetIds as stockGetInstrumentsByAssetIds, getPriceLatestByAssetIds as stockGetPriceLatestByAssetIds, type StockReadsRepo, type GetInstrumentsByAssetIdsEntry, type GetPricesByAssetIdsEntry } from './stockReads';
-import { getPriceLatestByCoinIds as coingeckoGetPriceLatestByCoinIds, type CoingeckoPriceBatchEntry, type CoingeckoReadsRepo } from './coingeckoReads';
-import { getTokenMarketsLatestByMints, type GetTokenMarketsLatestByMintsEntry, type TokensReadsRepo } from './tokensReads';
+import {
+    getInstrumentsByAssetIds as stockGetInstrumentsByAssetIds,
+    getPriceLatestByAssetIds as stockGetPriceLatestByAssetIds,
+    type StockReadsRepo,
+    type GetInstrumentsByAssetIdsEntry,
+    type GetPricesByAssetIdsEntry,
+} from './stockReads';
+import {
+    getPriceLatestByCoinIds as coingeckoGetPriceLatestByCoinIds,
+    type CoingeckoPriceBatchEntry,
+    type CoingeckoReadsRepo,
+} from './coingeckoReads';
+import {
+    getTokenMarketsLatestByMints,
+    type GetTokenMarketsLatestByMintsEntry,
+    type TokensReadsRepo,
+} from './tokensReads';
 import type { AssetsRepo } from './assets';
 import type { AssetCollectionsReadsRepo } from './assetCollectionsReads';
 import type { AssetVariantsRepo } from './assetVariants';
@@ -225,10 +253,21 @@ function chunkArray<T>(items: readonly T[], chunkSize: number): T[][] {
     return chunks;
 }
 
+/** Preserve existing best-effort reads without hiding transport failures from last-good fallback. */
+function recoverOptional<T>(fallback: T): (error: unknown) => T {
+    return error => {
+        if (isTransientDatabaseError(error)) throw error;
+        return fallback;
+    };
+}
+
 export async function assetsApiCuratedPrefetchForApi(
     deps: CuratedPrefetchDeps,
     args: unknown,
 ): Promise<CuratedPrefetchResult> {
+    // Keep one broad request from monopolizing the process-wide postgres pool.
+    // This limiter is shared by every phase and every chunk in this request.
+    const runDb = createConcurrencyLimiter(4);
     const a = asObject(args);
     const listId = readString(a, 'listId').trim();
     const memberMints = readStringArray(a, 'memberMints');
@@ -249,37 +288,45 @@ export async function assetsApiCuratedPrefetchForApi(
         additionalCoingeckoIds = additionalCoingeckoIdsRaw as string[];
     }
 
-    const memberListIds: string[] =
-        listId === 'all' ? [...KNOWN_LIST_IDS] : [listId];
+    const memberListIds: string[] = listId === 'all' ? [...KNOWN_LIST_IDS] : [listId];
 
     // Phase 1: collection membership + sanctum (parallel).
     const [collectionAssetIds, sanctumLsts] = await Promise.all([
         Promise.all(
             memberListIds.map(slug =>
-                getMembers(deps.assetCollectionsReadsRepo, { slug, limit: 2000 }),
+                runDb(() =>
+                    getMembers(deps.assetCollectionsReadsRepo, {
+                        slug,
+                        limit: 2000,
+                    }),
+                ),
             ),
         ),
         includeSanctum
-            ? sanctumListActive(deps.sanctumLstsRepo, { limit: 5000 }).catch((): SanctumLstResult[] => [])
+            ? runDb(() => sanctumListActive(deps.sanctumLstsRepo, { limit: 5000 })).catch(
+                  recoverOptional<SanctumLstResult[]>([]),
+              )
             : Promise.resolve<SanctumLstResult[]>([]),
     ]);
 
-    const rawAssetIds = uniqueStrings([
-        ...memberAssetIds,
-        ...collectionAssetIds.flat(),
-    ]);
+    const rawAssetIds = uniqueStrings([...memberAssetIds, ...collectionAssetIds.flat()]);
 
     // Tombstone lookup (parallel chunks) — we still filter here so downstream
     // fetches don't waste rows on refs that were tombstoned.
-    const deletedRefRows = rawAssetIds.length > 0
-        ? (await Promise.all(
-              chunkArray(rawAssetIds, 500).map(chunk =>
-                  listDeletedRefs(deps.deletionTombstonesRepo, { refs: chunk }).catch(
-                      (): string[] => [],
-                  ),
-              ),
-          )).flat()
-        : [];
+    const deletedRefRows =
+        rawAssetIds.length > 0
+            ? (
+                  await Promise.all(
+                      chunkArray(rawAssetIds, 500).map(chunk =>
+                          runDb(() =>
+                              listDeletedRefs(deps.deletionTombstonesRepo, {
+                                  refs: chunk,
+                              }),
+                          ).catch(recoverOptional<string[]>([])),
+                      ),
+                  )
+              ).flat()
+            : [];
     const deletedRefSet = new Set(deletedRefRows.map(normalizeRef));
     const filteredAssetIds = rawAssetIds.filter(id => !deletedRefSet.has(normalizeRef(id)));
 
@@ -306,46 +353,62 @@ export async function assetsApiCuratedPrefetchForApi(
         stockInstrumentsChunks,
         stockPricesChunks,
     ] = await Promise.all([
-        Promise.all(
-            chunkedAssetIds.map(chunk => getByAssetIds(deps.assetsRepo, { assetIds: chunk })),
-        ),
+        Promise.all(chunkedAssetIds.map(chunk => runDb(() => getByAssetIds(deps.assetsRepo, { assetIds: chunk })))),
         Promise.all(
             chunkArray(filteredAssetIds, 250).map(chunk =>
-                assetVariantsListByAssetIds(deps.assetVariantsRepo, { assetIds: chunk }),
-            ),
-        ),
-        Promise.all(
-            chunkedMints.map(chunk =>
-                variantMarketsGetLatestByMints(deps.variantMarketsRepo, { mints: chunk }),
-            ),
-        ),
-        Promise.all(
-            chunkedMints.map(chunk =>
-                fillQualityGetLatestByMints(deps.fillQualityReadsRepo, { mints: chunk }).catch(
-                    (): FillQualityEntry[] => [],
+                runDb(() =>
+                    assetVariantsListByAssetIds(deps.assetVariantsRepo, {
+                        assetIds: chunk,
+                    }),
                 ),
             ),
         ),
         Promise.all(
+            chunkedMints.map(chunk =>
+                runDb(() =>
+                    variantMarketsGetLatestByMints(deps.variantMarketsRepo, {
+                        mints: chunk,
+                    }),
+                ),
+            ),
+        ),
+        Promise.all(
+            chunkedMints.map(chunk =>
+                runDb(() =>
+                    fillQualityGetLatestByMints(deps.fillQualityReadsRepo, {
+                        mints: chunk,
+                    }),
+                ).catch(recoverOptional<FillQualityEntry[]>([])),
+            ),
+        ),
+        Promise.all(
             chunkedAssetIds.map(chunk =>
-                assetMarketsGetLatestByAssetIds(deps.assetMarketsRepo, { assetIds: chunk }),
+                runDb(() =>
+                    assetMarketsGetLatestByAssetIds(deps.assetMarketsRepo, {
+                        assetIds: chunk,
+                    }),
+                ),
             ),
         ),
         includeStock
             ? Promise.all(
                   chunkedStockAssetIds.map(chunk =>
-                      stockGetInstrumentsByAssetIds(deps.stockReadsRepo, { assetIds: chunk }).catch(
-                          (): GetInstrumentsByAssetIdsEntry[] => [],
-                      ),
+                      runDb(() =>
+                          stockGetInstrumentsByAssetIds(deps.stockReadsRepo, {
+                              assetIds: chunk,
+                          }),
+                      ).catch(recoverOptional<GetInstrumentsByAssetIdsEntry[]>([])),
                   ),
               )
             : Promise.resolve<GetInstrumentsByAssetIdsEntry[][]>([]),
         includeStock
             ? Promise.all(
                   chunkedStockAssetIds.map(chunk =>
-                      stockGetPriceLatestByAssetIds(deps.stockReadsRepo, { assetIds: chunk }).catch(
-                          (): GetPricesByAssetIdsEntry[] => [],
-                      ),
+                      runDb(() =>
+                          stockGetPriceLatestByAssetIds(deps.stockReadsRepo, {
+                              assetIds: chunk,
+                          }),
+                      ).catch(recoverOptional<GetPricesByAssetIdsEntry[]>([])),
                   ),
               )
             : Promise.resolve<GetPricesByAssetIdsEntry[][]>([]),
@@ -370,7 +433,10 @@ export async function assetsApiCuratedPrefetchForApi(
         if (normalized) rawCoingeckoCoinIds.push(normalized);
     }
     for (const coinId of additionalCoingeckoIds) {
-        const normalized = normalizeCoinGeckoCoinIdForAsset({ assetId: coinId, coinId });
+        const normalized = normalizeCoinGeckoCoinIdForAsset({
+            assetId: coinId,
+            coinId,
+        });
         if (normalized) rawCoingeckoCoinIds.push(normalized);
     }
     const coingeckoCoinIds = uniqueStrings(rawCoingeckoCoinIds);
@@ -381,7 +447,10 @@ export async function assetsApiCuratedPrefetchForApi(
     const variantMarketByMint = new Map<string, VariantMarketEntry>();
     for (const entry of variantMarkets) variantMarketByMint.set(entry.mint, entry);
     const scoredMints = knownMints
-        .map(mint => ({ mint, score: missingScoreForMintCurated(variantMarketByMint.get(mint)) }))
+        .map(mint => ({
+            mint,
+            score: missingScoreForMintCurated(variantMarketByMint.get(mint)),
+        }))
         .filter(entry => entry.score > 0)
         .sort((a, b) => b.score - a.score)
         .slice(0, 25)
@@ -391,16 +460,18 @@ export async function assetsApiCuratedPrefetchForApi(
         coingeckoCoinIds.length > 0
             ? Promise.all(
                   chunkArray(coingeckoCoinIds, 50).map(chunk =>
-                      coingeckoGetPriceLatestByCoinIds(deps.coingeckoReadsRepo, { coinIds: chunk }).catch(
-                          (): CoingeckoPriceBatchEntry[] => [],
+                      runDb(() => coingeckoGetPriceLatestByCoinIds(deps.coingeckoReadsRepo, { coinIds: chunk })).catch(
+                          recoverOptional<CoingeckoPriceBatchEntry[]>([]),
                       ),
                   ),
               )
             : Promise.resolve<CoingeckoPriceBatchEntry[][]>([]),
         scoredMints.length > 0
-            ? getTokenMarketsLatestByMints(deps.tokensReadsRepo, { mints: scoredMints }).catch(
-                  (): GetTokenMarketsLatestByMintsEntry[] => [],
-              )
+            ? runDb(() =>
+                  getTokenMarketsLatestByMints(deps.tokensReadsRepo, {
+                      mints: scoredMints,
+                  }),
+              ).catch(recoverOptional<GetTokenMarketsLatestByMintsEntry[]>([]))
             : Promise.resolve<GetTokenMarketsLatestByMintsEntry[]>([]),
     ]);
 

@@ -1,0 +1,147 @@
+{
+    "uid": "tokens-assets-db-resilience",
+    "title": "Assets DB resilience",
+    "description": "Normalized Postgres connection failures, retries, startup failures, stale responses, and fallback amplification for tokens-assets.",
+    "tags": ["tokens", "assets", "postgres", "incident"],
+    "timezone": "browser",
+    "schemaVersion": 39,
+    "version": 1,
+    "refresh": "30s",
+    "time": { "from": "now-3h", "to": "now" },
+    "panels": [
+        {
+            "id": 1,
+            "type": "timeseries",
+            "title": "Final DB operation failures by code",
+            "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+            "datasource": { "type": "loki", "uid": "grafanacloud-logs" },
+            "targets": [
+                {
+                    "refId": "A",
+                    "expr": "sum by (errorCode) (count_over_time({service=~\"tokens-assets(-jobs)?-prd-us\"} | json | event=\"cloudrun_assets_db_operation_failure\" [$__interval]))",
+                    "legendFormat": "{{errorCode}}"
+                }
+            ],
+            "fieldConfig": { "defaults": { "unit": "short", "min": 0 } }
+        },
+        {
+            "id": 2,
+            "type": "timeseries",
+            "title": "CONNECT_TIMEOUT by operation",
+            "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+            "datasource": { "type": "loki", "uid": "grafanacloud-logs" },
+            "targets": [
+                {
+                    "refId": "A",
+                    "expr": "sum by (operation) (count_over_time({service=~\"tokens-assets(-jobs)?-prd-us\"} | json | event=\"cloudrun_assets_db_operation_failure\" | errorCode=\"CONNECT_TIMEOUT\" [$__interval]))",
+                    "legendFormat": "{{operation}}"
+                }
+            ],
+            "fieldConfig": { "defaults": { "unit": "short", "min": 0 } }
+        },
+        {
+            "id": 3,
+            "type": "timeseries",
+            "title": "Atomic read retries and startup failures",
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+            "datasource": { "type": "loki", "uid": "grafanacloud-logs" },
+            "targets": [
+                {
+                    "refId": "A",
+                    "expr": "sum(count_over_time({service=~\"tokens-assets(-jobs)?-prd-us\"} | json | event=\"cloudrun_assets_db_atomic_read_retry\" [$__interval]))",
+                    "legendFormat": "atomic retries"
+                },
+                {
+                    "refId": "B",
+                    "expr": "sum(count_over_time({service=~\"tokens-assets(-jobs)?-prd-us\"} | json | event=\"cloudrun_assets_startup_database_unavailable\" [$__interval]))",
+                    "legendFormat": "startup failures"
+                }
+            ],
+            "fieldConfig": { "defaults": { "unit": "short", "min": 0 } }
+        },
+        {
+            "id": 4,
+            "type": "timeseries",
+            "title": "tokens-api degradation amplification",
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+            "datasource": { "type": "loki", "uid": "grafanacloud-logs" },
+            "targets": [
+                {
+                    "refId": "A",
+                    "expr": "sum(count_over_time({service=\"tokens-api\"} | json | event=\"tokens_api_degraded_last_good_response\" [$__interval]))",
+                    "legendFormat": "stale responses"
+                },
+                {
+                    "refId": "B",
+                    "expr": "sum(count_over_time({service=\"tokens-api\"} |= \"Defaulting after effect error\" [$__interval]))",
+                    "legendFormat": "fallback defaults"
+                }
+            ],
+            "fieldConfig": { "defaults": { "unit": "short", "min": 0 } }
+        },
+        {
+            "id": 5,
+            "type": "logs",
+            "title": "Connection failure detail",
+            "gridPos": { "h": 8, "w": 24, "x": 0, "y": 17 },
+            "datasource": { "type": "loki", "uid": "grafanacloud-logs" },
+            "targets": [
+                {
+                    "refId": "A",
+                    "expr": "{service=~\"tokens-assets(-jobs)?-prd-us\"} | json | event=~\"cloudrun_assets_db_.*|cloudrun_assets_startup_database_unavailable\""
+                }
+            ],
+            "options": { "showTime": true, "showLabels": true, "wrapLogMessage": true, "prettifyLogMessage": true }
+        },
+        {
+            "id": 6,
+            "type": "timeseries",
+            "title": "Transport canary failures by runtime/path",
+            "gridPos": { "h": 8, "w": 24, "x": 0, "y": 25 },
+            "datasource": { "type": "loki", "uid": "grafanacloud-logs" },
+            "targets": [
+                {
+                    "refId": "A",
+                    "expr": "sum by (canary, runtime, errorCode) (count_over_time({service=~\"tokens-db-canary-.*-prd-us\"} | json | event=\"cloudrun_db_canary_probe\" | ok=\"false\" [$__interval]))",
+                    "legendFormat": "{{canary}} {{runtime}} {{errorCode}}"
+                }
+            ],
+            "fieldConfig": { "defaults": { "unit": "short", "min": 0 } }
+        },
+        {
+            "id": 7,
+            "type": "timeseries",
+            "title": "Assets request volume and 5xx ratio",
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 33 },
+            "datasource": { "type": "loki", "uid": "grafanacloud-logs" },
+            "targets": [
+                {
+                    "refId": "A",
+                    "expr": "sum(count_over_time({service=\"tokens-assets-prd-us\"} | json | httpRequest_requestMethod != \"\" [$__interval]))",
+                    "legendFormat": "requests"
+                },
+                {
+                    "refId": "B",
+                    "expr": "100 * sum(count_over_time({service=\"tokens-assets-prd-us\"} | json | httpRequest_status >= 500 [$__interval])) / clamp_min(sum(count_over_time({service=\"tokens-assets-prd-us\"} | json | httpRequest_requestMethod != \"\" [$__interval])), 1)",
+                    "legendFormat": "5xx percent"
+                }
+            ],
+            "fieldConfig": { "defaults": { "min": 0 } }
+        },
+        {
+            "id": 8,
+            "type": "timeseries",
+            "title": "Assets request p95 latency",
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 33 },
+            "datasource": { "type": "loki", "uid": "grafanacloud-logs" },
+            "targets": [
+                {
+                    "refId": "A",
+                    "expr": "quantile_over_time(0.95, {service=\"tokens-assets-prd-us\"} | json | httpRequest_latency != \"\" | label_format latency_seconds=`{{ duration_seconds .httpRequest_latency }}` | unwrap latency_seconds [$__interval])",
+                    "legendFormat": "p95"
+                }
+            ],
+            "fieldConfig": { "defaults": { "unit": "s", "min": 0 } }
+        }
+    ]
+}

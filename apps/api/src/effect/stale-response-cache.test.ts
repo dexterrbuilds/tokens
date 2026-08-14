@@ -51,9 +51,7 @@ function optionsWith(
     };
 }
 
-function serverError<A extends Record<string, unknown>>(
-    message: string,
-): Effect.Effect<A, unknown, never> {
+function serverError<A extends Record<string, unknown>>(message: string): Effect.Effect<A, unknown, never> {
     return Effect.tryPromise(() => Promise.reject(new Error(message)) as Promise<A>);
 }
 
@@ -66,9 +64,7 @@ describe('withStaleFallback', () => {
         const redis = new FakeRedis();
         const payload = { listId: 'all', assets: [{ assetId: 'solana' }] };
 
-        const result = await Effect.runPromise(
-            withStaleFallback(optionsWith(redis), Effect.succeed(payload)),
-        );
+        const result = await Effect.runPromise(withStaleFallback(optionsWith(redis), Effect.succeed(payload)));
 
         expect(result).toEqual(payload);
         expect('stale' in result).toBe(false);
@@ -103,9 +99,7 @@ describe('withStaleFallback', () => {
 
         let thrown: unknown;
         try {
-            await Effect.runPromise(
-                withStaleFallback(optionsWith(redis), serverError('downstream timeout')),
-            );
+            await Effect.runPromise(withStaleFallback(optionsWith(redis), serverError('downstream timeout')));
         } catch (err) {
             thrown = err;
         }
@@ -114,17 +108,12 @@ describe('withStaleFallback', () => {
 
     it('never masks 4xx-class failures with stale data', async () => {
         const redis = new FakeRedis();
-        await Effect.runPromise(
-            withStaleFallback(optionsWith(redis), Effect.succeed({ listId: 'all' })),
-        );
+        await Effect.runPromise(withStaleFallback(optionsWith(redis), Effect.succeed({ listId: 'all' })));
 
         let thrown: unknown;
         try {
             await Effect.runPromise(
-                withStaleFallback(
-                    optionsWith(redis),
-                    Effect.fail(new BadRequestError({ message: 'Invalid limit' })),
-                ),
+                withStaleFallback(optionsWith(redis), Effect.fail(new BadRequestError({ message: 'Invalid limit' }))),
             );
         } catch (err) {
             thrown = err;
@@ -134,18 +123,29 @@ describe('withStaleFallback', () => {
         expect(redis.getCalls).toBe(0);
     });
 
+    it('does not mask an ineligible server error', async () => {
+        const redis = new FakeRedis();
+        const options = optionsWith(redis, { shouldFallback: () => false });
+        await Effect.runPromise(withStaleFallback(options, Effect.succeed({ listId: 'all' })));
+
+        let thrown: unknown;
+        try {
+            await Effect.runPromise(withStaleFallback(options, serverError('application bug')));
+        } catch (err) {
+            thrown = err;
+        }
+        expect(thrown).toBeInstanceOf(Error);
+        expect(redis.getCalls).toBe(0);
+    });
+
     it('propagates the original error when the fallback read also fails', async () => {
         const redis = new FakeRedis();
-        await Effect.runPromise(
-            withStaleFallback(optionsWith(redis), Effect.succeed({ listId: 'all' })),
-        );
+        await Effect.runPromise(withStaleFallback(optionsWith(redis), Effect.succeed({ listId: 'all' })));
         redis.failReads = true;
 
         let thrown: unknown;
         try {
-            await Effect.runPromise(
-                withStaleFallback(optionsWith(redis), serverError('downstream timeout')),
-            );
+            await Effect.runPromise(withStaleFallback(optionsWith(redis), serverError('downstream timeout')));
         } catch (err) {
             thrown = err;
         }
@@ -172,15 +172,34 @@ describe('withStaleFallback', () => {
         expect(redis.setCalls).toBe(1);
     });
 
+    it('serves a fresh entry without invoking the live effect', async () => {
+        const redis = new FakeRedis();
+        const options = optionsWith(redis, { freshSeconds: 60 });
+        await Effect.runPromise(withStaleFallback(options, Effect.succeed({ listId: 'all' })));
+
+        let liveCalls = 0;
+        const result = await Effect.runPromise(
+            withStaleFallback(
+                options,
+                Effect.sync(() => {
+                    liveCalls += 1;
+                    return { listId: 'changed' };
+                }),
+            ),
+        );
+
+        expect(result).toEqual({ listId: 'all' });
+        expect(liveCalls).toBe(0);
+        expect((result as Record<string, unknown>).stale).toBe(undefined);
+    });
+
     it('never caches unhealthy payloads and serves the last healthy one instead', async () => {
         const redis = new FakeRedis();
         const isHealthy = (payload: Record<string, unknown>) =>
             Array.isArray(payload.assets) && payload.assets.length > 0;
 
         const healthy = { listId: 'all', assets: [{ assetId: 'solana' }] };
-        await Effect.runPromise(
-            withStaleFallback(optionsWith(redis, { isHealthy }), Effect.succeed(healthy)),
-        );
+        await Effect.runPromise(withStaleFallback(optionsWith(redis, { isHealthy }), Effect.succeed(healthy)));
         expect(redis.setCalls).toBe(1);
 
         const hollow = { listId: 'all', assets: [] as unknown[] };
@@ -233,9 +252,7 @@ describe('withStaleFallback', () => {
 
         let thrown: unknown;
         try {
-            await Effect.runPromise(
-                withStaleFallback(optionsWith(redis), serverError('downstream timeout')),
-            );
+            await Effect.runPromise(withStaleFallback(optionsWith(redis), serverError('downstream timeout')));
         } catch (err) {
             thrown = err;
         }

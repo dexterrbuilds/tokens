@@ -39,7 +39,7 @@ module "scheduler_jobs_misc" {
   project_id       = var.project_id
   region           = var.region
   env              = var.env
-  service_url      = module.cloud_run["assets"].url
+  service_url      = local.assets_jobs_service_url
   invoker_sa_email = module.iam.scheduler_sa_email
 
   jobs = local.misc_cron_jobs

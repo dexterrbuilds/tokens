@@ -1,11 +1,6 @@
 import postgres, { type Sql } from 'postgres';
 
-import type {
-    AssetAliasRow,
-    AssetRow,
-    AssetVariantRow,
-    AssetsRepo,
-} from './handlers/assets';
+import type { AssetAliasRow, AssetRow, AssetVariantRow, AssetsRepo } from './handlers/assets';
 import type {
     ApiRequestEvent,
     AssetVariantSummary,
@@ -28,16 +23,8 @@ import type { AssetDeletionTombstonesRepo } from './handlers/assetDeletionTombst
 import type { SanctumLstRow, SanctumLstsRepo } from './handlers/sanctumLsts';
 import type { AssetMarketRow, AssetMarketsRepo } from './handlers/assetMarkets';
 import type { VariantMarketRow, VariantMarketsRepo } from './handlers/variantMarkets';
-import type {
-    AssetVariantDocRow,
-    AssetVariantsRepo,
-    TokenMarketRow,
-} from './handlers/assetVariants';
-import type {
-    StockInstrumentRow,
-    StockPriceRow,
-    StockReadsRepo,
-} from './handlers/stockReads';
+import type { AssetVariantDocRow, AssetVariantsRepo, TokenMarketRow } from './handlers/assetVariants';
+import type { StockInstrumentRow, StockPriceRow, StockReadsRepo } from './handlers/stockReads';
 import type { OhlcvCandleRow, OhlcvReadsRepo, TimeInterval } from './handlers/ohlcvReads';
 import type { PrestocksPriceRow, PrestocksReadsRepo } from './handlers/prestocksReads';
 import type { PrestocksRepo } from './handlers/crons.prestocks';
@@ -60,31 +47,53 @@ import type {
     CoingeckoReadsRepo,
     CoingeckoTickersLatestRow,
 } from './handlers/coingeckoReads';
-import type { TokenRow, TokenMarketsLatestRow, TokenDescriptionSummaryRow, TokensReadsRepo } from './handlers/tokensReads';
+import type {
+    TokenRow,
+    TokenMarketsLatestRow,
+    TokenDescriptionSummaryRow,
+    TokensReadsRepo,
+} from './handlers/tokensReads';
 import type { TrendingMarketRow, FreshTrendingMarketRow, TrendingReadsRepo } from './handlers/trendingReads';
 import type { FillQualityRow, FillQualityReadsRepo } from './handlers/fillQualityReads';
 import type { AssetCollectionMemberRow, AssetCollectionsReadsRepo } from './handlers/assetCollectionsReads';
 import type { CacheWarmAssetsRepo } from './handlers/cacheWarm';
-import {
-    MintConflictError,
-    VariantIdConflictError,
-    type AdminActionsRepo,
-} from './handlers/adminActions';
+import { MintConflictError, VariantIdConflictError, type AdminActionsRepo } from './handlers/adminActions';
 import type { SeedRepo } from './handlers/crons.seed';
 import type { TrendingRepo } from './handlers/crons.trending';
 import type { ClickhouseExtrasRepo } from './handlers/crons.clickhouse.extras';
 
 let cached: Sql | null = null;
 
+function positiveIntegerEnv(name: string, fallback: number): number {
+    const raw = process.env[name]?.trim();
+    if (!raw) return fallback;
+    const parsed = Number(raw);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+        console.warn(
+            JSON.stringify({
+                event: 'env_invalid_value',
+                name,
+                raw,
+                used: fallback,
+            }),
+        );
+        return fallback;
+    }
+    return parsed;
+}
+
 export function getSql(): Sql {
     if (cached) return cached;
     const url = process.env.DATABASE_URL?.trim();
     if (!url) throw new Error('DATABASE_URL must be set');
+    const serviceRole = process.env.SERVICE_ROLE?.trim() === 'worker' ? 'worker' : 'api';
     cached = postgres(url, {
-        max: Number(process.env.PG_POOL_MAX) || 10,
-        idle_timeout: Number(process.env.PG_IDLE_TIMEOUT) || 240,
-        connect_timeout: Number(process.env.PG_CONNECT_TIMEOUT) || 30,
-        connection: { application_name: 'cloudrun-assets' },
+        max: positiveIntegerEnv('PG_POOL_MAX', serviceRole === 'worker' ? 8 : 16),
+        idle_timeout: positiveIntegerEnv('PG_IDLE_TIMEOUT', 240),
+        connect_timeout: positiveIntegerEnv('PG_CONNECT_TIMEOUT', 3),
+        connection: {
+            application_name: serviceRole === 'worker' ? 'cloudrun-assets-jobs' : 'cloudrun-assets',
+        },
         types: {
             bigint: {
                 to: 20,
@@ -386,21 +395,23 @@ async function findRwaXyzAssetLatestByAssetIdImpl(
     sql: Sql,
     assetId: number,
 ): Promise<import('./handlers/crons').RwaXyzAssetLatestExisting | null> {
-    const rows = await sql<{
-        asset_id: number;
-        name: string | null;
-        ticker: string | null;
-        slug: string | null;
-        icon_url: string | null;
-        website: string | null;
-        issuer_id: string | null;
-        issuer_name: string | null;
-        asset_class_id: number | null;
-        asset_class_name: string | null;
-        asset_class_slug: string | null;
-        payload_json: string | null;
-        last_fetched_at: number;
-    }[]>`
+    const rows = await sql<
+        {
+            asset_id: number;
+            name: string | null;
+            ticker: string | null;
+            slug: string | null;
+            icon_url: string | null;
+            website: string | null;
+            issuer_id: string | null;
+            issuer_name: string | null;
+            asset_class_id: number | null;
+            asset_class_name: string | null;
+            asset_class_slug: string | null;
+            payload_json: string | null;
+            last_fetched_at: number;
+        }[]
+    >`
         SELECT asset_id, name, ticker, slug, icon_url, website, issuer_id, issuer_name,
                asset_class_id, asset_class_name, asset_class_slug, payload_json, last_fetched_at
         FROM rwa_xyz_assets_latest
@@ -433,28 +444,30 @@ async function findRwaXyzTokenLatestByNetworkAndAddressImpl(
 ): Promise<import('./handlers/crons').RwaXyzTokenLatestExisting | null> {
     const trimmed = address.trim();
     if (!trimmed) return null;
-    const rows = await sql<{
-        network_slug: string;
-        address: string;
-        rwa_id: number | null;
-        rwa_token_id: number | null;
-        asset_id: number | null;
-        name: string | null;
-        decimals: number | null;
-        price_dollar: number | null;
-        market_value_dollar: number | null;
-        net_asset_value_dollar: number | null;
-        total_asset_value_dollar: number | null;
-        circulating_asset_value_dollar: number | null;
-        circulating_market_value_dollar: number | null;
-        apy_7_day: number | null;
-        apy_30_day: number | null;
-        total_supply_token: number | null;
-        circulating_supply_token: number | null;
-        holding_addresses_count: number | null;
-        payload_json: string | null;
-        last_fetched_at: number;
-    }[]>`
+    const rows = await sql<
+        {
+            network_slug: string;
+            address: string;
+            rwa_id: number | null;
+            rwa_token_id: number | null;
+            asset_id: number | null;
+            name: string | null;
+            decimals: number | null;
+            price_dollar: number | null;
+            market_value_dollar: number | null;
+            net_asset_value_dollar: number | null;
+            total_asset_value_dollar: number | null;
+            circulating_asset_value_dollar: number | null;
+            circulating_market_value_dollar: number | null;
+            apy_7_day: number | null;
+            apy_30_day: number | null;
+            total_supply_token: number | null;
+            circulating_supply_token: number | null;
+            holding_addresses_count: number | null;
+            payload_json: string | null;
+            last_fetched_at: number;
+        }[]
+    >`
         SELECT network_slug, address, rwa_id, rwa_token_id, asset_id, name, decimals,
                price_dollar, market_value_dollar, net_asset_value_dollar, total_asset_value_dollar,
                circulating_asset_value_dollar, circulating_market_value_dollar,
@@ -501,7 +514,9 @@ export function makePostgresJobsRepo(sql: Sql): JobsRepo {
                 decimals: args.decimals,
                 ...(args.logoURI ? { logoURI: args.logoURI } : {}),
                 ...(args.price !== undefined ? { price: args.price } : {}),
-                ...(args.priceChange24hPercent !== undefined ? { priceChange24hPercent: args.priceChange24hPercent } : {}),
+                ...(args.priceChange24hPercent !== undefined
+                    ? { priceChange24hPercent: args.priceChange24hPercent }
+                    : {}),
                 ...(args.priceChange1hPercent !== undefined ? { priceChange1hPercent: args.priceChange1hPercent } : {}),
                 ...(args.volume1hUSD !== undefined ? { volume1hUSD: args.volume1hUSD } : {}),
                 ...(args.volume24hUSD !== undefined ? { volume24hUSD: args.volume24hUSD } : {}),
@@ -850,12 +865,14 @@ export function makePostgresJobsRepo(sql: Sql): JobsRepo {
         },
 
         async findVariantMarketForRiskByMint(mint) {
-            const rows = await sql<{
-                liquidity: number | null;
-                market_cap: number | null;
-                volume_24h_usd: number | null;
-                holder: number | null;
-            }[]>`
+            const rows = await sql<
+                {
+                    liquidity: number | null;
+                    market_cap: number | null;
+                    volume_24h_usd: number | null;
+                    holder: number | null;
+                }[]
+            >`
                 SELECT liquidity, market_cap, volume_24h_usd, holder
                 FROM variant_markets_latest
                 WHERE mint = ${mint}
@@ -945,11 +962,9 @@ export function makePostgresJobsRepo(sql: Sql): JobsRepo {
 
             const existing = await findRwaXyzAssetLatestByAssetIdImpl(sql, assetId);
             const nowMs = Date.now();
-            const shouldRefreshTimestamp =
-                !existing || nowMs - existing.lastFetchedAt >= 60_000;
+            const shouldRefreshTimestamp = !existing || nowMs - existing.lastFetchedAt >= 60_000;
 
-            const normalize = (value: string | undefined): string =>
-                typeof value === 'string' ? value.trim() : '';
+            const normalize = (value: string | undefined): string => (typeof value === 'string' ? value.trim() : '');
 
             const nextName = (() => {
                 const v = normalize(args.name);
@@ -989,7 +1004,7 @@ export function makePostgresJobsRepo(sql: Sql): JobsRepo {
             const nextAssetClassId =
                 args.assetClassId !== undefined && existing?.assetClassId !== args.assetClassId
                     ? args.assetClassId
-                    : existing?.assetClassId ?? null;
+                    : (existing?.assetClassId ?? null);
             const nextAssetClassName = (() => {
                 const v = normalize(args.assetClassName);
                 if (args.assetClassName !== undefined && v && existing?.assetClassName !== v) return v;
@@ -1056,30 +1071,22 @@ export function makePostgresJobsRepo(sql: Sql): JobsRepo {
             const trimmedAddress = args.address.trim();
             if (!trimmedAddress) return;
 
-            const existing = await findRwaXyzTokenLatestByNetworkAndAddressImpl(
-                sql,
-                args.networkSlug,
-                trimmedAddress,
-            );
+            const existing = await findRwaXyzTokenLatestByNetworkAndAddressImpl(sql, args.networkSlug, trimmedAddress);
             const nowMs = Date.now();
-            const shouldRefreshTimestamp =
-                !existing || nowMs - existing.lastFetchedAt >= 60_000;
+            const shouldRefreshTimestamp = !existing || nowMs - existing.lastFetchedAt >= 60_000;
 
-            const normalize = (value: string | undefined): string =>
-                typeof value === 'string' ? value.trim() : '';
+            const normalize = (value: string | undefined): string => (typeof value === 'string' ? value.trim() : '');
 
             const nextRwaId =
-                args.rwaId !== undefined && existing?.rwaId !== args.rwaId
-                    ? args.rwaId
-                    : existing?.rwaId ?? null;
+                args.rwaId !== undefined && existing?.rwaId !== args.rwaId ? args.rwaId : (existing?.rwaId ?? null);
             const nextRwaTokenId =
                 args.rwaTokenId !== undefined && existing?.rwaTokenId !== args.rwaTokenId
                     ? args.rwaTokenId
-                    : existing?.rwaTokenId ?? null;
+                    : (existing?.rwaTokenId ?? null);
             const nextAssetId =
                 args.assetId !== undefined && existing?.assetId !== args.assetId
                     ? args.assetId
-                    : existing?.assetId ?? null;
+                    : (existing?.assetId ?? null);
             const nextName = (() => {
                 const v = normalize(args.name);
                 if (args.name !== undefined && v && existing?.name !== v) return v;
@@ -1088,56 +1095,56 @@ export function makePostgresJobsRepo(sql: Sql): JobsRepo {
             const nextDecimals =
                 args.decimals !== undefined && existing?.decimals !== args.decimals
                     ? args.decimals
-                    : existing?.decimals ?? null;
+                    : (existing?.decimals ?? null);
             const nextPriceDollar =
                 args.priceDollar !== undefined && existing?.priceDollar !== args.priceDollar
                     ? args.priceDollar
-                    : existing?.priceDollar ?? null;
+                    : (existing?.priceDollar ?? null);
             const nextMarketValueDollar =
                 args.marketValueDollar !== undefined && existing?.marketValueDollar !== args.marketValueDollar
                     ? args.marketValueDollar
-                    : existing?.marketValueDollar ?? null;
+                    : (existing?.marketValueDollar ?? null);
             const nextNetAssetValueDollar =
                 args.netAssetValueDollar !== undefined && existing?.netAssetValueDollar !== args.netAssetValueDollar
                     ? args.netAssetValueDollar
-                    : existing?.netAssetValueDollar ?? null;
+                    : (existing?.netAssetValueDollar ?? null);
             const nextTotalAssetValueDollar =
                 args.totalAssetValueDollar !== undefined &&
                 existing?.totalAssetValueDollar !== args.totalAssetValueDollar
                     ? args.totalAssetValueDollar
-                    : existing?.totalAssetValueDollar ?? null;
+                    : (existing?.totalAssetValueDollar ?? null);
             const nextCirculatingAssetValueDollar =
                 args.circulatingAssetValueDollar !== undefined &&
                 existing?.circulatingAssetValueDollar !== args.circulatingAssetValueDollar
                     ? args.circulatingAssetValueDollar
-                    : existing?.circulatingAssetValueDollar ?? null;
+                    : (existing?.circulatingAssetValueDollar ?? null);
             const nextCirculatingMarketValueDollar =
                 args.circulatingMarketValueDollar !== undefined &&
                 existing?.circulatingMarketValueDollar !== args.circulatingMarketValueDollar
                     ? args.circulatingMarketValueDollar
-                    : existing?.circulatingMarketValueDollar ?? null;
+                    : (existing?.circulatingMarketValueDollar ?? null);
             const nextApy7Day =
                 args.apy7Day !== undefined && existing?.apy7Day !== args.apy7Day
                     ? args.apy7Day
-                    : existing?.apy7Day ?? null;
+                    : (existing?.apy7Day ?? null);
             const nextApy30Day =
                 args.apy30Day !== undefined && existing?.apy30Day !== args.apy30Day
                     ? args.apy30Day
-                    : existing?.apy30Day ?? null;
+                    : (existing?.apy30Day ?? null);
             const nextTotalSupplyToken =
                 args.totalSupplyToken !== undefined && existing?.totalSupplyToken !== args.totalSupplyToken
                     ? args.totalSupplyToken
-                    : existing?.totalSupplyToken ?? null;
+                    : (existing?.totalSupplyToken ?? null);
             const nextCirculatingSupplyToken =
                 args.circulatingSupplyToken !== undefined &&
                 existing?.circulatingSupplyToken !== args.circulatingSupplyToken
                     ? args.circulatingSupplyToken
-                    : existing?.circulatingSupplyToken ?? null;
+                    : (existing?.circulatingSupplyToken ?? null);
             const nextHoldingAddressesCount =
                 args.holdingAddressesCount !== undefined &&
                 existing?.holdingAddressesCount !== args.holdingAddressesCount
                     ? args.holdingAddressesCount
-                    : existing?.holdingAddressesCount ?? null;
+                    : (existing?.holdingAddressesCount ?? null);
 
             const fieldsChanged =
                 nextRwaId !== (existing?.rwaId ?? null) ||
@@ -1234,7 +1241,12 @@ export function makePostgresJobsRepo(sql: Sql): JobsRepo {
                 LIMIT 1
             `;
             const row = rows[0];
-            return row ? { cursorCreationTime: row.cursor_creation_time, lockedUntil: row.locked_until } : null;
+            return row
+                ? {
+                      cursorCreationTime: row.cursor_creation_time,
+                      lockedUntil: row.locked_until,
+                  }
+                : null;
         },
 
         async tryAcquireRollupLock(projectId, now, lockMs) {
@@ -1267,13 +1279,15 @@ export function makePostgresJobsRepo(sql: Sql): JobsRepo {
             const afterTs = new Date(afterCreationTime).toISOString();
             const beforeTs = new Date(beforeCreationTime).toISOString();
             const lim = Math.min(Math.max(limit, 1), 10_000);
-            const rows = await sql<{
-                endpoint: string;
-                status: number;
-                latency_ms: number;
-                ts: number;
-                created_at_ms: number;
-            }[]>`
+            const rows = await sql<
+                {
+                    endpoint: string;
+                    status: number;
+                    latency_ms: number;
+                    ts: number;
+                    created_at_ms: number;
+                }[]
+            >`
                 SELECT endpoint, status, latency_ms, ts,
                        (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_at_ms
                 FROM api_request_events
@@ -1350,7 +1364,15 @@ export function makePostgresJobsRepo(sql: Sql): JobsRepo {
             `;
         },
 
-        async applyRollupBatchAtomic({ projectId, daily, endpointDaily, expectedCursor, nextCursor, nowMs, updatedAt }) {
+        async applyRollupBatchAtomic({
+            projectId,
+            daily,
+            endpointDaily,
+            expectedCursor,
+            nextCursor,
+            nowMs,
+            updatedAt,
+        }) {
             let committed = false;
             await sql.begin(async tx => {
                 const cursorRows = await tx<{ project_id: string }[]>`
@@ -1477,15 +1499,17 @@ export function makePostgresJobsRepo(sql: Sql): JobsRepo {
             const unique = Array.from(byTime.values());
 
             const times = unique.map(c => c.time);
-            const existingRows = await sql<{
-                time: number;
-                open: number;
-                high: number;
-                low: number;
-                close: number;
-                volume: number;
-                source: string | null;
-            }[]>`
+            const existingRows = await sql<
+                {
+                    time: number;
+                    open: number;
+                    high: number;
+                    low: number;
+                    close: number;
+                    volume: number;
+                    source: string | null;
+                }[]
+            >`
                 SELECT time, open, high, low, close, volume, source
                 FROM ohlcv_candles
                 WHERE address = ${address}
@@ -1551,9 +1575,7 @@ export function makePostgresJobsRepo(sql: Sql): JobsRepo {
     };
 }
 
-export function makePostgresCoingeckoCuratedSource(
-    sql: Sql,
-): CoingeckoCuratedSource & { warmup(): Promise<void> } {
+export function makePostgresCoingeckoCuratedSource(sql: Sql): CoingeckoCuratedSource & { warmup(): Promise<void> } {
     let cachedIds: string[] | null = null;
     let loadedAtMs = 0;
     let inflight: Promise<void> | null = null;
@@ -1619,7 +1641,6 @@ export function makePostgresCoingeckoRepo(sql: Sql): CoingeckoRepo {
             let updated = 0;
             let skipped = 0;
             for (const coin of coins) {
-
                 const rows = await sql<{ action: 'inserted' | 'updated' | 'skipped' }[]>`
                     WITH upsert AS (
                         INSERT INTO coingecko_coins (id, coin_id, symbol, name, platforms, last_synced_at, last_metadata_fetched_at)
@@ -1669,14 +1690,11 @@ export function makePostgresCoingeckoRepo(sql: Sql): CoingeckoRepo {
         async upsertCoinMetadata(args) {
             const symbol =
                 typeof (args.coin as { symbol?: unknown }).symbol === 'string'
-                    ? ((args.coin as { symbol: string }).symbol)
+                    ? (args.coin as { symbol: string }).symbol
                     : '';
             const name =
-                typeof (args.coin as { name?: unknown }).name === 'string'
-                    ? ((args.coin as { name: string }).name)
-                    : '';
-            const platforms =
-                (args.coin as { platforms?: Record<string, string> }).platforms ?? {};
+                typeof (args.coin as { name?: unknown }).name === 'string' ? (args.coin as { name: string }).name : '';
+            const platforms = (args.coin as { platforms?: Record<string, string> }).platforms ?? {};
             await sql`
                 INSERT INTO coingecko_coins (
                     id, coin_id, symbol, name, platforms, last_synced_at, coin, last_metadata_fetched_at
@@ -1836,14 +1854,16 @@ export function makePostgresCoingeckoRepo(sql: Sql): CoingeckoRepo {
             const unique = Array.from(byTime.values());
 
             const times = unique.map(c => c.time);
-            const existingRows = await sql<{
-                time: number;
-                open: number;
-                high: number;
-                low: number;
-                close: number;
-                volume: number;
-            }[]>`
+            const existingRows = await sql<
+                {
+                    time: number;
+                    open: number;
+                    high: number;
+                    low: number;
+                    close: number;
+                    volume: number;
+                }[]
+            >`
                 SELECT time, open, high, low, close, volume
                 FROM coingecko_ohlcv_candles
                 WHERE coin_id = ${coinId}
@@ -1905,7 +1925,13 @@ export function makePostgresClickhouseRepo(sql: Sql): ClickhouseRepo {
     return {
         async listStockMappableAssets() {
             const rows = await sql<
-                { asset_id: string; category: string; name: string | null; symbol: string | null; aliases: string[] | null }[]
+                {
+                    asset_id: string;
+                    category: string;
+                    name: string | null;
+                    symbol: string | null;
+                    aliases: string[] | null;
+                }[]
             >`
                 SELECT asset_id, category, name, symbol, aliases
                 FROM assets
@@ -1959,7 +1985,13 @@ export function makePostgresClickhouseRepo(sql: Sql): ClickhouseRepo {
 
         async listActiveStockMappings(limit) {
             const lim = Math.min(Math.max(limit, 1), 1000);
-            const rows = await sql<{ asset_id: string; symbol: string; normalized_symbol: string }[]>`
+            const rows = await sql<
+                {
+                    asset_id: string;
+                    symbol: string;
+                    normalized_symbol: string;
+                }[]
+            >`
                 SELECT asset_id, symbol, normalized_symbol
                 FROM stock_instruments_latest
                 WHERE is_active = true
@@ -1968,7 +2000,11 @@ export function makePostgresClickhouseRepo(sql: Sql): ClickhouseRepo {
             `;
             const out: ActiveStockMapping[] = [];
             for (const r of rows) {
-                out.push({ assetId: r.asset_id, symbol: r.symbol, normalizedSymbol: r.normalized_symbol });
+                out.push({
+                    assetId: r.asset_id,
+                    symbol: r.symbol,
+                    normalizedSymbol: r.normalized_symbol,
+                });
             }
             return out;
         },
@@ -2099,7 +2135,6 @@ export function makePostgresClickhouseRepo(sql: Sql): ClickhouseRepo {
     };
 }
 
-
 export function makePostgresMiscJobsRepo(sql: Sql): MiscJobsRepo {
     return {
         async listStaleTokenAddresses(beforeLastFetchedAt, limit) {
@@ -2197,7 +2232,6 @@ export function makePostgresAssetDeletionTombstonesRepo(sql: Sql): AssetDeletion
     };
 }
 
-
 export function makePostgresSanctumLstsRepo(sql: Sql): SanctumLstsRepo {
     return {
         async listActive(limit) {
@@ -2212,8 +2246,14 @@ export function makePostgresSanctumLstsRepo(sql: Sql): SanctumLstsRepo {
             `;
             return rows.map(r => ({
                 ...r,
-                created_at: typeof r.created_at === 'number' ? r.created_at : new Date(r.created_at as unknown as string).getTime(),
-                updated_at: typeof r.updated_at === 'number' ? r.updated_at : new Date(r.updated_at as unknown as string).getTime(),
+                created_at:
+                    typeof r.created_at === 'number'
+                        ? r.created_at
+                        : new Date(r.created_at as unknown as string).getTime(),
+                updated_at:
+                    typeof r.updated_at === 'number'
+                        ? r.updated_at
+                        : new Date(r.updated_at as unknown as string).getTime(),
             }));
         },
         async findByMint(mint) {
@@ -2229,8 +2269,14 @@ export function makePostgresSanctumLstsRepo(sql: Sql): SanctumLstsRepo {
             if (!row) return null;
             return {
                 ...row,
-                created_at: typeof row.created_at === 'number' ? row.created_at : new Date(row.created_at as unknown as string).getTime(),
-                updated_at: typeof row.updated_at === 'number' ? row.updated_at : new Date(row.updated_at as unknown as string).getTime(),
+                created_at:
+                    typeof row.created_at === 'number'
+                        ? row.created_at
+                        : new Date(row.created_at as unknown as string).getTime(),
+                updated_at:
+                    typeof row.updated_at === 'number'
+                        ? row.updated_at
+                        : new Date(row.updated_at as unknown as string).getTime(),
             };
         },
         async findActiveBySymbolLower(symbolLower, limit) {
@@ -2245,13 +2291,18 @@ export function makePostgresSanctumLstsRepo(sql: Sql): SanctumLstsRepo {
             `;
             return rows.map(r => ({
                 ...r,
-                created_at: typeof r.created_at === 'number' ? r.created_at : new Date(r.created_at as unknown as string).getTime(),
-                updated_at: typeof r.updated_at === 'number' ? r.updated_at : new Date(r.updated_at as unknown as string).getTime(),
+                created_at:
+                    typeof r.created_at === 'number'
+                        ? r.created_at
+                        : new Date(r.created_at as unknown as string).getTime(),
+                updated_at:
+                    typeof r.updated_at === 'number'
+                        ? r.updated_at
+                        : new Date(r.updated_at as unknown as string).getTime(),
             }));
         },
     };
 }
-
 
 export function makePostgresAssetMarketsRepo(sql: Sql): AssetMarketsRepo {
     return {
@@ -2280,7 +2331,6 @@ export function makePostgresAssetMarketsRepo(sql: Sql): AssetMarketsRepo {
     };
 }
 
-
 export function makePostgresVariantMarketsRepo(sql: Sql): VariantMarketsRepo {
     return {
         async findLatestByMints(mints) {
@@ -2294,7 +2344,6 @@ export function makePostgresVariantMarketsRepo(sql: Sql): VariantMarketsRepo {
         },
     };
 }
-
 
 export function makePostgresAssetVariantsRepo(sql: Sql): AssetVariantsRepo {
     return {
@@ -2407,7 +2456,6 @@ export function makePostgresAssetVariantsRepo(sql: Sql): AssetVariantsRepo {
         },
     };
 }
-
 
 export function makePostgresAssetsApiRepo(sql: Sql): AssetsApiRepo {
     return {
@@ -2729,7 +2777,6 @@ const VARIANT_MARKET_COLUMNS = sqlFragmentColumns([
     'overview_last_fetched_at',
 ]);
 
-
 export function makePostgresStockReadsRepo(sql: Sql): StockReadsRepo {
     return {
         async findInstrumentByAssetId(assetId) {
@@ -2778,7 +2825,6 @@ export function makePostgresStockReadsRepo(sql: Sql): StockReadsRepo {
         },
     };
 }
-
 
 export function makePostgresPrestocksRepo(sql: Sql): PrestocksRepo {
     return {
@@ -3004,13 +3050,7 @@ const TOKEN_DESCRIPTION_SUMMARY_COLUMNS = sqlFragmentColumns([
     'created_at',
 ]);
 
-const TOKEN_MARKETS_LATEST_COLUMNS = sqlFragmentColumns([
-    'mint',
-    'source',
-    'markets',
-    'total',
-    'last_fetched_at',
-]);
+const TOKEN_MARKETS_LATEST_COLUMNS = sqlFragmentColumns(['mint', 'source', 'markets', 'total', 'last_fetched_at']);
 
 export function makePostgresTokensReadsRepo(sql: Sql): TokensReadsRepo {
     return {
@@ -3188,7 +3228,12 @@ export function makePostgresAssetCollectionsReadsRepo(sql: Sql): AssetCollection
             // alone can never see it. Auto-synced yield/LST variants are excluded so
             // Sanctum churn cannot hold the highlight hostage.
             const rows = await sql<
-                { collection_slug: string; member_count: number; last_added_asset_id: string | null; last_added_at: number | null }[]
+                {
+                    collection_slug: string;
+                    member_count: number;
+                    last_added_asset_id: string | null;
+                    last_added_at: number | null;
+                }[]
             >`
                 WITH members AS (
                     SELECT acm.collection_slug,
@@ -3385,7 +3430,14 @@ export function makePostgresSeedRepo(sql: Sql): SeedRepo {
             return rows.map(r => r.normalized_ref);
         },
         async listCollectionMemberUnion(excludeSlug) {
-            const rows = await sql<{ collection_slug: string; asset_id: string; rank: number; added_at: number }[]>`
+            const rows = await sql<
+                {
+                    collection_slug: string;
+                    asset_id: string;
+                    rank: number;
+                    added_at: number;
+                }[]
+            >`
                 SELECT collection_slug, asset_id, rank, added_at
                 FROM asset_collection_members
                 WHERE collection_slug <> ${excludeSlug}
@@ -3411,24 +3463,38 @@ export function makePostgresSeedRepo(sql: Sql): SeedRepo {
         },
         async findIdentityAssetsByAssetIds(assetIds) {
             if (assetIds.length === 0) return [];
-            const rows = await sql<{ asset_id: string; category: string; symbol: string | null; name: string | null }[]>`
+            const rows = await sql<
+                {
+                    asset_id: string;
+                    category: string;
+                    symbol: string | null;
+                    name: string | null;
+                }[]
+            >`
                 SELECT asset_id, category, symbol, name
                 FROM assets
                 WHERE asset_id IN ${sql(assetIds)}
             `;
-            return rows.map(r => ({ assetId: r.asset_id, category: r.category, symbol: r.symbol, name: r.name }));
+            return rows.map(r => ({
+                assetId: r.asset_id,
+                category: r.category,
+                symbol: r.symbol,
+                name: r.name,
+            }));
         },
         async findIdentityVariantsByAssetIds(assetIds) {
             if (assetIds.length === 0) return [];
-            const rows = await sql<{
-                asset_id: string;
-                mint: string;
-                variant_id: string;
-                trust_tier: string;
-                label: string | null;
-                issuer: string | null;
-                tags: unknown;
-            }[]>`
+            const rows = await sql<
+                {
+                    asset_id: string;
+                    mint: string;
+                    variant_id: string;
+                    trust_tier: string;
+                    label: string | null;
+                    issuer: string | null;
+                    tags: unknown;
+                }[]
+            >`
                 SELECT asset_id, mint, variant_id, trust_tier, label, issuer, tags
                 FROM asset_variants
                 WHERE asset_id IN ${sql(assetIds)}
@@ -3468,7 +3534,13 @@ export function makePostgresSeedRepo(sql: Sql): SeedRepo {
             `;
             const assetId = variantRows[0]?.asset_id;
             if (!assetId) return;
-            const assetRows = await sql<{ symbol: string | null; name: string | null; category: string }[]>`
+            const assetRows = await sql<
+                {
+                    symbol: string | null;
+                    name: string | null;
+                    category: string;
+                }[]
+            >`
                 SELECT symbol, name, category FROM assets WHERE asset_id = ${assetId} LIMIT 1
             `;
             const asset = assetRows[0];
@@ -3680,28 +3752,30 @@ export function makePostgresTrendingRepo(sql: Sql): TrendingRepo {
         },
         async findVariantMarketSnapshotsByMints(mints) {
             if (mints.length === 0) return [];
-            const rows = await sql<{
-                mint: string;
-                symbol: string | null;
-                name: string | null;
-                decimals: number | null;
-                logo_uri: string | null;
-                source: string;
-                metrics_source: string | null;
-                price: number | null;
-                liquidity: number | null;
-                volume_1h_usd: number | null;
-                volume_24h_usd: number | null;
-                trade_1h: number | null;
-                trade_24h: number | null;
-                unique_wallet_1h: number | null;
-                unique_wallet_24h: number | null;
-                price_change_1h_percent: number | null;
-                price_change_24h_percent: number | null;
-                last_trade_at: number | null;
-                as_of: number | null;
-                last_fetched_at: number;
-            }[]>`
+            const rows = await sql<
+                {
+                    mint: string;
+                    symbol: string | null;
+                    name: string | null;
+                    decimals: number | null;
+                    logo_uri: string | null;
+                    source: string;
+                    metrics_source: string | null;
+                    price: number | null;
+                    liquidity: number | null;
+                    volume_1h_usd: number | null;
+                    volume_24h_usd: number | null;
+                    trade_1h: number | null;
+                    trade_24h: number | null;
+                    unique_wallet_1h: number | null;
+                    unique_wallet_24h: number | null;
+                    price_change_1h_percent: number | null;
+                    price_change_24h_percent: number | null;
+                    last_trade_at: number | null;
+                    as_of: number | null;
+                    last_fetched_at: number;
+                }[]
+            >`
                 SELECT mint, symbol, name, decimals, logo_uri,
                        source, metrics_source, price, liquidity,
                        volume_1h_usd, volume_24h_usd,
@@ -3741,22 +3815,24 @@ export function makePostgresTrendingRepo(sql: Sql): TrendingRepo {
         },
         async findFlowTrendingMarketsByMints(mints) {
             if (mints.length === 0) return [];
-            const rows = await sql<{
-                mint: string;
-                volume_5m_usd: number;
-                volume_15m_usd: number;
-                volume_1h_usd: number;
-                volume_6h_usd: number;
-                volume_24h_usd: number;
-                trade_5m: number;
-                trade_15m: number;
-                trade_1h: number;
-                trade_6h: number;
-                trade_24h: number;
-                unique_wallet_5m: number;
-                unique_wallet_1h: number;
-                unique_wallet_24h: number;
-            }[]>`
+            const rows = await sql<
+                {
+                    mint: string;
+                    volume_5m_usd: number;
+                    volume_15m_usd: number;
+                    volume_1h_usd: number;
+                    volume_6h_usd: number;
+                    volume_24h_usd: number;
+                    trade_5m: number;
+                    trade_15m: number;
+                    trade_1h: number;
+                    trade_6h: number;
+                    trade_24h: number;
+                    unique_wallet_5m: number;
+                    unique_wallet_1h: number;
+                    unique_wallet_24h: number;
+                }[]
+            >`
                 SELECT mint,
                        volume_5m_usd, volume_15m_usd, volume_1h_usd, volume_6h_usd, volume_24h_usd,
                        trade_5m, trade_15m, trade_1h, trade_6h, trade_24h,
@@ -3849,10 +3925,14 @@ export function makePostgresTrendingRepo(sql: Sql): TrendingRepo {
                             last_computed_at = EXCLUDED.last_computed_at
                     `;
                 }
-                const deleteResult: { count: number } = incomingMints.length === 0
-                    ? { count: 0 }
-                    : await tx`DELETE FROM fresh_trending_markets WHERE mint NOT IN ${tx(incomingMints)}`
-                        .then(r => ({ count: (r as unknown as { count?: number }).count ?? 0 }));
+                const deleteResult: { count: number } =
+                    incomingMints.length === 0
+                        ? { count: 0 }
+                        : await tx`DELETE FROM fresh_trending_markets WHERE mint NOT IN ${tx(incomingMints)}`.then(
+                              r => ({
+                                  count: (r as unknown as { count?: number }).count ?? 0,
+                              }),
+                          );
                 return { upserted: rows.length, deleted: deleteResult.count };
             });
         },
@@ -3942,12 +4022,14 @@ export function makePostgresClickhouseExtrasRepo(sql: Sql): ClickhouseExtrasRepo
         },
         async findVariantMarketRegistryRowsByMints(mints) {
             if (mints.length === 0) return [];
-            const rows = await sql<{
-                mint: string;
-                logo_uri: string | null;
-                name: string | null;
-                decimals: number | null;
-            }[]>`
+            const rows = await sql<
+                {
+                    mint: string;
+                    logo_uri: string | null;
+                    name: string | null;
+                    decimals: number | null;
+                }[]
+            >`
                 SELECT mint, logo_uri, name, decimals
                 FROM variant_markets_latest
                 WHERE mint IN ${sql(mints)}
@@ -4050,9 +4132,7 @@ export function makePostgresClickhouseExtrasRepo(sql: Sql): ClickhouseExtrasRepo
                         ? Math.floor(row.markoutCount)
                         : null;
                 const markoutBps =
-                    typeof row.markoutBps === 'number' && Number.isFinite(row.markoutBps)
-                        ? row.markoutBps
-                        : null;
+                    typeof row.markoutBps === 'number' && Number.isFinite(row.markoutBps) ? row.markoutBps : null;
                 await sql`
                     INSERT INTO variant_fill_quality_latest (
                         id, mint, source, range_identifier, horizon, quote_mint,
@@ -4121,16 +4201,18 @@ export function makePostgresClickhouseExtrasRepo(sql: Sql): ClickhouseExtrasRepo
                 if (time < minTime) minTime = time;
                 if (time > maxTime) maxTime = time;
             }
-            const existingRows = await sql<{
-                time: number;
-                open: number;
-                high: number;
-                low: number;
-                close: number;
-                volume: number;
-                trade_count: number | null;
-                source: string | null;
-            }[]>`
+            const existingRows = await sql<
+                {
+                    time: number;
+                    open: number;
+                    high: number;
+                    low: number;
+                    close: number;
+                    volume: number;
+                    trade_count: number | null;
+                    source: string | null;
+                }[]
+            >`
                 SELECT time, open, high, low, close, volume, trade_count, source
                 FROM ohlcv_candles
                 WHERE address = ${args.address}
@@ -4215,16 +4297,18 @@ export function makePostgresClickhouseExtrasRepo(sql: Sql): ClickhouseExtrasRepo
                 if (time < minTime) minTime = time;
                 if (time > maxTime) maxTime = time;
             }
-            const existingRows = await sql<{
-                time: number;
-                symbol: string;
-                normalized_symbol: string;
-                open: number;
-                high: number;
-                low: number;
-                close: number;
-                volume: number;
-            }[]>`
+            const existingRows = await sql<
+                {
+                    time: number;
+                    symbol: string;
+                    normalized_symbol: string;
+                    open: number;
+                    high: number;
+                    low: number;
+                    close: number;
+                    volume: number;
+                }[]
+            >`
                 SELECT time, symbol, normalized_symbol, open, high, low, close, volume
                 FROM stock_ohlcv_candles
                 WHERE asset_id = ${assetId}
@@ -4298,11 +4382,13 @@ export function makePostgresClickhouseExtrasRepo(sql: Sql): ClickhouseExtrasRepo
         },
         async listActiveStockMappings(limit) {
             const cappedLimit = Math.min(Math.max(limit, 1), 5000);
-            const rows = await sql<{
-                asset_id: string;
-                symbol: string;
-                normalized_symbol: string;
-            }[]>`
+            const rows = await sql<
+                {
+                    asset_id: string;
+                    symbol: string;
+                    normalized_symbol: string;
+                }[]
+            >`
                 SELECT asset_id, symbol, normalized_symbol
                 FROM stock_instruments_latest
                 WHERE is_active = true

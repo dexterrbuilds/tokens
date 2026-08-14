@@ -13,6 +13,7 @@ module "network" {
   region      = var.region
   env         = var.env
   name_suffix = var.name_suffix
+  flow_logs   = var.assets_db_flow_logs
 }
 
 module "artifact_registry" {
@@ -72,15 +73,16 @@ module "cloud_run" {
   source   = "../cloud_run"
   for_each = toset(var.cloud_run_services)
 
-  project_id       = var.project_id
-  region           = var.region
-  env              = var.env
-  name_suffix      = var.name_suffix
-  service_name     = each.value
-  runtime_sa_email = module.iam.cloud_run_runtime_sa_email
-  network_id       = module.network.vpc_id
-  subnet_id        = module.network.subnet_id
-  max_instances    = var.cloud_run_max_instances
+  project_id          = var.project_id
+  region              = var.region
+  env                 = var.env
+  name_suffix         = var.name_suffix
+  service_name        = each.value
+  runtime_sa_email    = module.iam.cloud_run_runtime_sa_email
+  network_id          = module.network.vpc_id
+  subnet_id           = module.network.subnet_id
+  max_instances       = var.cloud_run_max_instances
+  request_concurrency = each.value == "assets" ? var.cloud_run_assets_request_concurrency : 80
   # `usage` hosts Cloud Scheduler cron endpoints — Scheduler sends from GCP-managed
   # infra outside the VPC, so it can't reach an INTERNAL_LOAD_BALANCER ingress.
   # OIDC auth at the handler still gates access.
@@ -93,8 +95,10 @@ module "cloud_run" {
   # attempt_deadline of any cron routed at the service.
   request_timeout = each.value == "assets" ? "540s" : "300s"
 
-  cpu    = each.value == "assets" ? var.cloud_run_assets_cpu : "1"
-  memory = each.value == "assets" ? var.cloud_run_assets_memory : "512Mi"
+  cpu                    = each.value == "assets" ? var.cloud_run_assets_cpu : "1"
+  memory                 = each.value == "assets" ? var.cloud_run_assets_memory : "512Mi"
+  startup_probe_path     = each.value == "assets" && var.enable_assets_db_startup_probe ? "/startup" : null
+  startup_probe_tcp_port = each.value == "assets" && !var.enable_assets_db_startup_probe ? 8080 : null
 
   min_instances       = each.value == "assets" ? var.cloud_run_assets_min_instances : (contains(var.cloud_run_min_instance_services, each.value) ? 1 : 0)
   deletion_protection = var.cloud_run_deletion_protection
@@ -105,18 +109,25 @@ module "cloud_run" {
   # so it stays IAM-gated regardless of ingress mode.
   allow_unauthenticated = contains(var.cloud_run_unauthenticated_services, each.value)
 
-  env_vars = {
-    NODE_ENV        = "production"
-    TOKENS_ENV      = var.env
-    GCP_PROJECT     = var.project_id
-    GCP_REGION      = var.region
-    REDIS_HOST      = module.memorystore.host
-    REDIS_PORT      = tostring(module.memorystore.port)
-    SQL_INSTANCE    = module.cloud_sql.connection_name
-    SQL_DATABASE    = module.cloud_sql.database_name
-    SQL_USER        = module.cloud_sql.app_user
-    GCS_LOGO_BUCKET = "tokens-asset-logos-${var.env}"
-  }
+  env_vars = merge(
+    {
+      NODE_ENV        = "production"
+      TOKENS_ENV      = var.env
+      GCP_PROJECT     = var.project_id
+      GCP_REGION      = var.region
+      REDIS_HOST      = module.memorystore.host
+      REDIS_PORT      = tostring(module.memorystore.port)
+      SQL_INSTANCE    = module.cloud_sql.connection_name
+      SQL_DATABASE    = module.cloud_sql.database_name
+      SQL_USER        = module.cloud_sql.app_user
+      GCS_LOGO_BUCKET = "tokens-asset-logos-${var.env}"
+    },
+    each.value == "assets" ? {
+      SERVICE_ROLE       = "api"
+      PG_POOL_MAX        = "16"
+      PG_CONNECT_TIMEOUT = "3"
+    } : {},
+  )
 
   secret_env_vars = merge(
     {
@@ -139,6 +150,64 @@ module "cloud_run" {
       { for name, id in module.secrets.usage_hooks_secret_ids : name => { secret_id = id } }
     ) : {}
   )
+}
+
+# Isolated Scheduler worker. It deliberately starts disabled: the assets API
+# currently has several provider credentials managed out-of-band, and routing
+# jobs before those credentials are mirrored would silently disable them.
+module "cloud_run_assets_jobs" {
+  source = "../cloud_run"
+  count  = var.enable_assets_worker ? 1 : 0
+
+  project_id       = var.project_id
+  region           = var.region
+  env              = var.env
+  name_suffix      = var.name_suffix
+  service_name     = "assets-jobs"
+  image            = module.cloud_run["assets"].image
+  runtime_sa_email = module.iam.cloud_run_runtime_sa_email
+  network_id       = module.network.vpc_id
+  subnet_id        = module.network.subnet_id
+
+  ingress             = "INGRESS_TRAFFIC_ALL"
+  request_timeout     = "540s"
+  request_concurrency = 2
+  cpu                 = "8"
+  memory              = "8Gi"
+  min_instances       = 0
+  max_instances       = 2
+  deletion_protection = var.cloud_run_deletion_protection
+  startup_probe_path  = "/startup"
+
+  env_vars = {
+    NODE_ENV           = "production"
+    TOKENS_ENV         = var.env
+    GCP_PROJECT        = var.project_id
+    GCP_REGION         = var.region
+    REDIS_HOST         = module.memorystore.host
+    REDIS_PORT         = tostring(module.memorystore.port)
+    SQL_INSTANCE       = module.cloud_sql.connection_name
+    SQL_DATABASE       = module.cloud_sql.database_name
+    SQL_USER           = module.cloud_sql.app_user
+    GCS_LOGO_BUCKET    = "tokens-asset-logos-${var.env}"
+    SERVICE_ROLE       = "worker"
+    PG_POOL_MAX        = "8"
+    PG_CONNECT_TIMEOUT = "3"
+  }
+
+  secret_env_vars = {
+    DATABASE_URL = {
+      secret_id = module.secrets.database_url_secret_id
+    }
+    TOKENS_CLOUDRUN_AUTH_TOKEN = {
+      secret_id = module.secrets.cloudrun_auth_token_secret_id
+    }
+  }
+}
+
+locals {
+  assets_jobs_service_url  = var.route_assets_jobs_to_worker ? module.cloud_run_assets_jobs[0].url : module.cloud_run["assets"].url
+  assets_jobs_service_name = var.route_assets_jobs_to_worker ? module.cloud_run_assets_jobs[0].service_name : module.cloud_run["assets"].service_name
 }
 
 module "scheduler_tasks" {
@@ -179,7 +248,7 @@ module "scheduler_jobs" {
   project_id       = var.project_id
   region           = var.region
   env              = var.env
-  service_url      = module.cloud_run["assets"].url
+  service_url      = local.assets_jobs_service_url
   invoker_sa_email = module.iam.scheduler_sa_email
 
   jobs = concat(local.coingecko_cron_jobs, local.clickhouse_cron_jobs, local.prestocks_cron_jobs, [
@@ -570,13 +639,14 @@ module "scheduler_jobs" {
   ])
 }
 
-# Cloud Scheduler invokes the `assets` service for /jobs/* cron handlers.
+# Cloud Scheduler invokes the isolated worker when enabled, otherwise the
+# existing assets service during the credential-mirroring transition.
 resource "google_cloud_run_v2_service_iam_member" "scheduler_invokes_assets" {
   count = var.enable_crons ? 1 : 0
 
   project  = var.project_id
   location = var.region
-  name     = module.cloud_run["assets"].service_name
+  name     = local.assets_jobs_service_name
   role     = "roles/run.invoker"
   member   = "serviceAccount:${module.iam.scheduler_sa_email}"
 }

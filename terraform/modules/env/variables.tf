@@ -99,6 +99,30 @@ variable "cloud_run_assets_memory" {
   default     = "512Mi"
 }
 
+variable "cloud_run_assets_request_concurrency" {
+  type        = number
+  description = "Maximum concurrent requests per assets API instance."
+  default     = 40
+}
+
+variable "enable_assets_db_startup_probe" {
+  type        = bool
+  description = "Enable the assets HTTP /startup probe only after a revision containing that endpoint is serving successfully."
+  default     = false
+}
+
+variable "assets_db_flow_logs" {
+  type = object({
+    aggregation_interval = string
+    flow_sampling        = number
+    metadata             = string
+    filter_expr          = string
+  })
+  description = "Optional subnet flow logging focused on the assets database path."
+  default     = null
+  nullable    = true
+}
+
 variable "cloud_run_min_instance_services" {
   type        = set(string)
   description = "Services that should keep at least one warm instance. Prevents Cloud Run autoscale-down from cutting in-flight requests when top-of-hour cron bursts trigger recycle. Prd should include the heavy-write services (`assets`, `usage`)."
@@ -136,6 +160,23 @@ variable "enable_crons" {
   type        = bool
   default     = false
   description = "When true, provision Cloud Scheduler jobs that POST to the assets Cloud Run service /jobs/* handlers. Staging-only during migration overlap (PRO-1379)."
+}
+
+variable "enable_assets_worker" {
+  type        = bool
+  default     = false
+  description = "Provision the isolated assets Scheduler worker without changing Scheduler routing. Mirror and verify its provider credentials before enabling route_assets_jobs_to_worker."
+}
+
+variable "route_assets_jobs_to_worker" {
+  type        = bool
+  default     = false
+  description = "Route Scheduler jobs to the provisioned assets worker after its image and provider credentials have been verified."
+
+  validation {
+    condition     = !var.route_assets_jobs_to_worker || var.enable_assets_worker
+    error_message = "route_assets_jobs_to_worker requires enable_assets_worker=true."
+  }
 }
 
 variable "asset_logo_upload_cors_origins" {

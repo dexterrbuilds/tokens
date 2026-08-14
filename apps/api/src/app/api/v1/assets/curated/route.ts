@@ -1,4 +1,5 @@
-import { Array as Arr, Effect, Schedule } from 'effect';
+import { createHash } from 'node:crypto';
+import { Array as Arr, Effect } from 'effect';
 
 import { route } from '@/effect/next-route';
 import { withStaleFallback } from '@/effect/stale-response-cache';
@@ -29,6 +30,7 @@ import {
     type TokenMarketsGetLatestByMintsResult,
     type VariantMarketsGetLatestByMintsResult,
 } from '@/lib/cloudrun';
+import { isRetryableCloudRunError, type CloudRunError } from '@/lib/cloudrun/errors';
 
 import {
     getVariantByMint,
@@ -175,6 +177,15 @@ function curatedResponseLooksHealthy(payload: Record<string, unknown>): boolean 
     return withStats * 2 >= assets.length;
 }
 
+function isTransientCuratedFailure(error: unknown): boolean {
+    if (!error || typeof error !== 'object' || !('_tag' in error)) return false;
+    const tag = (error as { _tag?: unknown })._tag;
+    if (tag !== 'CloudRunHttpError' && tag !== 'CloudRunTimeoutError' && tag !== 'CloudRunTransportError') {
+        return false;
+    }
+    return isRetryableCloudRunError(error as CloudRunError);
+}
+
 /**
  * Cache key for the stale-response fallback. Mirrors the handler's own param
  * normalization so equivalent requests share one last-good entry. Raw values
@@ -192,14 +203,15 @@ function curatedStaleCacheKey(request: Request): string | null {
         const shouldPaginate = searchParams.has('limit') || searchParams.has('offset');
         const offset = shouldPaginate ? (searchParams.get('offset') ?? '').trim() : '';
         const limit = shouldPaginate ? (searchParams.get('limit') ?? '').trim() : '';
-        return [
-            'stale-response:v1:assets-curated',
+        const canonical = JSON.stringify({
             listId,
             groupBy,
             variantsMode,
             strategy,
-            shouldPaginate ? `${offset}:${limit}` : 'nopage',
-        ].join(':');
+            pagination: shouldPaginate ? { offset, limit } : null,
+        });
+        const shapeHash = createHash('sha256').update(canonical).digest('hex').slice(0, 32);
+        return `stale-response:v2:assets-curated:${shapeHash}`;
     } catch {
         return null;
     }
@@ -278,29 +290,30 @@ export const GET = route(
             const shouldLoadSanctumForPrefetch = listId === 'all' || listId === 'lsts';
             const includeStockForPrefetch = listId === 'all' || listId === 'stocks';
             const prefetch: CuratedPrefetchResult | null = yield* curatedPrefetchForApi({
-                    listId,
-                    memberMints,
-                    memberAssetIds,
-                    includeSanctum: shouldLoadSanctumForPrefetch,
-                    includeStock: includeStockForPrefetch,
-                    ...(registryCoingeckoIds.length > 0
-                        ? { additionalCoingeckoIds: registryCoingeckoIds }
-                        : {}),
-                }).pipe(
-                Effect.retry({ schedule: Schedule.exponential('250 millis'), times: 1 }),
-                tapErrorAndDefault<CuratedPrefetchResult | null>('assets.curated.composite', null, { listId }),
+                listId,
+                memberMints,
+                memberAssetIds,
+                includeSanctum: shouldLoadSanctumForPrefetch,
+                includeStock: includeStockForPrefetch,
+                ...(registryCoingeckoIds.length > 0 ? { additionalCoingeckoIds: registryCoingeckoIds } : {}),
+            }).pipe(
+                // A missing Cloud Run configuration is the only reason to use
+                // the legacy per-handler path. Runtime/5xx/timeout failures
+                // propagate to the outer last-good cache instead of launching
+                // a second, much wider fallback fan-out during an incident.
+                Effect.catchTag('MissingEnvError', () => Effect.succeed(null)),
             );
 
             const collectionAssetIdsChunks: string[][] = prefetch
                 ? prefetch.collectionAssetIds
-                : (yield* Effect.all(
+                : ((yield* Effect.all(
                       memberListIds.map(id =>
                           assetCollectionsGetMembers({ slug: id, limit: 2000 }).pipe(
                               tapErrorAndDefault('assets.curated.collections', [] as string[], { listId: id }),
                           ),
                       ),
                       { concurrency: 2 },
-                  )) as string[][];
+                  )) as string[][]);
 
             const rawAssetIds = uniqueStrings([...memberAssetIds, ...(collectionAssetIdsChunks.flat() as string[])]);
             const deletedAssetRefRows: string[] = prefetch
@@ -326,7 +339,11 @@ export const GET = route(
                 } else {
                     for (let i = 0; i < assetIds.length; i += 500) {
                         const chunk = assetIds.slice(i, i + 500);
-                        const rows = yield* cloudRunGetByAssetIds({ assetIds: chunk }).pipe(tapErrorAndDefault('assets.curated.assets', [] as GetByAssetIdsResult, { count: chunk.length }));
+                        const rows = yield* cloudRunGetByAssetIds({ assetIds: chunk }).pipe(
+                            tapErrorAndDefault('assets.curated.assets', [] as GetByAssetIdsResult, {
+                                count: chunk.length,
+                            }),
+                        );
                         assetRows.push(...rows);
                     }
                 }
@@ -343,7 +360,11 @@ export const GET = route(
                     const variantAssetIds = dbAssets.map(a => a.assetId);
                     for (let i = 0; i < variantAssetIds.length; i += 250) {
                         const chunk = variantAssetIds.slice(i, i + 250);
-                        const rows = yield* assetVariantsListByAssetIds({ assetIds: chunk }).pipe(tapErrorAndDefault('assets.curated.variants', [] as AssetVariantsListByAssetIdsResult, { count: chunk.length }));
+                        const rows = yield* assetVariantsListByAssetIds({ assetIds: chunk }).pipe(
+                            tapErrorAndDefault('assets.curated.variants', [] as AssetVariantsListByAssetIdsResult, {
+                                count: chunk.length,
+                            }),
+                        );
                         variantsRows.push(...rows);
                     }
                 }
@@ -526,7 +547,13 @@ export const GET = route(
                     if (missingMints.length > 0) {
                         for (let i = 0; i < missingMints.length; i += 250) {
                             const chunk = missingMints.slice(i, i + 250);
-                            const rows = yield* variantMarketsGetLatestByMints({ mints: chunk }).pipe(tapErrorAndDefault('assets.curated.variantMarkets.gapfill', [] as VariantMarketsGetLatestByMintsResult, { count: chunk.length }));
+                            const rows = yield* variantMarketsGetLatestByMints({ mints: chunk }).pipe(
+                                tapErrorAndDefault(
+                                    'assets.curated.variantMarkets.gapfill',
+                                    [] as VariantMarketsGetLatestByMintsResult,
+                                    { count: chunk.length },
+                                ),
+                            );
                             for (const row of rows) {
                                 const market = row.market;
                                 if (!market) continue;
@@ -537,7 +564,9 @@ export const GET = route(
                         }
                         for (let i = 0; i < missingMints.length; i += 250) {
                             const chunk = missingMints.slice(i, i + 250);
-                            const rows = yield* variantFillQualityGetLatestByMints({ mints: chunk }).pipe(tapErrorAndDefault('assets.curated.fillQuality.gapfill', [], { count: chunk.length }));
+                            const rows = yield* variantFillQualityGetLatestByMints({ mints: chunk }).pipe(
+                                tapErrorAndDefault('assets.curated.fillQuality.gapfill', [], { count: chunk.length }),
+                            );
                             for (const row of rows) {
                                 const snapshot = executionQualitySnapshotFromConvexFillQuality(row.fillQuality);
                                 if (snapshot) fillQualityByMint.set(row.mint, snapshot);
@@ -552,7 +581,13 @@ export const GET = route(
                     // Convex query caps at 250 mints; chunk to ensure full coverage for large curated lists.
                     for (let i = 0; i < uniqueMints.length; i += 250) {
                         const chunk = uniqueMints.slice(i, i + 250);
-                        const rows = yield* variantMarketsGetLatestByMints({ mints: chunk }).pipe(tapErrorAndDefault('assets.curated.variantMarkets', [] as VariantMarketsGetLatestByMintsResult, { count: chunk.length }));
+                        const rows = yield* variantMarketsGetLatestByMints({ mints: chunk }).pipe(
+                            tapErrorAndDefault(
+                                'assets.curated.variantMarkets',
+                                [] as VariantMarketsGetLatestByMintsResult,
+                                { count: chunk.length },
+                            ),
+                        );
                         for (const row of rows) {
                             const market = row.market;
                             if (!market) continue;
@@ -565,7 +600,9 @@ export const GET = route(
 
                     for (let i = 0; i < uniqueMints.length; i += 250) {
                         const chunk = uniqueMints.slice(i, i + 250);
-                        const rows = yield* variantFillQualityGetLatestByMints({ mints: chunk }).pipe(tapErrorAndDefault('assets.curated.variantFillQuality', [], { count: chunk.length }));
+                        const rows = yield* variantFillQualityGetLatestByMints({ mints: chunk }).pipe(
+                            tapErrorAndDefault('assets.curated.variantFillQuality', [], { count: chunk.length }),
+                        );
                         for (const row of rows) {
                             const snapshot = executionQualitySnapshotFromConvexFillQuality(row.fillQuality);
                             if (snapshot) fillQualityByMint.set(row.mint, snapshot);
@@ -624,12 +661,23 @@ export const GET = route(
                 if (prefetch) {
                     const covered = new Set(prefetch.tokenMarketsDocs.map(d => d.mint));
                     const gap = uniqueMissing.filter(m => !covered.has(m));
-                    const gapDocs = gap.length > 0
-                        ? yield* tokenMarketsGetLatestByMints({ mints: gap }).pipe(tapErrorAndDefault('assets.curated.tokenMarkets.gapfill', [] as TokenMarketsGetLatestByMintsResult, { count: gap.length }))
-                        : [];
+                    const gapDocs =
+                        gap.length > 0
+                            ? yield* tokenMarketsGetLatestByMints({ mints: gap }).pipe(
+                                  tapErrorAndDefault(
+                                      'assets.curated.tokenMarkets.gapfill',
+                                      [] as TokenMarketsGetLatestByMintsResult,
+                                      { count: gap.length },
+                                  ),
+                              )
+                            : [];
                     tokenMarketsDocs = [...prefetch.tokenMarketsDocs, ...gapDocs];
                 } else {
-                    tokenMarketsDocs = yield* tokenMarketsGetLatestByMints({ mints: uniqueMissing }).pipe(tapErrorAndDefault('assets.curated.tokenMarkets', [] as TokenMarketsGetLatestByMintsResult, { count: uniqueMissing.length }));
+                    tokenMarketsDocs = yield* tokenMarketsGetLatestByMints({ mints: uniqueMissing }).pipe(
+                        tapErrorAndDefault('assets.curated.tokenMarkets', [] as TokenMarketsGetLatestByMintsResult, {
+                            count: uniqueMissing.length,
+                        }),
+                    );
                 }
 
                 for (const { mint, doc } of tokenMarketsDocs) {
@@ -727,7 +775,13 @@ export const GET = route(
             } else {
                 for (let i = 0; i < aggregateAssetIds.length; i += 500) {
                     const chunk = aggregateAssetIds.slice(i, i + 500);
-                    const rows = yield* assetMarketsGetLatestByAssetIds({ assetIds: chunk }).pipe(tapErrorAndDefault('assets.curated.assetAggregates', [] as AssetMarketsGetLatestByAssetIdsResult, { count: chunk.length }));
+                    const rows = yield* assetMarketsGetLatestByAssetIds({ assetIds: chunk }).pipe(
+                        tapErrorAndDefault(
+                            'assets.curated.assetAggregates',
+                            [] as AssetMarketsGetLatestByAssetIdsResult,
+                            { count: chunk.length },
+                        ),
+                    );
                     assetAggregatesRows.push(...rows);
                 }
             }
@@ -1140,7 +1194,9 @@ export const GET = route(
                 operation: 'assets.curated',
                 cacheKey,
                 ttlSeconds: CURATED_STALE_TTL_SECONDS,
+                freshSeconds: 60,
                 isHealthy: curatedResponseLooksHealthy,
+                shouldFallback: isTransientCuratedFailure,
             },
             main,
         );

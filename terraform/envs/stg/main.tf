@@ -26,6 +26,12 @@ module "env" {
     "usage",
   ]
 
+  # Enable the DB-aware startup probe and isolated worker in a follow-up
+  # apply only after the application revision containing /startup is live.
+  enable_assets_db_startup_probe = false
+  enable_assets_worker           = false
+  route_assets_jobs_to_worker    = false
+
   enable_load_balancer = false
   enable_crons         = true
 }

@@ -1,0 +1,67 @@
+{
+    "uid": "tokens-assets-db-connect-timeout-critical",
+    "title": "tokens-assets: Postgres connect timeouts > 300/10m",
+    "ruleGroup": "tokens-assets-availability",
+    "folderUID": "tokens-xyz",
+    "noDataState": "OK",
+    "execErrState": "OK",
+    "for": "2m",
+    "data": [
+        {
+            "refId": "A",
+            "datasourceUid": "grafanacloud-logs",
+            "queryType": "range",
+            "relativeTimeRange": { "from": 600, "to": 0 },
+            "model": {
+                "expr": "sum(count_over_time({service=~\"tokens-assets(-jobs)?-prd-us\"} | json | event=\"cloudrun_assets_db_operation_failure\" | errorCode=\"CONNECT_TIMEOUT\" [10m]))",
+                "queryType": "range",
+                "refId": "A"
+            }
+        },
+        {
+            "refId": "B",
+            "datasourceUid": "__expr__",
+            "queryType": "",
+            "relativeTimeRange": { "from": 0, "to": 0 },
+            "model": {
+                "type": "reduce",
+                "refId": "B",
+                "expression": "A",
+                "reducer": "last",
+                "settings": { "mode": "replaceNN", "replaceWithValue": 0 }
+            }
+        },
+        {
+            "refId": "C",
+            "datasourceUid": "__expr__",
+            "queryType": "",
+            "relativeTimeRange": { "from": 0, "to": 0 },
+            "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "B",
+                "conditions": [
+                    {
+                        "evaluator": { "type": "gt", "params": [300] },
+                        "operator": { "type": "and" },
+                        "query": { "params": ["B"] },
+                        "reducer": { "type": "last", "params": [] },
+                        "type": "query"
+                    }
+                ]
+            }
+        }
+    ],
+    "condition": "C",
+    "labels": {
+        "service": "tokens-assets",
+        "severity": "critical",
+        "pagerduty": "true",
+        "slack": "true"
+    },
+    "annotations": {
+        "summary": "tokens-assets Postgres connection timeout storm",
+        "description": "More than 300 normalized final CONNECT_TIMEOUT failures occurred in 10 minutes. Expect degraded curated responses and user-facing 5xx; inspect Cloud Run scale-out, VPC flow logs, and Cloud SQL TLS/reset logs.",
+        "runbook_url": "https://github.com/solana-foundation/tokens/blob/main/docs/operations/assets-db-resilience.md"
+    }
+}

@@ -1,20 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 
-import type {
-    AssetAliasRow,
-    AssetRow,
-    AssetVariantRow,
-    AssetsRepo,
-    CallerIdentity,
-} from './handlers/assets';
+import type { AssetAliasRow, AssetRow, AssetVariantRow, AssetsRepo, CallerIdentity } from './handlers/assets';
 import type { AssetDeletionTombstonesRepo } from './handlers/assetDeletionTombstones';
 import type { SanctumLstRow, SanctumLstsRepo } from './handlers/sanctumLsts';
 import type { AssetMarketRow, AssetMarketsRepo } from './handlers/assetMarkets';
 import type { VariantMarketRow, VariantMarketsRepo } from './handlers/variantMarkets';
-import type {
-    AssetVariantDocRow,
-    AssetVariantsRepo,
-} from './handlers/assetVariants';
+import type { AssetVariantDocRow, AssetVariantsRepo } from './handlers/assetVariants';
 import type {
     CoingeckoCoinRow,
     CoingeckoCoinSearchRow,
@@ -23,11 +14,7 @@ import type {
     CoingeckoReadsRepo,
     CoingeckoTickersLatestRow,
 } from './handlers/coingeckoReads';
-import type {
-    StockInstrumentRow,
-    StockPriceRow,
-    StockReadsRepo,
-} from './handlers/stockReads';
+import type { StockInstrumentRow, StockPriceRow, StockReadsRepo } from './handlers/stockReads';
 import type { OhlcvCandleRow, OhlcvReadsRepo } from './handlers/ohlcvReads';
 import type { PrestocksReadsRepo } from './handlers/prestocksReads';
 import type {
@@ -47,19 +34,9 @@ import type {
     TokenDescriptionSummaryRow,
     TokensReadsRepo,
 } from './handlers/tokensReads';
-import type {
-    TrendingMarketRow,
-    FreshTrendingMarketRow,
-    TrendingReadsRepo,
-} from './handlers/trendingReads';
-import type {
-    FillQualityRow,
-    FillQualityReadsRepo,
-} from './handlers/fillQualityReads';
-import type {
-    AssetCollectionMemberRow,
-    AssetCollectionsReadsRepo,
-} from './handlers/assetCollectionsReads';
+import type { TrendingMarketRow, FreshTrendingMarketRow, TrendingReadsRepo } from './handlers/trendingReads';
+import type { FillQualityRow, FillQualityReadsRepo } from './handlers/fillQualityReads';
+import type { AssetCollectionMemberRow, AssetCollectionsReadsRepo } from './handlers/assetCollectionsReads';
 import type { CacheWarmDeps } from './handlers/cacheWarm';
 import type { AdminActionsDeps, AdminActionsRepo } from './handlers/adminActions';
 import { createApp, type ServerDeps } from './server';
@@ -90,9 +67,17 @@ interface MockRepoData {
     assetsSymbolFuzzy?: Record<string, AssetRow[]>;
     variantsByMint?: Record<string, AssetVariantRow>;
     deletedRefs?: ReadonlySet<string>;
-    byCategory?: { category: string; includeInactive: boolean; rows: AssetRow[] }[];
+    byCategory?: {
+        category: string;
+        includeInactive: boolean;
+        rows: AssetRow[];
+    }[];
     activeWithCoinGecko?: AssetRow[];
-    descriptionCalls?: { assetId: string; description: string | null; updatedAt: Date }[];
+    descriptionCalls?: {
+        assetId: string;
+        description: string | null;
+        updatedAt: Date;
+    }[];
 }
 
 function makeRepo(data: MockRepoData = {}): AssetsRepo {
@@ -131,9 +116,7 @@ function makeRepo(data: MockRepoData = {}): AssetsRepo {
             return data.deletedRefs?.has(normalizedRef) ?? false;
         },
         async listByCategory(category, includeInactive, limit) {
-            const match = data.byCategory?.find(
-                e => e.category === category && e.includeInactive === includeInactive,
-            );
+            const match = data.byCategory?.find(e => e.category === category && e.includeInactive === includeInactive);
             if (!match) return [];
             return match.rows.slice(0, limit);
         },
@@ -148,62 +131,112 @@ function makeRepo(data: MockRepoData = {}): AssetsRepo {
 }
 
 function emptyDeletionTombstonesRepo(): AssetDeletionTombstonesRepo {
-    return { async findDeletedNormalizedRefs() { return []; } };
+    return {
+        async findDeletedNormalizedRefs() {
+            return [];
+        },
+    };
 }
 
 function emptySanctumLstsRepo(): SanctumLstsRepo {
     return {
-        async listActive() { return []; },
-        async findByMint() { return null; },
-        async findActiveBySymbolLower() { return []; },
+        async listActive() {
+            return [];
+        },
+        async findByMint() {
+            return null;
+        },
+        async findActiveBySymbolLower() {
+            return [];
+        },
     };
 }
 
 function emptyAssetMarketsRepo(): AssetMarketsRepo {
     return {
-        async findLatestByAssetId() { return null; },
-        async findLatestByAssetIds() { return []; },
+        async findLatestByAssetId() {
+            return null;
+        },
+        async findLatestByAssetIds() {
+            return [];
+        },
     };
 }
 
 function emptyVariantMarketsRepo(): VariantMarketsRepo {
-    return { async findLatestByMints() { return []; } };
+    return {
+        async findLatestByMints() {
+            return [];
+        },
+    };
 }
 
 function emptyAssetVariantsRepo(): AssetVariantsRepo {
     return {
-        async findVariantByMint() { return null; },
-        async findVariantsByMints() { return []; },
-        async findVariantsByAssetIds() { return []; },
-        async findActiveSolanaVariants() { return []; },
-        async findAssetIsActive() { return null; },
-        async findSolanaDefaultVariantsView() { return null; },
+        async findVariantByMint() {
+            return null;
+        },
+        async findVariantsByMints() {
+            return [];
+        },
+        async findVariantsByAssetIds() {
+            return [];
+        },
+        async findActiveSolanaVariants() {
+            return [];
+        },
+        async findAssetIsActive() {
+            return null;
+        },
+        async findSolanaDefaultVariantsView() {
+            return null;
+        },
         async upsertSolanaDefaultVariantsView() {},
-        async findVariantMarketsByMints() { return []; },
-        async findTokenMarketsByMints() { return []; },
+        async findVariantMarketsByMints() {
+            return [];
+        },
+        async findTokenMarketsByMints() {
+            return [];
+        },
     };
 }
 
 function emptyStockReadsRepo(): StockReadsRepo {
     return {
-        async findInstrumentByAssetId() { return null; },
-        async findInstrumentsByAssetIds() { return []; },
-        async findPriceByAssetId() { return null; },
-        async findPricesByAssetIds() { return []; },
+        async findInstrumentByAssetId() {
+            return null;
+        },
+        async findInstrumentsByAssetIds() {
+            return [];
+        },
+        async findPriceByAssetId() {
+            return null;
+        },
+        async findPricesByAssetIds() {
+            return [];
+        },
     };
 }
 
 function emptyPrestocksReadsRepo(): PrestocksReadsRepo {
     return {
-        async findLatestByMints() { return []; },
+        async findLatestByMints() {
+            return [];
+        },
     };
 }
 
 function emptyOhlcvReadsRepo(): OhlcvReadsRepo {
     return {
-        async listByAddressAndInterval() { return []; },
-        async getBoundsByAddressAndInterval() { return { minTime: null, maxTime: null }; },
-        async listByAssetIdAndInterval() { return []; },
+        async listByAddressAndInterval() {
+            return [];
+        },
+        async getBoundsByAddressAndInterval() {
+            return { minTime: null, maxTime: null };
+        },
+        async listByAssetIdAndInterval() {
+            return [];
+        },
     };
 }
 
@@ -285,6 +318,8 @@ function deps(overrides: Partial<ServerDeps> = {}): ServerDeps {
         fillQualityReadsRepo: overrides.fillQualityReadsRepo ?? emptyFillQualityReadsRepo(),
         assetCollectionsReadsRepo: overrides.assetCollectionsReadsRepo ?? emptyAssetCollectionsReadsRepo(),
         authToken: overrides.authToken ?? 'tok',
+        ...(overrides.serviceRole ? { serviceRole: overrides.serviceRole } : {}),
+        ...(overrides.checkDatabase ? { checkDatabase: overrides.checkDatabase } : {}),
         ...(overrides.cacheWarmDeps ? { cacheWarmDeps: overrides.cacheWarmDeps } : {}),
         ...(overrides.adminActionsDeps ? { adminActionsDeps: overrides.adminActionsDeps } : {}),
     };
@@ -301,7 +336,10 @@ async function call(app: ReturnType<typeof createApp>, path: string, init: Reque
 function authed(body: unknown): RequestInit {
     return {
         method: 'POST',
-        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        headers: {
+            authorization: 'Bearer tok',
+            'content-type': 'application/json',
+        },
         body: JSON.stringify(body),
     };
 }
@@ -314,9 +352,49 @@ describe('createApp - infrastructure', () => {
         expect(await res.json()).toEqual({ ok: true });
     });
 
+    it('GET /startup gates traffic on a database check without changing /health', async () => {
+        let available = false;
+        const app = createApp(
+            deps({
+                checkDatabase: async () => {
+                    if (!available)
+                        throw Object.assign(new Error('write CONNECT_TIMEOUT'), { code: 'CONNECT_TIMEOUT' });
+                },
+            }),
+        );
+        expect((await call(app, '/health')).status).toBe(200);
+        expect((await call(app, '/startup')).status).toBe(503);
+        available = true;
+        expect((await call(app, '/startup')).status).toBe(200);
+    });
+
+    it('GET /startup returns 503 when the database check does not settle before its timeout', async () => {
+        const app = createApp(
+            deps({
+                checkDatabase: () => new Promise<void>(() => {}),
+                startupDatabaseTimeoutMs: 5,
+            }),
+        );
+
+        const response = await call(app, '/startup');
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({ ok: false });
+    });
+
+    it('isolates API and worker route surfaces', async () => {
+        const worker = createApp(deps({ serviceRole: 'worker' }));
+        expect((await call(worker, '/query/getByAssetId', authed({ assetId: 'jup' }))).status).toBe(404);
+
+        const api = createApp(deps({ serviceRole: 'api' }));
+        expect((await call(api, '/jobs/anything', { method: 'POST' })).status).toBe(404);
+    });
+
     it('POST /query/<name> rejects missing/wrong bearer with 401', async () => {
         const app = createApp(deps());
-        const noAuth = await call(app, '/query/getByAssetId', { method: 'POST', body: '{}' });
+        const noAuth = await call(app, '/query/getByAssetId', {
+            method: 'POST',
+            body: '{}',
+        });
         expect(noAuth.status).toBe(401);
         const wrongAuth = await call(app, '/query/getByAssetId', {
             method: 'POST',
@@ -359,7 +437,9 @@ describe('createApp - infrastructure', () => {
                     err.code = 'CONNECTION_CLOSED';
                     throw err;
                 }
-                return makeRepo({ byAssetId: { jup: sampleRow() } }).findByAssetId(assetId);
+                return makeRepo({
+                    byAssetId: { jup: sampleRow() },
+                }).findByAssetId(assetId);
             },
         };
         const app = createApp(deps({ repo: flakyRepo }));
@@ -385,6 +465,29 @@ describe('createApp - infrastructure', () => {
         expect(calls).toBe(2);
     });
 
+    it('does not replay a composite query after a transient database failure', async () => {
+        let calls = 0;
+        const failingCollections: AssetCollectionsReadsRepo = {
+            ...emptyAssetCollectionsReadsRepo(),
+            listMembersBySlug: async () => {
+                calls += 1;
+                throw Object.assign(new Error('write CONNECT_TIMEOUT 172.20.2.3:5432'), { code: 'CONNECT_TIMEOUT' });
+            },
+        };
+        const app = createApp(deps({ assetCollectionsReadsRepo: failingCollections }));
+        const res = await call(
+            app,
+            '/query/assetsApiCuratedPrefetchForApi',
+            authed({
+                listId: 'majors',
+                memberMints: [],
+                memberAssetIds: [],
+            }),
+        );
+        expect(res.status).toBe(500);
+        expect(calls).toBe(1);
+    });
+
     it('hides handler-thrown DB error details with 500', async () => {
         const failingRepo: AssetsRepo = {
             ...makeRepo(),
@@ -395,7 +498,10 @@ describe('createApp - infrastructure', () => {
         const app = createApp(deps({ repo: failingRepo }));
         const res = await call(app, '/query/getByAssetId', authed({ assetId: 'jup' }));
         expect(res.status).toBe(500);
-        const payload = (await res.json()) as { error: string; message?: string };
+        const payload = (await res.json()) as {
+            error: string;
+            message?: string;
+        };
         expect(payload.error).toBe('handler_error');
         expect(payload.message).toBeUndefined();
     });
@@ -428,12 +534,21 @@ describe('getByAssetId', () => {
     });
 
     it('hides inactive rows unless includeInactive', async () => {
-        const app = createApp(deps({ repo: makeRepo({ byAssetId: { jup: sampleRow({ is_active: false }) } }) }));
+        const app = createApp(
+            deps({
+                repo: makeRepo({
+                    byAssetId: { jup: sampleRow({ is_active: false }) },
+                }),
+            }),
+        );
         const hidden = await call(app, '/query/getByAssetId', authed({ assetId: 'jup' }));
         expect(await hidden.json()).toBeNull();
 
         const visible = await call(app, '/query/getByAssetId', authed({ assetId: 'jup', includeInactive: true }));
-        const body = (await visible.json()) as { assetId: string; isActive: boolean };
+        const body = (await visible.json()) as {
+            assetId: string;
+            isActive: boolean;
+        };
         expect(body.assetId).toBe('jup');
         expect(body.isActive).toBe(false);
     });
@@ -450,12 +565,20 @@ describe('getByAssetId', () => {
         const cases: { body: string }[] = [
             { body: '{}' },
             { body: JSON.stringify({ assetId: 123 }) },
-            { body: JSON.stringify({ assetId: 'jup', includeInactive: 'yes' }) },
+            {
+                body: JSON.stringify({
+                    assetId: 'jup',
+                    includeInactive: 'yes',
+                }),
+            },
         ];
         for (const { body } of cases) {
             const res = await call(app, '/query/getByAssetId', {
                 method: 'POST',
-                headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+                headers: {
+                    authorization: 'Bearer tok',
+                    'content-type': 'application/json',
+                },
                 body,
             });
             expect(res.status).toBe(400);
@@ -469,19 +592,27 @@ describe('getByAssetIds', () => {
     const repo = makeRepo({
         byAssetId: {
             jup: sampleRow(),
-            sol: sampleRow({ id: 'sol-1', asset_id: 'sol', symbol: 'SOL', name: 'Solana' }),
-            inactive: sampleRow({ id: 'i', asset_id: 'inactive', is_active: false }),
+            sol: sampleRow({
+                id: 'sol-1',
+                asset_id: 'sol',
+                symbol: 'SOL',
+                name: 'Solana',
+            }),
+            inactive: sampleRow({
+                id: 'i',
+                asset_id: 'inactive',
+                is_active: false,
+            }),
         },
     });
 
     it('returns an entry per input id preserving order with nulls for misses', async () => {
         const app = createApp(deps({ repo }));
-        const res = await call(
-            app,
-            '/query/getByAssetIds',
-            authed({ assetIds: ['jup', 'missing', 'sol'] }),
-        );
-        const body = (await res.json()) as Array<{ assetId: string; asset: null | { assetId: string } }>;
+        const res = await call(app, '/query/getByAssetIds', authed({ assetIds: ['jup', 'missing', 'sol'] }));
+        const body = (await res.json()) as Array<{
+            assetId: string;
+            asset: null | { assetId: string };
+        }>;
         expect(body.map(e => e.assetId)).toEqual(['jup', 'missing', 'sol']);
         expect(body[0]!.asset?.assetId).toBe('jup');
         expect(body[1]!.asset).toBeNull();
@@ -499,14 +630,19 @@ describe('getByAssetIds', () => {
             '/query/getByAssetIds',
             authed({ assetIds: ['inactive'], includeInactive: true }),
         );
-        const visibleBody = (await visible.json()) as Array<{ asset: { isActive: boolean } | null }>;
+        const visibleBody = (await visible.json()) as Array<{
+            asset: { isActive: boolean } | null;
+        }>;
         expect(visibleBody[0]!.asset?.isActive).toBe(false);
     });
 
     it('trims and drops empty ids, caps at 500', async () => {
         const app = createApp(deps({ repo }));
         const res = await call(app, '/query/getByAssetIds', authed({ assetIds: ['  jup  ', '', '   '] }));
-        const body = (await res.json()) as Array<{ assetId: string; asset: { assetId: string } | null }>;
+        const body = (await res.json()) as Array<{
+            assetId: string;
+            asset: { assetId: string } | null;
+        }>;
         expect(body.length).toBe(1);
         expect(body[0]!.assetId).toBe('jup');
     });
@@ -516,7 +652,10 @@ describe('getByAssetIds', () => {
         for (const body of ['{}', JSON.stringify({ assetIds: 'jup' }), JSON.stringify({ assetIds: [1, 2] })]) {
             const res = await call(app, '/query/getByAssetIds', {
                 method: 'POST',
-                headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+                headers: {
+                    authorization: 'Bearer tok',
+                    'content-type': 'application/json',
+                },
                 body,
             });
             expect(res.status).toBe(400);
@@ -536,7 +675,12 @@ describe('getByAssetIds', () => {
 
 describe('search', () => {
     const jup = sampleRow();
-    const sol = sampleRow({ id: 'sol-1', asset_id: 'sol', symbol: 'SOL', name: 'Solana' });
+    const sol = sampleRow({
+        id: 'sol-1',
+        asset_id: 'sol',
+        symbol: 'SOL',
+        name: 'Solana',
+    });
     const usdc = sampleRow({
         id: 'usdc-1',
         asset_id: 'usdc',
@@ -563,7 +707,13 @@ describe('search', () => {
     it('resolves a valid solana mint to a single asset', async () => {
         const repo = makeRepo({
             byAssetId: { usdc },
-            variantsByMint: { [validMint]: { asset_id: 'usdc', mint: validMint, is_active: true } },
+            variantsByMint: {
+                [validMint]: {
+                    asset_id: 'usdc',
+                    mint: validMint,
+                    is_active: true,
+                },
+            },
         });
         const app = createApp(deps({ repo }));
         const res = await call(app, '/query/search', authed({ query: validMint }));
@@ -577,8 +727,18 @@ describe('search', () => {
             byAssetId: { jup, sol },
             aliasesByNormalized: {
                 jup: [
-                    { alias: 'JUP', normalized: 'jup', asset_id: 'sol', priority: 5 },
-                    { alias: 'JUP', normalized: 'jup', asset_id: 'jup', priority: 10 },
+                    {
+                        alias: 'JUP',
+                        normalized: 'jup',
+                        asset_id: 'sol',
+                        priority: 5,
+                    },
+                    {
+                        alias: 'JUP',
+                        normalized: 'jup',
+                        asset_id: 'jup',
+                        priority: 10,
+                    },
                 ],
             },
         });
@@ -592,11 +752,14 @@ describe('search', () => {
     it('falls back to name fuzzy when no alias matches, respects category filter', async () => {
         const repo = makeRepo({
             byAssetId: { jup, sol, usdc },
-            assetsNameFuzzy: { 'coin': [usdc, sol] },
+            assetsNameFuzzy: { coin: [usdc, sol] },
         });
         const app = createApp(deps({ repo }));
         const res = await call(app, '/query/search', authed({ query: 'coin', category: 'stablecoin' }));
-        const body = (await res.json()) as Array<{ assetId: string; category: string }>;
+        const body = (await res.json()) as Array<{
+            assetId: string;
+            category: string;
+        }>;
         expect(body.length).toBe(1);
         expect(body[0]!.assetId).toBe('usdc');
         expect(body[0]!.category).toBe('stablecoin');
@@ -612,7 +775,10 @@ describe('search', () => {
         expect(await hidden.json()).toEqual([]);
 
         const visible = await call(app, '/query/search', authed({ query: 'OLD', includeInactive: true }));
-        const body = (await visible.json()) as Array<{ assetId: string; isActive: boolean }>;
+        const body = (await visible.json()) as Array<{
+            assetId: string;
+            isActive: boolean;
+        }>;
         expect(body[0]!.assetId).toBe('oldcoin');
         expect(body[0]!.isActive).toBe(false);
     });
@@ -620,8 +786,26 @@ describe('search', () => {
     it('clamps limit and dedupes by assetId across stages', async () => {
         const repo = makeRepo({
             byAssetId: { jup },
-            aliasesByNormalized: { jup: [{ alias: 'JUP', normalized: 'jup', asset_id: 'jup', priority: 1 }] },
-            aliasesFuzzy: { JUP: [{ alias: 'JUP', normalized: 'jup', asset_id: 'jup', priority: 1 }] },
+            aliasesByNormalized: {
+                jup: [
+                    {
+                        alias: 'JUP',
+                        normalized: 'jup',
+                        asset_id: 'jup',
+                        priority: 1,
+                    },
+                ],
+            },
+            aliasesFuzzy: {
+                JUP: [
+                    {
+                        alias: 'JUP',
+                        normalized: 'jup',
+                        asset_id: 'jup',
+                        priority: 1,
+                    },
+                ],
+            },
             assetsSymbolFuzzy: { JUP: [jup] },
             assetsNameFuzzy: { JUP: [jup] },
         });
@@ -643,7 +827,10 @@ describe('search', () => {
         for (const body of cases) {
             const res = await call(app, '/query/search', {
                 method: 'POST',
-                headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+                headers: {
+                    authorization: 'Bearer tok',
+                    'content-type': 'application/json',
+                },
                 body,
             });
             expect(res.status).toBe(400);
@@ -659,7 +846,10 @@ describe('resolveAssetRef', () => {
     it('resolves by direct assetId', async () => {
         const app = createApp(deps({ repo: makeRepo({ byAssetId: { jup } }) }));
         const res = await call(app, '/query/resolveAssetRef', authed({ ref: 'jup' }));
-        expect(await res.json()).toEqual({ assetId: 'jup', resolvedBy: 'assetId' });
+        expect(await res.json()).toEqual({
+            assetId: 'jup',
+            resolvedBy: 'assetId',
+        });
     });
 
     it('resolves by alias with highest priority winning', async () => {
@@ -667,24 +857,48 @@ describe('resolveAssetRef', () => {
             byAssetId: { jup, sol },
             aliasesByNormalized: {
                 jupiter: [
-                    { alias: 'Jupiter', normalized: 'jupiter', asset_id: 'sol', priority: 1 },
-                    { alias: 'Jupiter', normalized: 'jupiter', asset_id: 'jup', priority: 99 },
+                    {
+                        alias: 'Jupiter',
+                        normalized: 'jupiter',
+                        asset_id: 'sol',
+                        priority: 1,
+                    },
+                    {
+                        alias: 'Jupiter',
+                        normalized: 'jupiter',
+                        asset_id: 'jup',
+                        priority: 99,
+                    },
                 ],
             },
         });
         const app = createApp(deps({ repo }));
         const res = await call(app, '/query/resolveAssetRef', authed({ ref: 'Jupiter' }));
-        expect(await res.json()).toEqual({ assetId: 'jup', resolvedBy: 'alias', alias: 'Jupiter' });
+        expect(await res.json()).toEqual({
+            assetId: 'jup',
+            resolvedBy: 'alias',
+            alias: 'Jupiter',
+        });
     });
 
     it('resolves by mint when ref looks like a Solana mint', async () => {
         const repo = makeRepo({
             byAssetId: { jup },
-            variantsByMint: { [validMint]: { asset_id: 'jup', mint: validMint, is_active: true } },
+            variantsByMint: {
+                [validMint]: {
+                    asset_id: 'jup',
+                    mint: validMint,
+                    is_active: true,
+                },
+            },
         });
         const app = createApp(deps({ repo }));
         const res = await call(app, '/query/resolveAssetRef', authed({ ref: validMint }));
-        expect(await res.json()).toEqual({ assetId: 'jup', resolvedBy: 'mint', mint: validMint });
+        expect(await res.json()).toEqual({
+            assetId: 'jup',
+            resolvedBy: 'mint',
+            mint: validMint,
+        });
     });
 
     it('returns null when no resolution', async () => {
@@ -698,7 +912,14 @@ describe('resolveAssetRef', () => {
         const repo = makeRepo({
             byAssetId: { jup: inactiveJup },
             aliasesByNormalized: {
-                jupiter: [{ alias: 'Jupiter', normalized: 'jupiter', asset_id: 'jup', priority: 1 }],
+                jupiter: [
+                    {
+                        alias: 'Jupiter',
+                        normalized: 'jupiter',
+                        asset_id: 'jup',
+                        priority: 1,
+                    },
+                ],
             },
         });
         const app = createApp(deps({ repo }));
@@ -710,13 +931,22 @@ describe('resolveAssetRef', () => {
         expect(await aliasHidden.json()).toBeNull();
 
         const visible = await call(app, '/query/resolveAssetRef', authed({ ref: 'jup', includeInactive: true }));
-        expect(await visible.json()).toEqual({ assetId: 'jup', resolvedBy: 'assetId' });
+        expect(await visible.json()).toEqual({
+            assetId: 'jup',
+            resolvedBy: 'assetId',
+        });
     });
 
     it('skips mint resolution when variant is inactive and includeInactive is false', async () => {
         const repo = makeRepo({
             byAssetId: { jup },
-            variantsByMint: { [validMint]: { asset_id: 'jup', mint: validMint, is_active: false } },
+            variantsByMint: {
+                [validMint]: {
+                    asset_id: 'jup',
+                    mint: validMint,
+                    is_active: false,
+                },
+            },
         });
         const app = createApp(deps({ repo }));
         const res = await call(app, '/query/resolveAssetRef', authed({ ref: validMint }));
@@ -734,7 +964,10 @@ describe('resolveAssetRef', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/resolveAssetRef', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({}),
         });
         expect(res.status).toBe(400);
@@ -748,22 +981,36 @@ describe('resolveAssetRefForApi', () => {
     it('returns {assetId, ref, resolvedBy, mint:null} on direct assetId resolution', async () => {
         const app = createApp(deps({ repo: makeRepo({ byAssetId: { jup } }) }));
         const res = await call(app, '/query/resolveAssetRefForApi', authed({ ref: 'jup' }));
-        expect(await res.json()).toEqual({ assetId: 'jup', ref: 'jup', resolvedBy: 'assetId', mint: null });
+        expect(await res.json()).toEqual({
+            assetId: 'jup',
+            ref: 'jup',
+            resolvedBy: 'assetId',
+            mint: null,
+        });
     });
 
     it('returns null when ref is in deletion tombstones', async () => {
-        const app = createApp(deps({ repo: makeRepo({ byAssetId: { jup }, deletedRefs: new Set(['jup']) }) }));
+        const app = createApp(
+            deps({
+                repo: makeRepo({
+                    byAssetId: { jup },
+                    deletedRefs: new Set(['jup']),
+                }),
+            }),
+        );
         const res = await call(app, '/query/resolveAssetRefForApi', authed({ ref: 'jup' }));
         expect(await res.json()).toBeNull();
     });
 
     it('returns null when resolved asset has tombstoned coingeckoId', async () => {
-        const app = createApp(deps({
-            repo: makeRepo({
-                byAssetId: { jup },
-                deletedRefs: new Set(['jupiter-exchange-solana']),
+        const app = createApp(
+            deps({
+                repo: makeRepo({
+                    byAssetId: { jup },
+                    deletedRefs: new Set(['jupiter-exchange-solana']),
+                }),
             }),
-        }));
+        );
         const res = await call(app, '/query/resolveAssetRefForApi', authed({ ref: 'jup' }));
         expect(await res.json()).toBeNull();
     });
@@ -773,7 +1020,14 @@ describe('resolveAssetRefForApi', () => {
         const repo = makeRepo({
             byAssetId: { jup: jupNoCg },
             aliasesByNormalized: {
-                jupiter: [{ alias: 'Jupiter', normalized: 'jupiter', asset_id: 'jup', priority: 1 }],
+                jupiter: [
+                    {
+                        alias: 'Jupiter',
+                        normalized: 'jupiter',
+                        asset_id: 'jup',
+                        priority: 1,
+                    },
+                ],
             },
             deletedRefs: new Set(['jup']),
         });
@@ -786,7 +1040,14 @@ describe('resolveAssetRefForApi', () => {
         const repo = makeRepo({
             byAssetId: { jup },
             aliasesByNormalized: {
-                jupiter: [{ alias: 'Jupiter', normalized: 'jupiter', asset_id: 'jup', priority: 1 }],
+                jupiter: [
+                    {
+                        alias: 'Jupiter',
+                        normalized: 'jupiter',
+                        asset_id: 'jup',
+                        priority: 1,
+                    },
+                ],
             },
         });
         const app = createApp(deps({ repo }));
@@ -802,7 +1063,13 @@ describe('resolveAssetRefForApi', () => {
     it('resolves by mint and reports the mint', async () => {
         const repo = makeRepo({
             byAssetId: { jup },
-            variantsByMint: { [validMint]: { asset_id: 'jup', mint: validMint, is_active: true } },
+            variantsByMint: {
+                [validMint]: {
+                    asset_id: 'jup',
+                    mint: validMint,
+                    is_active: true,
+                },
+            },
         });
         const app = createApp(deps({ repo }));
         const res = await call(app, '/query/resolveAssetRefForApi', authed({ ref: validMint }));
@@ -825,7 +1092,10 @@ describe('resolveAssetRefForApi', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/resolveAssetRefForApi', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({ ref: 5 }),
         });
         expect(res.status).toBe(400);
@@ -834,17 +1104,32 @@ describe('resolveAssetRefForApi', () => {
 
 describe('listActiveWithCoinGeckoIds', () => {
     it('passes rows through in repo order, trimming coingeckoId', async () => {
-        const a = sampleRow({ id: 'a', asset_id: 'alpha', coingecko_id: ' alpha-id ' });
-        const b = sampleRow({ id: 'b', asset_id: 'beta', coingecko_id: 'beta-id' });
+        const a = sampleRow({
+            id: 'a',
+            asset_id: 'alpha',
+            coingecko_id: ' alpha-id ',
+        });
+        const b = sampleRow({
+            id: 'b',
+            asset_id: 'beta',
+            coingecko_id: 'beta-id',
+        });
         const app = createApp(deps({ repo: makeRepo({ activeWithCoinGecko: [a, b] }) }));
         const res = await call(app, '/query/listActiveWithCoinGeckoIds', authed({}));
-        const body = (await res.json()) as Array<{ assetId: string; coingeckoId: string }>;
+        const body = (await res.json()) as Array<{
+            assetId: string;
+            coingeckoId: string;
+        }>;
         expect(body.map(e => e.assetId)).toEqual(['alpha', 'beta']);
         expect(body[0]!.coingeckoId).toBe('alpha-id');
     });
 
     it('includes description when present', async () => {
-        const a = sampleRow({ asset_id: 'a1', coingecko_id: 'cg', description: 'desc' });
+        const a = sampleRow({
+            asset_id: 'a1',
+            coingecko_id: 'cg',
+            description: 'desc',
+        });
         const app = createApp(deps({ repo: makeRepo({ activeWithCoinGecko: [a] }) }));
         const res = await call(app, '/query/listActiveWithCoinGeckoIds', authed({}));
         const body = (await res.json()) as Array<{ description?: string }>;
@@ -861,7 +1146,10 @@ describe('listActiveWithCoinGeckoIds', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/listActiveWithCoinGeckoIds', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({ limit: 'lots' }),
         });
         expect(res.status).toBe(400);
@@ -871,12 +1159,20 @@ describe('listActiveWithCoinGeckoIds', () => {
 describe('listByCategory', () => {
     const jup = sampleRow();
     const sol = sampleRow({ id: 'sol-1', asset_id: 'sol', symbol: 'SOL' });
-    const inactive = sampleRow({ id: 'i', asset_id: 'inactive', is_active: false });
+    const inactive = sampleRow({
+        id: 'i',
+        asset_id: 'inactive',
+        is_active: false,
+    });
 
     it('returns active assets for the given category', async () => {
         const repo = makeRepo({
             byCategory: [
-                { category: 'crypto', includeInactive: false, rows: [jup, sol] },
+                {
+                    category: 'crypto',
+                    includeInactive: false,
+                    rows: [jup, sol],
+                },
             ],
         });
         const app = createApp(deps({ repo }));
@@ -888,8 +1184,16 @@ describe('listByCategory', () => {
     it('returns inactive entries when includeInactive=true', async () => {
         const repo = makeRepo({
             byCategory: [
-                { category: 'crypto', includeInactive: true, rows: [jup, sol, inactive] },
-                { category: 'crypto', includeInactive: false, rows: [jup, sol] },
+                {
+                    category: 'crypto',
+                    includeInactive: true,
+                    rows: [jup, sol, inactive],
+                },
+                {
+                    category: 'crypto',
+                    includeInactive: false,
+                    rows: [jup, sol],
+                },
             ],
         });
         const app = createApp(deps({ repo }));
@@ -910,7 +1214,10 @@ describe('listByCategory', () => {
         for (const body of cases) {
             const res = await call(app, '/query/listByCategory', {
                 method: 'POST',
-                headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+                headers: {
+                    authorization: 'Bearer tok',
+                    'content-type': 'application/json',
+                },
                 body,
             });
             expect(res.status).toBe(400);
@@ -933,7 +1240,10 @@ describe('x-tokens-identity header decoding', () => {
                 body: JSON.stringify({ assetId: 'jup' }),
             });
             expect(res.status).toBe(400);
-            const payload = (await res.json()) as { error: string; message?: string };
+            const payload = (await res.json()) as {
+                error: string;
+                message?: string;
+            };
             expect(payload.error).toBe('invalid_args');
             expect(payload.message).toBe('x-tokens-identity is not valid base64');
         }
@@ -971,7 +1281,10 @@ describe('x-tokens-identity header decoding', () => {
             headers: {
                 authorization: 'Bearer tok',
                 'content-type': 'application/json',
-                'x-tokens-identity': encodeIdentity({ clerkUserId: 'user_1', projectId: 'proj_1' }),
+                'x-tokens-identity': encodeIdentity({
+                    clerkUserId: 'user_1',
+                    projectId: 'proj_1',
+                }),
             },
             body: JSON.stringify({ assetId: 'jup' }),
         });
@@ -981,13 +1294,19 @@ describe('x-tokens-identity header decoding', () => {
 
 describe('POST /mutation/setAssetDescriptionByAssetId', () => {
     it('writes through the repo when identity + args are valid', async () => {
-        const calls: { assetId: string; description: string | null; updatedAt: Date }[] = [];
-        const app = createApp(deps({
-            repo: makeRepo({
-                byAssetId: { jup: sampleRow() },
-                descriptionCalls: calls,
+        const calls: {
+            assetId: string;
+            description: string | null;
+            updatedAt: Date;
+        }[] = [];
+        const app = createApp(
+            deps({
+                repo: makeRepo({
+                    byAssetId: { jup: sampleRow() },
+                    descriptionCalls: calls,
+                }),
             }),
-        }));
+        );
         const res = await call(app, '/mutation/setAssetDescriptionByAssetId', {
             method: 'POST',
             headers: {
@@ -995,7 +1314,10 @@ describe('POST /mutation/setAssetDescriptionByAssetId', () => {
                 'content-type': 'application/json',
                 'x-tokens-identity': encodeIdentity({ clerkUserId: 'user_1' }),
             },
-            body: JSON.stringify({ assetId: 'jup', description: 'A new description' }),
+            body: JSON.stringify({
+                assetId: 'jup',
+                description: 'A new description',
+            }),
         });
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual({ updated: true });
@@ -1008,7 +1330,10 @@ describe('POST /mutation/setAssetDescriptionByAssetId', () => {
         const app = createApp(deps({ repo: makeRepo({ byAssetId: { jup: sampleRow() } }) }));
         const res = await call(app, '/mutation/setAssetDescriptionByAssetId', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({ assetId: 'jup', description: 'whatever' }),
         });
         expect(res.status).toBe(401);
@@ -1080,7 +1405,10 @@ describe('POST /mutation/cacheWarm*', () => {
         const app = createApp(deps({ cacheWarmDeps: makeCacheWarmDeps() }));
         const res = await call(app, '/mutation/cacheWarmRequest', {
             method: 'POST',
-            headers: { authorization: 'Bearer wrong', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer wrong',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({ mint: 'abc' }),
         });
         expect(res.status).toBe(401);
@@ -1090,7 +1418,11 @@ describe('POST /mutation/cacheWarm*', () => {
         const app = createApp(deps({ cacheWarmDeps: makeCacheWarmDeps() }));
         const res = await call(app, '/mutation/cacheWarmRequest', authed({ secret: 'legacy', mint: 'abc' }));
         expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({ mint: 'abc', scheduled: [], skipped: ['unknown_mint'] });
+        expect(await res.json()).toEqual({
+            mint: 'abc',
+            scheduled: [],
+            skipped: ['unknown_mint'],
+        });
     });
 
     it('maps InvalidArgsError from cacheWarm handlers to 400 invalid_args', async () => {
@@ -1148,7 +1480,10 @@ describe('listDeletedRefs', () => {
         for (const body of ['{}', JSON.stringify({ refs: 'bonk' }), JSON.stringify({ refs: [1] })]) {
             const res = await call(app, '/query/listDeletedRefs', {
                 method: 'POST',
-                headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+                headers: {
+                    authorization: 'Bearer tok',
+                    'content-type': 'application/json',
+                },
                 body,
             });
             expect(res.status).toBe(400);
@@ -1178,14 +1513,24 @@ describe('sanctumListActive', () => {
     it('maps rows to camelCase, omitting nulls', async () => {
         const row = sampleSanctumRow();
         const repo: SanctumLstsRepo = {
-            async listActive() { return [row]; },
-            async findByMint() { return null; },
-            async findActiveBySymbolLower() { return []; },
+            async listActive() {
+                return [row];
+            },
+            async findByMint() {
+                return null;
+            },
+            async findActiveBySymbolLower() {
+                return [];
+            },
         };
         const app = createApp(deps({ sanctumLstsRepo: repo }));
         const res = await call(app, '/query/sanctumListActive', authed({ limit: 100 }));
         expect(res.status).toBe(200);
-        const body = (await res.json()) as Array<{ mint: string; symbol?: string; tvlUsd?: number }>;
+        const body = (await res.json()) as Array<{
+            mint: string;
+            symbol?: string;
+            tvlUsd?: number;
+        }>;
         expect(body.length).toBe(1);
         expect(body[0]!.mint).toBe('mint1');
         expect(body[0]!.symbol).toBe('jitoSOL');
@@ -1193,11 +1538,24 @@ describe('sanctumListActive', () => {
     });
 
     it('omits optional fields that are null in DB', async () => {
-        const row = sampleSanctumRow({ symbol: null, name: null, logo_uri: null, website_url: null, tvl_usd: null, apy: null });
+        const row = sampleSanctumRow({
+            symbol: null,
+            name: null,
+            logo_uri: null,
+            website_url: null,
+            tvl_usd: null,
+            apy: null,
+        });
         const repo: SanctumLstsRepo = {
-            async listActive() { return [row]; },
-            async findByMint() { return null; },
-            async findActiveBySymbolLower() { return []; },
+            async listActive() {
+                return [row];
+            },
+            async findByMint() {
+                return null;
+            },
+            async findActiveBySymbolLower() {
+                return [];
+            },
         };
         const app = createApp(deps({ sanctumLstsRepo: repo }));
         const res = await call(app, '/query/sanctumListActive', authed({}));
@@ -1213,7 +1571,10 @@ describe('sanctumListActive', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/sanctumListActive', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({ limit: 'big' }),
         });
         expect(res.status).toBe(400);
@@ -1226,22 +1587,38 @@ describe('sanctumResolveRef', () => {
     it('resolves by mint when ref looks like a Solana mint', async () => {
         const row = sampleSanctumRow({ mint: validMint });
         const repo: SanctumLstsRepo = {
-            async listActive() { return []; },
-            async findByMint(m) { return m === validMint ? row : null; },
-            async findActiveBySymbolLower() { return []; },
+            async listActive() {
+                return [];
+            },
+            async findByMint(m) {
+                return m === validMint ? row : null;
+            },
+            async findActiveBySymbolLower() {
+                return [];
+            },
         };
         const app = createApp(deps({ sanctumLstsRepo: repo }));
         const res = await call(app, '/query/sanctumResolveRef', authed({ ref: validMint }));
-        expect(await res.json()).toEqual({ mint: validMint, symbol: 'jitoSOL', sourceRank: 10 });
+        expect(await res.json()).toEqual({
+            mint: validMint,
+            symbol: 'jitoSOL',
+            sourceRank: 10,
+        });
     });
 
     it('resolves by symbol lowercased, picking lowest sourceRank', async () => {
         const a = sampleSanctumRow({ mint: 'A', source_rank: 50 });
         const b = sampleSanctumRow({ mint: 'B', source_rank: 5 });
         const repo: SanctumLstsRepo = {
-            async listActive() { return []; },
-            async findByMint() { return null; },
-            async findActiveBySymbolLower() { return [a, b]; },
+            async listActive() {
+                return [];
+            },
+            async findByMint() {
+                return null;
+            },
+            async findActiveBySymbolLower() {
+                return [a, b];
+            },
         };
         const app = createApp(deps({ sanctumLstsRepo: repo }));
         const res = await call(app, '/query/sanctumResolveRef', authed({ ref: 'JITOSOL' }));
@@ -1267,7 +1644,10 @@ describe('sanctumResolveRef', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/sanctumResolveRef', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({}),
         });
         expect(res.status).toBe(400);
@@ -1290,8 +1670,12 @@ describe('assetMarketsGetLatestByAssetId', () => {
     it('maps the row to camelCase', async () => {
         const row = sampleAssetMarket();
         const repo: AssetMarketsRepo = {
-            async findLatestByAssetId(id) { return id === 'sol' ? row : null; },
-            async findLatestByAssetIds() { return []; },
+            async findLatestByAssetId(id) {
+                return id === 'sol' ? row : null;
+            },
+            async findLatestByAssetIds() {
+                return [];
+            },
         };
         const app = createApp(deps({ assetMarketsRepo: repo }));
         const res = await call(app, '/query/assetMarketsGetLatestByAssetId', authed({ assetId: 'sol' }));
@@ -1314,7 +1698,10 @@ describe('assetMarketsGetLatestByAssetId', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/assetMarketsGetLatestByAssetId', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({ assetId: 5 }),
         });
         expect(res.status).toBe(400);
@@ -1325,12 +1712,19 @@ describe('assetMarketsGetLatestByAssetIds', () => {
     it('returns one entry per input id preserving order; null when missing', async () => {
         const sol = sampleAssetMarket();
         const repo: AssetMarketsRepo = {
-            async findLatestByAssetId() { return null; },
-            async findLatestByAssetIds(ids) { return ids.includes('sol') ? [sol] : []; },
+            async findLatestByAssetId() {
+                return null;
+            },
+            async findLatestByAssetIds(ids) {
+                return ids.includes('sol') ? [sol] : [];
+            },
         };
         const app = createApp(deps({ assetMarketsRepo: repo }));
         const res = await call(app, '/query/assetMarketsGetLatestByAssetIds', authed({ assetIds: ['sol', 'missing'] }));
-        const body = (await res.json()) as Array<{ assetId: string; market: null | { assetId: string } }>;
+        const body = (await res.json()) as Array<{
+            assetId: string;
+            market: null | { assetId: string };
+        }>;
         expect(body.length).toBe(2);
         expect(body[0]!.assetId).toBe('sol');
         expect(body[0]!.market?.assetId).toBe('sol');
@@ -1341,7 +1735,10 @@ describe('assetMarketsGetLatestByAssetIds', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/assetMarketsGetLatestByAssetIds', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({ assetIds: 'sol' }),
         });
         expect(res.status).toBe(400);
@@ -1387,11 +1784,16 @@ describe('variantMarketsGetLatestByMints', () => {
     it('returns mapped market snapshot per mint', async () => {
         const row = sampleVariantMarketRow();
         const repo: VariantMarketsRepo = {
-            async findLatestByMints(mints) { return mints.includes('m1') ? [row] : []; },
+            async findLatestByMints(mints) {
+                return mints.includes('m1') ? [row] : [];
+            },
         };
         const app = createApp(deps({ variantMarketsRepo: repo }));
         const res = await call(app, '/query/variantMarketsGetLatestByMints', authed({ mints: ['m1', 'absent'] }));
-        const body = (await res.json()) as Array<{ mint: string; market: null | Record<string, unknown> }>;
+        const body = (await res.json()) as Array<{
+            mint: string;
+            market: null | Record<string, unknown>;
+        }>;
         expect(body.length).toBe(2);
         expect(body[0]!.mint).toBe('m1');
         expect(body[0]!.market?.source).toBe('birdeye');
@@ -1431,11 +1833,16 @@ describe('variantMarketsGetLatestByMints', () => {
             last_fetched_at: now,
         });
         const repo: VariantMarketsRepo = {
-            async findLatestByMints() { return [row]; },
+            async findLatestByMints() {
+                return [row];
+            },
         };
         const app = createApp(deps({ variantMarketsRepo: repo }));
         const res = await call(app, '/query/variantMarketsGetLatestByMints', authed({ mints: ['m1'] }));
-        const body = (await res.json()) as Array<{ mint: string; market: Record<string, unknown> }>;
+        const body = (await res.json()) as Array<{
+            mint: string;
+            market: Record<string, unknown>;
+        }>;
         expect(body[0]!.market.metricsSource).toBe('clickhouse_trades');
         expect(body[0]!.market.price).toBe(2.22);
         expect(body[0]!.market.volume1hUSD).toBe(200);
@@ -1466,11 +1873,16 @@ describe('variantMarketsGetLatestByMints', () => {
             last_fetched_at: now,
         });
         const repo: VariantMarketsRepo = {
-            async findLatestByMints() { return [row]; },
+            async findLatestByMints() {
+                return [row];
+            },
         };
         const app = createApp(deps({ variantMarketsRepo: repo }));
         const res = await call(app, '/query/variantMarketsGetLatestByMints', authed({ mints: ['m1'] }));
-        const body = (await res.json()) as Array<{ mint: string; market: Record<string, unknown> }>;
+        const body = (await res.json()) as Array<{
+            mint: string;
+            market: Record<string, unknown>;
+        }>;
         expect(body[0]!.market.metricsSource).toBe('clickhouse_trades');
         expect(body[0]!.market.price).toBe(2.22);
         expect(body[0]!.market.volume24hUSD).toBe(2_000);
@@ -1495,11 +1907,16 @@ describe('variantMarketsGetLatestByMints', () => {
             last_fetched_at: now,
         });
         const repo: VariantMarketsRepo = {
-            async findLatestByMints() { return [row]; },
+            async findLatestByMints() {
+                return [row];
+            },
         };
         const app = createApp(deps({ variantMarketsRepo: repo }));
         const res = await call(app, '/query/variantMarketsGetLatestByMints', authed({ mints: ['m1'] }));
-        const body = (await res.json()) as Array<{ mint: string; market: Record<string, unknown> }>;
+        const body = (await res.json()) as Array<{
+            mint: string;
+            market: Record<string, unknown>;
+        }>;
         expect(body[0]!.market.metricsSource).toBe('birdeye');
         expect(body[0]!.market.price).toBe(1.11);
         expect(body[0]!.market.volume24hUSD).toBe(1_000);
@@ -1517,11 +1934,16 @@ describe('variantMarketsGetLatestByMints', () => {
             last_fetched_at: now - 60 * 60_000,
         });
         const repo: VariantMarketsRepo = {
-            async findLatestByMints() { return [row]; },
+            async findLatestByMints() {
+                return [row];
+            },
         };
         const app = createApp(deps({ variantMarketsRepo: repo }));
         const res = await call(app, '/query/variantMarketsGetLatestByMints', authed({ mints: ['m1'] }));
-        const body = (await res.json()) as Array<{ mint: string; market: Record<string, unknown> }>;
+        const body = (await res.json()) as Array<{
+            mint: string;
+            market: Record<string, unknown>;
+        }>;
         expect(body[0]!.market.metricsSource).toBe('birdeye');
         expect(body[0]!.market.price).toBe(1.11);
         expect(body[0]!.market.volume24hUSD).toBe(1_000);
@@ -1546,11 +1968,16 @@ describe('variantMarketsGetLatestByMints', () => {
             last_fetched_at: now,
         });
         const repo: VariantMarketsRepo = {
-            async findLatestByMints() { return [row]; },
+            async findLatestByMints() {
+                return [row];
+            },
         };
         const app = createApp(deps({ variantMarketsRepo: repo }));
         const res = await call(app, '/query/variantMarketsGetLatestByMints', authed({ mints: ['m1'] }));
-        const body = (await res.json()) as Array<{ mint: string; market: Record<string, unknown> }>;
+        const body = (await res.json()) as Array<{
+            mint: string;
+            market: Record<string, unknown>;
+        }>;
         expect(body[0]!.market.price).toBe(2.22);
         expect(body[0]!.market.priceChange24hPercent).toBe(3.3);
     });
@@ -1565,7 +1992,10 @@ describe('variantMarketsGetLatestByMints', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/variantMarketsGetLatestByMints', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({ mints: 'm1' }),
         });
         expect(res.status).toBe(400);
@@ -1595,8 +2025,12 @@ describe('assetVariantsGetByMint', () => {
         const row = sampleVariantDocRow();
         const repo: AssetVariantsRepo = {
             ...emptyAssetVariantsRepo(),
-            async findVariantByMint(m) { return m === row.mint ? row : null; },
-            async findAssetIsActive() { return true; },
+            async findVariantByMint(m) {
+                return m === row.mint ? row : null;
+            },
+            async findAssetIsActive() {
+                return true;
+            },
         };
         const app = createApp(deps({ assetVariantsRepo: repo }));
         const res = await call(app, '/query/assetVariantsGetByMint', authed({ mint: row.mint }));
@@ -1614,13 +2048,21 @@ describe('assetVariantsGetByMint', () => {
         const row = sampleVariantDocRow({ is_active: false });
         const repo: AssetVariantsRepo = {
             ...emptyAssetVariantsRepo(),
-            async findVariantByMint() { return row; },
-            async findAssetIsActive() { return true; },
+            async findVariantByMint() {
+                return row;
+            },
+            async findAssetIsActive() {
+                return true;
+            },
         };
         const app = createApp(deps({ assetVariantsRepo: repo }));
         const hidden = await call(app, '/query/assetVariantsGetByMint', authed({ mint: row.mint }));
         expect(await hidden.json()).toBeNull();
-        const visible = await call(app, '/query/assetVariantsGetByMint', authed({ mint: row.mint, includeInactive: true }));
+        const visible = await call(
+            app,
+            '/query/assetVariantsGetByMint',
+            authed({ mint: row.mint, includeInactive: true }),
+        );
         const body = (await visible.json()) as { isActive: boolean };
         expect(body.isActive).toBe(false);
     });
@@ -1629,8 +2071,12 @@ describe('assetVariantsGetByMint', () => {
         const row = sampleVariantDocRow();
         const repo: AssetVariantsRepo = {
             ...emptyAssetVariantsRepo(),
-            async findVariantByMint() { return row; },
-            async findAssetIsActive() { return false; },
+            async findVariantByMint() {
+                return row;
+            },
+            async findAssetIsActive() {
+                return false;
+            },
         };
         const app = createApp(deps({ assetVariantsRepo: repo }));
         const res = await call(app, '/query/assetVariantsGetByMint', authed({ mint: row.mint }));
@@ -1641,7 +2087,10 @@ describe('assetVariantsGetByMint', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/assetVariantsGetByMint', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({}),
         });
         expect(res.status).toBe(400);
@@ -1651,7 +2100,11 @@ describe('assetVariantsGetByMint', () => {
 describe('assetVariantsListByAssetIds', () => {
     it('groups variants by asset id preserving input order', async () => {
         const solVariant = sampleVariantDocRow();
-        const jupVariant = sampleVariantDocRow({ asset_id: 'jup', mint: 'jupMint', variant_id: 'jup:native' });
+        const jupVariant = sampleVariantDocRow({
+            asset_id: 'jup',
+            mint: 'jupMint',
+            variant_id: 'jup:native',
+        });
         const repo: AssetVariantsRepo = {
             ...emptyAssetVariantsRepo(),
             async findVariantsByAssetIds(ids) {
@@ -1662,8 +2115,15 @@ describe('assetVariantsListByAssetIds', () => {
             },
         };
         const app = createApp(deps({ assetVariantsRepo: repo }));
-        const res = await call(app, '/query/assetVariantsListByAssetIds', authed({ assetIds: ['jup', 'solana', 'missing'] }));
-        const body = (await res.json()) as Array<{ assetId: string; variants: Array<{ mint: string }> }>;
+        const res = await call(
+            app,
+            '/query/assetVariantsListByAssetIds',
+            authed({ assetIds: ['jup', 'solana', 'missing'] }),
+        );
+        const body = (await res.json()) as Array<{
+            assetId: string;
+            variants: Array<{ mint: string }>;
+        }>;
         expect(body.map(e => e.assetId)).toEqual(['jup', 'solana', 'missing']);
         expect(body[0]!.variants[0]!.mint).toBe('jupMint');
         expect(body[1]!.variants[0]!.mint).toBe(solVariant.mint);
@@ -1674,7 +2134,10 @@ describe('assetVariantsListByAssetIds', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/assetVariantsListByAssetIds', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({ assetIds: 'solana' }),
         });
         expect(res.status).toBe(400);
@@ -1691,11 +2154,16 @@ describe('assetVariantsListByMints', () => {
                 batchCalls += 1;
                 return requested.includes(variant.mint) ? [variant] : [];
             },
-            async findAssetIsActive() { return true; },
+            async findAssetIsActive() {
+                return true;
+            },
         };
         const app = createApp(deps({ assetVariantsRepo: repo }));
         const res = await call(app, '/query/assetVariantsListByMints', authed({ mints: [variant.mint, 'missing'] }));
-        const body = (await res.json()) as Array<{ mint: string; variant: null | { mint: string } }>;
+        const body = (await res.json()) as Array<{
+            mint: string;
+            variant: null | { mint: string };
+        }>;
         expect(body.length).toBe(2);
         expect(body[0]!.variant?.mint).toBe(variant.mint);
         expect(body[1]!.variant).toBeNull();
@@ -1706,7 +2174,10 @@ describe('assetVariantsListByMints', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/assetVariantsListByMints', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({}),
         });
         expect(res.status).toBe(400);
@@ -1734,7 +2205,11 @@ describe('assetVariantsGetSolanaDefaultVariantsViewForApi', () => {
         };
         const app = createApp(deps({ assetVariantsRepo: repo }));
         const res = await call(app, '/query/assetVariantsGetSolanaDefaultVariantsViewForApi', authed({}));
-        const body = (await res.json()) as { assetId: string; updatedAt: number; variants: Array<{ mint: string }> };
+        const body = (await res.json()) as {
+            assetId: string;
+            updatedAt: number;
+            variants: Array<{ mint: string }>;
+        };
         expect(body.assetId).toBe('solana');
         expect(body.updatedAt).toBe(9999);
         expect(body.variants[0]!.mint).toBe('mint1');
@@ -1751,17 +2226,30 @@ describe('assetVariantsListSolanaVariantsForApi', () => {
     it('returns variants computed from repo data', async () => {
         const v1 = sampleVariantDocRow({ mint: 'M1', kind: 'native' });
         const v2 = sampleVariantDocRow({ mint: 'M2', kind: 'wrapped' });
-        const marketRow = sampleVariantMarketRowForView({ mint: 'M1', liquidity: 5_000_000 });
+        const marketRow = sampleVariantMarketRowForView({
+            mint: 'M1',
+            liquidity: 5_000_000,
+        });
         const repo: AssetVariantsRepo = {
             ...emptyAssetVariantsRepo(),
-            async findActiveSolanaVariants() { return [v1, v2]; },
+            async findActiveSolanaVariants() {
+                return [v1, v2];
+            },
             async findVariantMarketsByMints(mints) {
                 return mints.includes('M1') ? [marketRow] : [];
             },
         };
         const app = createApp(deps({ assetVariantsRepo: repo }));
         const res = await call(app, '/query/assetVariantsListSolanaVariantsForApi', authed({}));
-        const body = (await res.json()) as { assetId: string; requestedMintIsVariant: boolean; variants: Array<{ mint: string; liquidityTier: string; market: null | { liquidity: number | null } }> };
+        const body = (await res.json()) as {
+            assetId: string;
+            requestedMintIsVariant: boolean;
+            variants: Array<{
+                mint: string;
+                liquidityTier: string;
+                market: null | { liquidity: number | null };
+            }>;
+        };
         expect(body.assetId).toBe('solana');
         expect(body.requestedMintIsVariant).toBe(true);
         expect(body.variants.length).toBe(2);
@@ -1775,7 +2263,10 @@ describe('assetVariantsListSolanaVariantsForApi', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/assetVariantsListSolanaVariantsForApi', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({ kind: 'bogus' }),
         });
         expect(res.status).toBe(400);
@@ -1785,7 +2276,6 @@ describe('assetVariantsListSolanaVariantsForApi', () => {
 function sampleVariantMarketRowForView(overrides: Partial<VariantMarketRow> = {}): VariantMarketRow {
     return sampleVariantMarketRow(overrides);
 }
-
 
 describe('assetsApiLoadAssetBaseForApi', () => {
     const NOW_MS = NOW.getTime();
@@ -1908,7 +2398,9 @@ describe('assetsApiLoadAssetBaseForApi', () => {
             variantMarketsByMint: { [jupMint]: jupVariantMarketRow },
             fillQualityByMint: { [jupMint]: jupFillQualityRow },
             assetMarketByAssetId: { jup: jupAssetMarketRow },
-            coingeckoCoinByCoinId: { 'jupiter-exchange-solana': jupCoingeckoCoinRow },
+            coingeckoCoinByCoinId: {
+                'jupiter-exchange-solana': jupCoingeckoCoinRow,
+            },
         });
         const app = createApp(deps({ repo: makeRepo(), assetsApiRepo: repo }));
         const res = await call(
@@ -1928,19 +2420,27 @@ describe('assetsApiLoadAssetBaseForApi', () => {
         expect((body.asset as { assetId: string }).assetId).toBe('jup');
         expect((body.asset as { createdAt: number }).createdAt).toBe(NOW_MS);
         expect((body.asset as { imageUrl: string }).imageUrl).toBe('https://example.test/jup.png');
-        const variants = body.variants as Array<{ mint: string; trustTier: string; tags: string[] }>;
+        const variants = body.variants as Array<{
+            mint: string;
+            trustTier: string;
+            tags: string[];
+        }>;
         expect(variants).toHaveLength(1);
         expect(variants[0]!.mint).toBe(jupMint);
         expect(variants[0]!.trustTier).toBe('tier1');
-        const variantMarkets = body.variantMarkets as Array<{ mint: string; market: Record<string, unknown> | null }>;
+        const variantMarkets = body.variantMarkets as Array<{
+            mint: string;
+            market: Record<string, unknown> | null;
+        }>;
         expect(variantMarkets).toHaveLength(1);
         expect(variantMarkets[0]!.mint).toBe(jupMint);
         expect((variantMarkets[0]!.market as { source: string }).source).toBe('birdeye');
-        expect((variantMarkets[0]!.market as { logoURI: string }).logoURI).toBe(
-            'https://example.test/jup.png',
-        );
+        expect((variantMarkets[0]!.market as { logoURI: string }).logoURI).toBe('https://example.test/jup.png');
         expect((variantMarkets[0]!.market as { lastFetchedAt: number }).lastFetchedAt).toBe(NOW_MS);
-        const fillQuality = body.fillQuality as Array<{ mint: string; fillQuality: Record<string, unknown> | null }>;
+        const fillQuality = body.fillQuality as Array<{
+            mint: string;
+            fillQuality: Record<string, unknown> | null;
+        }>;
         expect(fillQuality).toHaveLength(1);
         expect((fillQuality[0]!.fillQuality as { executionScore: number }).executionScore).toBe(0.9);
         expect((body.assetMarket as { primaryMint: string }).primaryMint).toBe(jupMint);
@@ -1949,25 +2449,20 @@ describe('assetsApiLoadAssetBaseForApi', () => {
 
     it('returns {asset: null, variants: []} when asset is missing', async () => {
         const app = createApp(deps({ repo: makeRepo(), assetsApiRepo: makeAssetsApiRepo() }));
-        const res = await call(
-            app,
-            '/query/assetsApiLoadAssetBaseForApi',
-            authed({ assetId: 'unknown' }),
-        );
+        const res = await call(app, '/query/assetsApiLoadAssetBaseForApi', authed({ assetId: 'unknown' }));
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual({ asset: null, variants: [] });
     });
 
     it('hides inactive asset unless includeInactive=true', async () => {
-        const inactive: AssetsApiAssetRow = { ...jupAssetRow, is_active: false };
+        const inactive: AssetsApiAssetRow = {
+            ...jupAssetRow,
+            is_active: false,
+        };
         const repo = makeAssetsApiRepo({ assetsByAssetId: { jup: inactive } });
         const app = createApp(deps({ repo: makeRepo(), assetsApiRepo: repo }));
 
-        const hidden = await call(
-            app,
-            '/query/assetsApiLoadAssetBaseForApi',
-            authed({ assetId: 'jup' }),
-        );
+        const hidden = await call(app, '/query/assetsApiLoadAssetBaseForApi', authed({ assetId: 'jup' }));
         expect(await hidden.json()).toEqual({ asset: null, variants: [] });
 
         const visible = await call(
@@ -1975,7 +2470,9 @@ describe('assetsApiLoadAssetBaseForApi', () => {
             '/query/assetsApiLoadAssetBaseForApi',
             authed({ assetId: 'jup', includeInactive: true }),
         );
-        const body = (await visible.json()) as { asset: { isActive: boolean } | null };
+        const body = (await visible.json()) as {
+            asset: { isActive: boolean } | null;
+        };
         expect(body.asset?.isActive).toBe(false);
     });
 
@@ -1990,7 +2487,10 @@ describe('assetsApiLoadAssetBaseForApi', () => {
             '/query/assetsApiLoadAssetBaseForApi',
             authed({ assetId: 'jup', includeVariants: false }),
         );
-        const body = (await res.json()) as { variants: unknown[]; variantMarkets?: unknown };
+        const body = (await res.json()) as {
+            variants: unknown[];
+            variantMarkets?: unknown;
+        };
         expect(body.variants).toEqual([]);
         expect(body.variantMarkets).toBeUndefined();
     });
@@ -2021,7 +2521,10 @@ describe('assetsApiLoadAssetBaseForApi', () => {
 
     it('applies the logoURI fallback when variant market has no logo_uri', async () => {
         const tbtcMint = '6DNSN2BJsaPFdFFc1zP37kkeNe4Usc1Sqkzr9C9vPWcU';
-        const tbtcVariant: AssetsApiVariantRow = { ...jupVariantRow, mint: tbtcMint };
+        const tbtcVariant: AssetsApiVariantRow = {
+            ...jupVariantRow,
+            mint: tbtcMint,
+        };
         const tbtcMarket: AssetsApiVariantMarketRow = {
             ...jupVariantMarketRow,
             mint: tbtcMint,
@@ -2076,9 +2579,13 @@ describe('assetsApiLoadAssetBaseForApi', () => {
         let coingeckoCalls = 0;
         const repo: AssetsApiRepo = {
             ...makeAssetsApiRepo({
-                assetsByAssetId: { jup: { ...jupAssetRow, coingecko_id: null } },
+                assetsByAssetId: {
+                    jup: { ...jupAssetRow, coingecko_id: null },
+                },
                 activeVariantsByAssetId: { jup: [jupVariantRow] },
-                coingeckoCoinByCoinId: { 'jupiter-exchange-solana': jupCoingeckoCoinRow },
+                coingeckoCoinByCoinId: {
+                    'jupiter-exchange-solana': jupCoingeckoCoinRow,
+                },
             }),
             findCoingeckoCoinByCoinId: async coinId => {
                 coingeckoCalls++;
@@ -2133,7 +2640,10 @@ describe('assetsApiLoadAssetBaseForApi', () => {
         for (const body of cases) {
             const res = await call(app, '/query/assetsApiLoadAssetBaseForApi', {
                 method: 'POST',
-                headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+                headers: {
+                    authorization: 'Bearer tok',
+                    'content-type': 'application/json',
+                },
                 body,
             });
             expect(res.status).toBe(400);
@@ -2169,7 +2679,10 @@ describe('assetsApiLoadAssetBaseForApi', () => {
                 includeVariantMarkets: true,
             }),
         );
-        const body = (await res.json()) as { variantMarkets: unknown[]; variants: unknown[] };
+        const body = (await res.json()) as {
+            variantMarkets: unknown[];
+            variants: unknown[];
+        };
         expect(body.variants).toHaveLength(300);
         expect(body.variantMarkets).toHaveLength(250);
         expect(batchCalls).toBe(1);
@@ -2177,10 +2690,26 @@ describe('assetsApiLoadAssetBaseForApi', () => {
     });
 
     it('fillQuality batch returns the same row the singular would for each mint', async () => {
-        const variantA: AssetsApiVariantRow = { ...jupVariantRow, mint: 'mint-A', variant_id: 'jup:solana:A' };
-        const variantB: AssetsApiVariantRow = { ...jupVariantRow, mint: 'mint-B', variant_id: 'jup:solana:B' };
-        const fqA: AssetsApiFillQualityRow = { ...jupFillQualityRow, mint: 'mint-A', execution_score: 0.7 };
-        const fqB: AssetsApiFillQualityRow = { ...jupFillQualityRow, mint: 'mint-B', execution_score: 0.3 };
+        const variantA: AssetsApiVariantRow = {
+            ...jupVariantRow,
+            mint: 'mint-A',
+            variant_id: 'jup:solana:A',
+        };
+        const variantB: AssetsApiVariantRow = {
+            ...jupVariantRow,
+            mint: 'mint-B',
+            variant_id: 'jup:solana:B',
+        };
+        const fqA: AssetsApiFillQualityRow = {
+            ...jupFillQualityRow,
+            mint: 'mint-A',
+            execution_score: 0.7,
+        };
+        const fqB: AssetsApiFillQualityRow = {
+            ...jupFillQualityRow,
+            mint: 'mint-B',
+            execution_score: 0.3,
+        };
         const fillQualityByMint: Record<string, AssetsApiFillQualityRow> = {
             'mint-A': fqA,
             'mint-B': fqB,
@@ -2236,7 +2765,9 @@ describe('stockInstrumentsGetByAssetId', () => {
         const row = sampleStockInstrumentRow();
         const repo: StockReadsRepo = {
             ...emptyStockReadsRepo(),
-            async findInstrumentByAssetId(id) { return id === 'aapl' ? row : null; },
+            async findInstrumentByAssetId(id) {
+                return id === 'aapl' ? row : null;
+            },
         };
         const app = createApp(deps({ stockReadsRepo: repo }));
         const res = await call(app, '/query/stockInstrumentsGetByAssetId', authed({ assetId: 'aapl' }));
@@ -2262,7 +2793,9 @@ describe('stockInstrumentsGetByAssetId', () => {
         const row = sampleStockInstrumentRow({ is_active: false });
         const repo: StockReadsRepo = {
             ...emptyStockReadsRepo(),
-            async findInstrumentByAssetId() { return row; },
+            async findInstrumentByAssetId() {
+                return row;
+            },
         };
         const app = createApp(deps({ stockReadsRepo: repo }));
         const hidden = await call(app, '/query/stockInstrumentsGetByAssetId', authed({ assetId: 'aapl' }));
@@ -2288,15 +2821,16 @@ describe('stockInstrumentsGetByAssetIds', () => {
         const row = sampleStockInstrumentRow();
         const repo: StockReadsRepo = {
             ...emptyStockReadsRepo(),
-            async findInstrumentsByAssetIds(ids) { return ids.includes('aapl') ? [row] : []; },
+            async findInstrumentsByAssetIds(ids) {
+                return ids.includes('aapl') ? [row] : [];
+            },
         };
         const app = createApp(deps({ stockReadsRepo: repo }));
-        const res = await call(
-            app,
-            '/query/stockInstrumentsGetByAssetIds',
-            authed({ assetIds: ['aapl', 'missing'] }),
-        );
-        const body = (await res.json()) as Array<{ assetId: string; instrument: null | { assetId: string } }>;
+        const res = await call(app, '/query/stockInstrumentsGetByAssetIds', authed({ assetIds: ['aapl', 'missing'] }));
+        const body = (await res.json()) as Array<{
+            assetId: string;
+            instrument: null | { assetId: string };
+        }>;
         expect(body.length).toBe(2);
         expect(body[0]!.assetId).toBe('aapl');
         expect(body[0]!.instrument?.assetId).toBe('aapl');
@@ -2315,7 +2849,9 @@ describe('stockPricesGetLatestByAssetId', () => {
         const row = sampleStockPriceRow();
         const repo: StockReadsRepo = {
             ...emptyStockReadsRepo(),
-            async findPriceByAssetId(id) { return id === 'aapl' ? row : null; },
+            async findPriceByAssetId(id) {
+                return id === 'aapl' ? row : null;
+            },
         };
         const app = createApp(deps({ stockReadsRepo: repo }));
         const res = await call(app, '/query/stockPricesGetLatestByAssetId', authed({ assetId: 'aapl' }));
@@ -2348,15 +2884,16 @@ describe('stockPricesGetLatestByAssetIds', () => {
         const row = sampleStockPriceRow();
         const repo: StockReadsRepo = {
             ...emptyStockReadsRepo(),
-            async findPricesByAssetIds(ids) { return ids.includes('aapl') ? [row] : []; },
+            async findPricesByAssetIds(ids) {
+                return ids.includes('aapl') ? [row] : [];
+            },
         };
         const app = createApp(deps({ stockReadsRepo: repo }));
-        const res = await call(
-            app,
-            '/query/stockPricesGetLatestByAssetIds',
-            authed({ assetIds: ['aapl', 'missing'] }),
-        );
-        const body = (await res.json()) as Array<{ assetId: string; snapshot: null | { assetId: string } }>;
+        const res = await call(app, '/query/stockPricesGetLatestByAssetIds', authed({ assetIds: ['aapl', 'missing'] }));
+        const body = (await res.json()) as Array<{
+            assetId: string;
+            snapshot: null | { assetId: string };
+        }>;
         expect(body.length).toBe(2);
         expect(body[0]!.assetId).toBe('aapl');
         expect(body[0]!.snapshot?.assetId).toBe('aapl');
@@ -2383,7 +2920,13 @@ const sampleCandleRow = (overrides: Partial<OhlcvCandleRow> = {}): OhlcvCandleRo
 describe('ohlcvList', () => {
     it('returns mapped candles for valid args', async () => {
         const candle = sampleCandleRow();
-        let captured: { address?: string; interval?: string; from?: number; to?: number; limit?: number } = {};
+        let captured: {
+            address?: string;
+            interval?: string;
+            from?: number;
+            to?: number;
+            limit?: number;
+        } = {};
         const repo: OhlcvReadsRepo = {
             ...emptyOhlcvReadsRepo(),
             async listByAddressAndInterval(address, interval, from, to, limit) {
@@ -2395,7 +2938,13 @@ describe('ohlcvList', () => {
         const res = await call(
             app,
             '/query/ohlcvList',
-            authed({ address: 'mintA', interval: '1H', from: 100, to: 200, limit: 50 }),
+            authed({
+                address: 'mintA',
+                interval: '1H',
+                from: 100,
+                to: 200,
+                limit: 50,
+            }),
         );
         const body = (await res.json()) as OhlcvCandleRow[];
         expect(body.length).toBe(1);
@@ -2419,7 +2968,9 @@ describe('ohlcvBounds', () => {
     it('returns min/max time from repo', async () => {
         const repo: OhlcvReadsRepo = {
             ...emptyOhlcvReadsRepo(),
-            async getBoundsByAddressAndInterval() { return { minTime: 100, maxTime: 500 }; },
+            async getBoundsByAddressAndInterval() {
+                return { minTime: 100, maxTime: 500 };
+            },
         };
         const app = createApp(deps({ ohlcvReadsRepo: repo }));
         const res = await call(app, '/query/ohlcvBounds', authed({ address: 'mintA', interval: '1D' }));
@@ -2448,7 +2999,12 @@ describe('stockOhlcvList', () => {
         const res = await call(
             app,
             '/query/stockOhlcvList',
-            authed({ assetId: 'aapl', interval: '1H', from: 0, to: 1_000_000_000 }),
+            authed({
+                assetId: 'aapl',
+                interval: '1H',
+                from: 0,
+                to: 1_000_000_000,
+            }),
         );
         const body = (await res.json()) as OhlcvCandleRow[];
         expect(body.length).toBe(1);
@@ -2478,7 +3034,9 @@ interface CoingeckoReadsMockData {
     tickersByCoinId?: Record<string, CoingeckoTickersLatestRow>;
 }
 
-function emptyCoingeckoReadsRepo(): CoingeckoReadsRepo { return makeCoingeckoReadsRepo(); }
+function emptyCoingeckoReadsRepo(): CoingeckoReadsRepo {
+    return makeCoingeckoReadsRepo();
+}
 
 function makeCoingeckoReadsRepo(data: CoingeckoReadsMockData = {}): CoingeckoReadsRepo {
     return {
@@ -2497,9 +3055,7 @@ function makeCoingeckoReadsRepo(data: CoingeckoReadsMockData = {}): CoingeckoRea
         async listOhlcv(coinId, interval, fromTime, toTime, limit) {
             const key = `${coinId}::${interval}`;
             const candles = data.ohlcvByCoinAndInterval?.[key] ?? [];
-            return candles
-                .filter(c => c.time >= fromTime && c.time <= toTime)
-                .slice(0, limit);
+            return candles.filter(c => c.time >= fromTime && c.time <= toTime).slice(0, limit);
         },
         async findPriceLatestByCoinId(coinId) {
             return data.priceByCoinId?.[coinId] ?? null;
@@ -2535,10 +3091,11 @@ function sampleCoinRow(overrides: Partial<CoingeckoCoinRow> = {}): CoingeckoCoin
     };
 }
 
-
 describe('coingeckoReadsGetCoinById', () => {
     it('returns the mapped coin row', async () => {
-        const repo = makeCoingeckoReadsRepo({ coinsByCoinId: { solana: sampleCoinRow() } });
+        const repo = makeCoingeckoReadsRepo({
+            coinsByCoinId: { solana: sampleCoinRow() },
+        });
         const app = createApp(deps({ coingeckoReadsRepo: repo }));
         const res = await call(app, '/query/coingeckoReadsGetCoinById', authed({ id: 'solana' }));
         expect(res.status).toBe(200);
@@ -2568,7 +3125,9 @@ describe('coingeckoReadsGetCoinById', () => {
     });
 
     it('returns null for whitespace-only id', async () => {
-        const repo = makeCoingeckoReadsRepo({ coinsByCoinId: { solana: sampleCoinRow() } });
+        const repo = makeCoingeckoReadsRepo({
+            coinsByCoinId: { solana: sampleCoinRow() },
+        });
         const app = createApp(deps({ coingeckoReadsRepo: repo }));
         const res = await call(app, '/query/coingeckoReadsGetCoinById', authed({ id: '   ' }));
         expect(res.status).toBe(200);
@@ -2650,22 +3209,14 @@ describe('coingeckoReadsListOhlcv', () => {
 
     it('returns [] when coinId is empty', async () => {
         const app = createApp(deps());
-        const res = await call(
-            app,
-            '/query/coingeckoReadsListOhlcv',
-            authed({ coinId: '  ', interval: '1H' }),
-        );
+        const res = await call(app, '/query/coingeckoReadsListOhlcv', authed({ coinId: '  ', interval: '1H' }));
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual([]);
     });
 
     it('rejects invalid interval with 400', async () => {
         const app = createApp(deps());
-        const res = await call(
-            app,
-            '/query/coingeckoReadsListOhlcv',
-            authed({ coinId: 'solana', interval: '10s' }),
-        );
+        const res = await call(app, '/query/coingeckoReadsListOhlcv', authed({ coinId: 'solana', interval: '10s' }));
         expect(res.status).toBe(400);
     });
 });
@@ -2682,13 +3233,11 @@ describe('coingeckoReadsGetPriceLatestByCoinId', () => {
     };
 
     it('returns the mapped snapshot', async () => {
-        const repo = makeCoingeckoReadsRepo({ priceByCoinId: { solana: priceRow } });
+        const repo = makeCoingeckoReadsRepo({
+            priceByCoinId: { solana: priceRow },
+        });
         const app = createApp(deps({ coingeckoReadsRepo: repo }));
-        const res = await call(
-            app,
-            '/query/coingeckoReadsGetPriceLatestByCoinId',
-            authed({ coinId: 'solana' }),
-        );
+        const res = await call(app, '/query/coingeckoReadsGetPriceLatestByCoinId', authed({ coinId: 'solana' }));
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual({
             coinId: 'solana',
@@ -2703,11 +3252,7 @@ describe('coingeckoReadsGetPriceLatestByCoinId', () => {
 
     it('returns null when not found', async () => {
         const app = createApp(deps());
-        const res = await call(
-            app,
-            '/query/coingeckoReadsGetPriceLatestByCoinId',
-            authed({ coinId: 'missing' }),
-        );
+        const res = await call(app, '/query/coingeckoReadsGetPriceLatestByCoinId', authed({ coinId: 'missing' }));
         expect(res.status).toBe(200);
         expect(await res.json()).toBeNull();
     });
@@ -2725,7 +3270,9 @@ describe('coingeckoReadsGetPriceLatestByCoinIds', () => {
     };
 
     it('returns entries for requested IDs with null for missing', async () => {
-        const repo = makeCoingeckoReadsRepo({ priceByCoinId: { solana: solRow } });
+        const repo = makeCoingeckoReadsRepo({
+            priceByCoinId: { solana: solRow },
+        });
         const app = createApp(deps({ coingeckoReadsRepo: repo }));
         const res = await call(
             app,
@@ -2733,7 +3280,10 @@ describe('coingeckoReadsGetPriceLatestByCoinIds', () => {
             authed({ coinIds: ['solana', 'jupiter-exchange-solana'] }),
         );
         expect(res.status).toBe(200);
-        const body = (await res.json()) as Array<{ coinId: string; snapshot: unknown }>;
+        const body = (await res.json()) as Array<{
+            coinId: string;
+            snapshot: unknown;
+        }>;
         expect(body).toEqual([
             {
                 coinId: 'solana',
@@ -2755,11 +3305,7 @@ describe('coingeckoReadsGetPriceLatestByCoinIds', () => {
         const app = createApp(deps());
         const tooMany: string[] = [];
         for (let i = 0; i < 60; i++) tooMany.push(`coin-${i}`);
-        const res = await call(
-            app,
-            '/query/coingeckoReadsGetPriceLatestByCoinIds',
-            authed({ coinIds: tooMany }),
-        );
+        const res = await call(app, '/query/coingeckoReadsGetPriceLatestByCoinIds', authed({ coinIds: tooMany }));
         expect(res.status).toBe(400);
     });
 });
@@ -2774,13 +3320,11 @@ describe('coingeckoReadsGetTickersLatestByCoinId', () => {
     };
 
     it('returns the mapped tickers doc', async () => {
-        const repo = makeCoingeckoReadsRepo({ tickersByCoinId: { solana: tickerRow } });
+        const repo = makeCoingeckoReadsRepo({
+            tickersByCoinId: { solana: tickerRow },
+        });
         const app = createApp(deps({ coingeckoReadsRepo: repo }));
-        const res = await call(
-            app,
-            '/query/coingeckoReadsGetTickersLatestByCoinId',
-            authed({ coinId: 'solana' }),
-        );
+        const res = await call(app, '/query/coingeckoReadsGetTickersLatestByCoinId', authed({ coinId: 'solana' }));
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual({
             coinId: 'solana',
@@ -2793,11 +3337,7 @@ describe('coingeckoReadsGetTickersLatestByCoinId', () => {
 
     it('returns null when no row exists', async () => {
         const app = createApp(deps());
-        const res = await call(
-            app,
-            '/query/coingeckoReadsGetTickersLatestByCoinId',
-            authed({ coinId: 'missing' }),
-        );
+        const res = await call(app, '/query/coingeckoReadsGetTickersLatestByCoinId', authed({ coinId: 'missing' }));
         expect(res.status).toBe(200);
         expect(await res.json()).toBeNull();
     });
@@ -2805,35 +3345,62 @@ describe('coingeckoReadsGetTickersLatestByCoinId', () => {
 
 function emptyTokensReadsRepo(): TokensReadsRepo {
     return {
-        async findTokenByAddress() { return null; },
-        async findTokensByAddresses() { return []; },
-        async searchTokensBySymbol() { return []; },
-        async searchTokensByName() { return []; },
-        async findTokenMarketsLatestByMint() { return null; },
-        async findTokenMarketsLatestByMints() { return []; },
-        async findTokenDescriptionSummaryByAddress() { return null; },
+        async findTokenByAddress() {
+            return null;
+        },
+        async findTokensByAddresses() {
+            return [];
+        },
+        async searchTokensBySymbol() {
+            return [];
+        },
+        async searchTokensByName() {
+            return [];
+        },
+        async findTokenMarketsLatestByMint() {
+            return null;
+        },
+        async findTokenMarketsLatestByMints() {
+            return [];
+        },
+        async findTokenDescriptionSummaryByAddress() {
+            return null;
+        },
     };
 }
 
 function emptyTrendingReadsRepo(): TrendingReadsRepo {
     return {
-        async listTrending() { return []; },
-        async listFreshTrending() { return []; },
+        async listTrending() {
+            return [];
+        },
+        async listFreshTrending() {
+            return [];
+        },
     };
 }
 
 function emptyFillQualityReadsRepo(): FillQualityReadsRepo {
-    return { async findLatestByMints() { return []; } };
+    return {
+        async findLatestByMints() {
+            return [];
+        },
+    };
 }
 
 function emptyAssetCollectionsReadsRepo(): AssetCollectionsReadsRepo {
     return {
-        async listMembersBySlug() { return []; },
-        async listMemberMintsBySlug() { return []; },
-        async getSummariesBySlugs() { return []; },
+        async listMembersBySlug() {
+            return [];
+        },
+        async listMemberMintsBySlug() {
+            return [];
+        },
+        async getSummariesBySlugs() {
+            return [];
+        },
     };
 }
-
 
 const sampleTokenRow = (overrides: Partial<TokenRow> = {}): TokenRow => ({
     id: 't1',
@@ -2861,13 +3428,14 @@ const sampleTokenRow = (overrides: Partial<TokenRow> = {}): TokenRow => ({
     ...overrides,
 });
 
-
 describe('tokensGetByAddress', () => {
     it('returns mapped token doc', async () => {
         const row = sampleTokenRow();
         const repo: TokensReadsRepo = {
             ...emptyTokensReadsRepo(),
-            async findTokenByAddress(addr) { return addr === row.address ? row : null; },
+            async findTokenByAddress(addr) {
+                return addr === row.address ? row : null;
+            },
         };
         const app = createApp(deps({ tokensReadsRepo: repo }));
         const res = await call(app, '/query/tokensGetByAddress', authed({ address: row.address }));
@@ -2890,7 +3458,10 @@ describe('tokensGetByAddress', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/tokensGetByAddress', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({ address: 5 }),
         });
         expect(res.status).toBe(400);
@@ -2902,7 +3473,9 @@ describe('tokensSearchTokens', () => {
         const row = sampleTokenRow();
         const repo: TokensReadsRepo = {
             ...emptyTokensReadsRepo(),
-            async findTokenByAddress(addr) { return addr === row.address ? row : null; },
+            async findTokenByAddress(addr) {
+                return addr === row.address ? row : null;
+            },
         };
         const app = createApp(deps({ tokensReadsRepo: repo }));
         const res = await call(app, '/query/tokensSearchTokens', authed({ query: row.address }));
@@ -2913,11 +3486,20 @@ describe('tokensSearchTokens', () => {
 
     it('merges symbol + name matches, deduped, capped by limit', async () => {
         const usdc = sampleTokenRow();
-        const usdt = sampleTokenRow({ id: 't2', address: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', symbol: 'USDT', name: 'Tether' });
+        const usdt = sampleTokenRow({
+            id: 't2',
+            address: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+            symbol: 'USDT',
+            name: 'Tether',
+        });
         const repo: TokensReadsRepo = {
             ...emptyTokensReadsRepo(),
-            async searchTokensBySymbol() { return [usdc]; },
-            async searchTokensByName() { return [usdc, usdt]; },
+            async searchTokensBySymbol() {
+                return [usdc];
+            },
+            async searchTokensByName() {
+                return [usdc, usdt];
+            },
         };
         const app = createApp(deps({ tokensReadsRepo: repo }));
         const res = await call(app, '/query/tokensSearchTokens', authed({ query: 'usd', limit: 5 }));
@@ -2937,7 +3519,10 @@ describe('tokensSearchTokens', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/tokensSearchTokens', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: '{}',
         });
         expect(res.status).toBe(400);
@@ -2959,7 +3544,11 @@ describe('tokensGetSearchTokensByAddresses', () => {
             '/query/tokensGetSearchTokensByAddresses',
             authed({ addresses: [row.address, 'absent'] }),
         );
-        const body = (await res.json()) as Array<{ address: string; token: { symbol: string } | null; hasMarket: boolean }>;
+        const body = (await res.json()) as Array<{
+            address: string;
+            token: { symbol: string } | null;
+            hasMarket: boolean;
+        }>;
         expect(body.length).toBe(2);
         expect(body[0]!.address).toBe(row.address);
         expect(body[0]!.token?.symbol).toBe('USDC');
@@ -2972,7 +3561,10 @@ describe('tokensGetSearchTokensByAddresses', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/tokensGetSearchTokensByAddresses', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({ addresses: 'a' }),
         });
         expect(res.status).toBe(400);
@@ -2996,11 +3588,18 @@ describe('tokenMarketsGetLatestByMint', () => {
         const row = sampleTokenMarketsRow();
         const repo: TokensReadsRepo = {
             ...emptyTokensReadsRepo(),
-            async findTokenMarketsLatestByMint(mint) { return mint === row.mint ? row : null; },
+            async findTokenMarketsLatestByMint(mint) {
+                return mint === row.mint ? row : null;
+            },
         };
         const app = createApp(deps({ tokensReadsRepo: repo }));
         const res = await call(app, '/query/tokenMarketsGetLatestByMint', authed({ mint: 'mintA' }));
-        const body = (await res.json()) as { mint: string; source: string; total: number; markets: unknown[] };
+        const body = (await res.json()) as {
+            mint: string;
+            source: string;
+            total: number;
+            markets: unknown[];
+        };
         expect(body.mint).toBe('mintA');
         expect(body.source).toBe('birdeye');
         expect(body.total).toBe(2);
@@ -3017,7 +3616,10 @@ describe('tokenMarketsGetLatestByMint', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/tokenMarketsGetLatestByMint', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({ mint: 5 }),
         });
         expect(res.status).toBe(400);
@@ -3035,7 +3637,10 @@ describe('tokenMarketsGetLatestByMints', () => {
         };
         const app = createApp(deps({ tokensReadsRepo: repo }));
         const res = await call(app, '/query/tokenMarketsGetLatestByMints', authed({ mints: ['mintA', 'absent'] }));
-        const body = (await res.json()) as Array<{ mint: string; doc: null | { mint: string } }>;
+        const body = (await res.json()) as Array<{
+            mint: string;
+            doc: null | { mint: string };
+        }>;
         expect(body.length).toBe(2);
         expect(body[0]!.doc?.mint).toBe('mintA');
         expect(body[1]!.doc).toBeNull();
@@ -3052,7 +3657,10 @@ describe('tokenMarketsGetLatestByMints', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/tokenMarketsGetLatestByMints', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({ mints: 'a' }),
         });
         expect(res.status).toBe(400);
@@ -3064,11 +3672,17 @@ describe('tokenMarketsGetTopMarketsByMints', () => {
         const row = sampleTokenMarketsRow();
         const repo: TokensReadsRepo = {
             ...emptyTokensReadsRepo(),
-            async findTokenMarketsLatestByMints() { return [row]; },
+            async findTokenMarketsLatestByMints() {
+                return [row];
+            },
         };
         const app = createApp(deps({ tokensReadsRepo: repo }));
         const res = await call(app, '/query/tokenMarketsGetTopMarketsByMints', authed({ mints: ['mintA'] }));
-        const body = (await res.json()) as Array<{ mint: string; topMarket: { address: string } | null; total: number | null }>;
+        const body = (await res.json()) as Array<{
+            mint: string;
+            topMarket: { address: string } | null;
+            total: number | null;
+        }>;
         expect(body.length).toBe(1);
         expect(body[0]!.topMarket?.address).toBe('pool2');
         expect(body[0]!.total).toBe(2);
@@ -3077,7 +3691,12 @@ describe('tokenMarketsGetTopMarketsByMints', () => {
     it('returns null entries when mint missing', async () => {
         const app = createApp(deps());
         const res = await call(app, '/query/tokenMarketsGetTopMarketsByMints', authed({ mints: ['absent'] }));
-        const body = (await res.json()) as Array<{ mint: string; topMarket: unknown; total: number | null; lastFetchedAt: number | null }>;
+        const body = (await res.json()) as Array<{
+            mint: string;
+            topMarket: unknown;
+            total: number | null;
+            lastFetchedAt: number | null;
+        }>;
         expect(body[0]!.topMarket).toBeNull();
         expect(body[0]!.total).toBeNull();
         expect(body[0]!.lastFetchedAt).toBeNull();
@@ -3108,7 +3727,9 @@ describe('tokenDescriptionSummariesGetByAddress', () => {
         const row = sampleSummaryRow();
         const repo: TokensReadsRepo = {
             ...emptyTokensReadsRepo(),
-            async findTokenDescriptionSummaryByAddress(addr) { return addr === row.address ? row : null; },
+            async findTokenDescriptionSummaryByAddress(addr) {
+                return addr === row.address ? row : null;
+            },
         };
         const app = createApp(deps({ tokensReadsRepo: repo }));
         const res = await call(app, '/query/tokenDescriptionSummariesGetByAddress', authed({ address: row.address }));
@@ -3130,7 +3751,10 @@ describe('tokenDescriptionSummariesGetByAddress', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/tokenDescriptionSummariesGetByAddress', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({}),
         });
         expect(res.status).toBe(400);
@@ -3179,11 +3803,18 @@ describe('trendingMarketsList', () => {
         const r2 = sampleTrendingRow({ mint: 'b', rank: 1, category_rank: 1 });
         const repo: TrendingReadsRepo = {
             ...emptyTrendingReadsRepo(),
-            async listTrending() { return [r1, r2]; },
+            async listTrending() {
+                return [r1, r2];
+            },
         };
         const app = createApp(deps({ trendingReadsRepo: repo }));
         const res = await call(app, '/query/trendingMarketsList', authed({ limit: 10 }));
-        const body = (await res.json()) as { rows: Array<{ mint: string; rank: number }>; total: number; asOf: number | null; scoringVersion: string };
+        const body = (await res.json()) as {
+            rows: Array<{ mint: string; rank: number }>;
+            total: number;
+            asOf: number | null;
+            scoringVersion: string;
+        };
         expect(body.total).toBe(2);
         expect(body.rows[0]!.mint).toBe('b');
         expect(body.rows[1]!.mint).toBe('a');
@@ -3192,8 +3823,18 @@ describe('trendingMarketsList', () => {
     });
 
     it('filters by category and sorts by categoryRank', async () => {
-        const c1 = sampleTrendingRow({ mint: 'c1', category: 'crypto', rank: 5, category_rank: 1 });
-        const c2 = sampleTrendingRow({ mint: 'c2', category: 'crypto', rank: 1, category_rank: 2 });
+        const c1 = sampleTrendingRow({
+            mint: 'c1',
+            category: 'crypto',
+            rank: 5,
+            category_rank: 1,
+        });
+        const c2 = sampleTrendingRow({
+            mint: 'c2',
+            category: 'crypto',
+            rank: 1,
+            category_rank: 2,
+        });
         let receivedCategory: string | null = '';
         const repo: TrendingReadsRepo = {
             ...emptyTrendingReadsRepo(),
@@ -3214,7 +3855,10 @@ describe('trendingMarketsList', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/trendingMarketsList', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({ category: 'bogus' }),
         });
         expect(res.status).toBe(400);
@@ -3265,11 +3909,18 @@ describe('freshTrendingMarketsList', () => {
         const row = sampleFreshTrendingRow();
         const repo: TrendingReadsRepo = {
             ...emptyTrendingReadsRepo(),
-            async listFreshTrending() { return [row]; },
+            async listFreshTrending() {
+                return [row];
+            },
         };
         const app = createApp(deps({ trendingReadsRepo: repo }));
         const res = await call(app, '/query/freshTrendingMarketsList', authed({}));
-        const body = (await res.json()) as { rows: Array<{ mint: string; source: string }>; total: number; asOf: number | null; scoringVersion: string };
+        const body = (await res.json()) as {
+            rows: Array<{ mint: string; source: string }>;
+            total: number;
+            asOf: number | null;
+            scoringVersion: string;
+        };
         expect(body.total).toBe(1);
         expect(body.rows[0]!.mint).toBe('mintA');
         expect(body.rows[0]!.source).toBe('birdeye');
@@ -3281,7 +3932,10 @@ describe('freshTrendingMarketsList', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/freshTrendingMarketsList', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({ limit: 'big' }),
         });
         expect(res.status).toBe(400);
@@ -3321,8 +3975,19 @@ describe('variantFillQualityGetLatestByMints', () => {
             },
         };
         const app = createApp(deps({ fillQualityReadsRepo: repo }));
-        const res = await call(app, '/query/variantFillQualityGetLatestByMints', authed({ mints: ['mintA', 'absent'] }));
-        const body = (await res.json()) as Array<{ mint: string; fillQuality: null | { mint: string; executionScore: number; isEligibleForPrimary: boolean } }>;
+        const res = await call(
+            app,
+            '/query/variantFillQualityGetLatestByMints',
+            authed({ mints: ['mintA', 'absent'] }),
+        );
+        const body = (await res.json()) as Array<{
+            mint: string;
+            fillQuality: null | {
+                mint: string;
+                executionScore: number;
+                isEligibleForPrimary: boolean;
+            };
+        }>;
         expect(body.length).toBe(2);
         expect(body[0]!.fillQuality?.executionScore).toBe(5.5);
         expect(body[0]!.fillQuality?.isEligibleForPrimary).toBe(true);
@@ -3339,7 +4004,10 @@ describe('variantFillQualityGetLatestByMints', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/variantFillQualityGetLatestByMints', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({ mints: 'm' }),
         });
         expect(res.status).toBe(400);
@@ -3357,8 +4025,12 @@ describe('assetCollectionsGetMembers', () => {
                 receivedLimit = limit;
                 return rows;
             },
-            async listMemberMintsBySlug() { return []; },
-            async getSummariesBySlugs() { return []; },
+            async listMemberMintsBySlug() {
+                return [];
+            },
+            async getSummariesBySlugs() {
+                return [];
+            },
         };
         const app = createApp(deps({ assetCollectionsReadsRepo: repo }));
         const res = await call(app, '/query/assetCollectionsGetMembers', authed({ slug: 'memes', limit: 100 }));
@@ -3381,8 +4053,12 @@ describe('assetCollectionsGetMembers', () => {
                 slugsSeen.push(slug);
                 return [{ asset_id: 'a' }];
             },
-            async listMemberMintsBySlug() { return []; },
-            async getSummariesBySlugs() { return []; },
+            async listMemberMintsBySlug() {
+                return [];
+            },
+            async getSummariesBySlugs() {
+                return [];
+            },
         };
         const app = createApp(deps({ assetCollectionsReadsRepo: repo }));
         await call(app, '/query/assetCollectionsGetMembers', authed({ slug: 'xstocks' }));
@@ -3395,7 +4071,10 @@ describe('assetCollectionsGetMembers', () => {
         const app = createApp(deps());
         const res = await call(app, '/query/assetCollectionsGetMembers', {
             method: 'POST',
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+            headers: {
+                authorization: 'Bearer tok',
+                'content-type': 'application/json',
+            },
             body: '{}',
         });
         expect(res.status).toBe(400);
@@ -3432,7 +4111,10 @@ describe('admin mutations dispatch', () => {
         // The cron/misc/seed deps are never reached by these dispatch tests
         // (they all fail during auth or validation first).
         return {
-            adminAllowlist: { clerkUserIds: new Set(['user_admin']), emails: new Set<string>() },
+            adminAllowlist: {
+                clerkUserIds: new Set(['user_admin']),
+                emails: new Set<string>(),
+            },
             repo,
             seedRepo: {} as AdminActionsDeps['seedRepo'],
             cron: {} as AdminActionsDeps['cron'],
@@ -3473,7 +4155,9 @@ describe('admin mutations dispatch', () => {
                 headers: {
                     authorization: 'Bearer tok',
                     'content-type': 'application/json',
-                    'x-tokens-identity': encodeIdentity({ clerkUserId: 'user_mortal' }),
+                    'x-tokens-identity': encodeIdentity({
+                        clerkUserId: 'user_mortal',
+                    }),
                 },
                 body: JSON.stringify({ mint: ADMIN_MINT }),
             });
@@ -3489,11 +4173,16 @@ describe('admin mutations dispatch', () => {
             headers: {
                 authorization: 'Bearer tok',
                 'content-type': 'application/json',
-                'x-tokens-identity': encodeIdentity({ clerkUserId: 'user_admin' }),
+                'x-tokens-identity': encodeIdentity({
+                    clerkUserId: 'user_admin',
+                }),
             },
             body: JSON.stringify({ mint: 'not-a-mint' }),
         });
         expect(res.status).toBe(400);
-        expect(await res.json()).toEqual({ error: 'invalid_args', message: 'Not a valid Solana mint address' });
+        expect(await res.json()).toEqual({
+            error: 'invalid_args',
+            message: 'Not a valid Solana mint address',
+        });
     });
 });

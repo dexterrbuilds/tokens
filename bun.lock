@@ -157,6 +157,13 @@
         "typescript-eslint": "^8.18.2",
       },
     },
+    "apps/cloudrun-db-canary": {
+      "name": "@tokens/cloudrun-db-canary",
+      "version": "0.0.0",
+      "dependencies": {
+        "postgres": "3.4.9",
+      },
+    },
     "apps/cloudrun-prices": {
       "name": "@tokens/cloudrun-prices",
       "version": "0.0.0",
@@ -967,6 +974,8 @@
     "@tokens/cloudrun-admin": ["@tokens/cloudrun-admin@workspace:apps/cloudrun-admin"],
 
     "@tokens/cloudrun-assets": ["@tokens/cloudrun-assets@workspace:apps/cloudrun-assets"],
+
+    "@tokens/cloudrun-db-canary": ["@tokens/cloudrun-db-canary@workspace:apps/cloudrun-db-canary"],
 
     "@tokens/cloudrun-prices": ["@tokens/cloudrun-prices@workspace:apps/cloudrun-prices"],
 

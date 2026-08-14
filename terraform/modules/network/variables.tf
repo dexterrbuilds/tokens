@@ -16,3 +16,14 @@ variable "name_suffix" {
   default     = ""
 }
 
+variable "flow_logs" {
+  type = object({
+    aggregation_interval = string
+    flow_sampling        = number
+    metadata             = string
+    filter_expr          = string
+  })
+  description = "Optional VPC Flow Logs configuration for the Cloud Run subnet."
+  default     = null
+  nullable    = true
+}

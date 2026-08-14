@@ -21,7 +21,10 @@ export type {
     CuratedPrefetchArgs,
     CuratedPrefetchResult,
 } from '../../../../cloudrun-assets/src/handlers/assetsApiCuratedPrefetch';
-import type { CuratedPrefetchArgs, CuratedPrefetchResult } from '../../../../cloudrun-assets/src/handlers/assetsApiCuratedPrefetch';
+import type {
+    CuratedPrefetchArgs,
+    CuratedPrefetchResult,
+} from '../../../../cloudrun-assets/src/handlers/assetsApiCuratedPrefetch';
 
 /**
  * Fetch every raw row the curated route needs in a single Cloud Run RTT.
@@ -30,10 +33,9 @@ import type { CuratedPrefetchArgs, CuratedPrefetchResult } from '../../../../clo
  * scale-out (request concurrency 80 since #272) requests queue at the Cloud
  * Run router while new Bun instances boot — 5s tripped 25 spurious timeouts
  * in the 2026-07-19 08:19Z window while every backend completion was fast.
- * 10s covers cold-start queueing; worst case ~20.5s across both attempts of
- * the caller's route-level retry. Retry policy deliberately lives at the
- * call site, not here — stacking a client-level retry on top would multiply
- * attempts against an already saturated backend.
+ * 10s covers cold-start queueing. This composite is deliberately never
+ * retried: replaying its broad SQL fan-out against a degraded backend was an
+ * incident amplifier. The route serves its Redis last-good response instead.
  */
 const CURATED_PREFETCH_TIMEOUT_MS = 10_000;
 

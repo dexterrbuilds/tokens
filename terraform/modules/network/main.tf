@@ -22,6 +22,16 @@ resource "google_compute_subnetwork" "subnet" {
   region                   = var.region
   network                  = google_compute_network.vpc.id
   private_ip_google_access = true
+
+  dynamic "log_config" {
+    for_each = var.flow_logs == null ? [] : [var.flow_logs]
+    content {
+      aggregation_interval = log_config.value.aggregation_interval
+      flow_sampling        = log_config.value.flow_sampling
+      metadata             = log_config.value.metadata
+      filter_expr          = log_config.value.filter_expr
+    }
+  }
 }
 
 resource "google_compute_global_address" "psa_range" {

@@ -171,11 +171,19 @@ jobs:
           IMAGE: ${{ steps.build.outputs.image }}
         run: |
           set -euo pipefail
+          extra=()
+          if [ "${{ matrix.service }}" = "assets" ]; then
+            extra+=(--update-env-vars=SERVICE_ROLE=api,PG_POOL_MAX=16,PG_CONNECT_TIMEOUT=3)
+          fi
           gcloud run deploy tokens-${{ matrix.service }}-stg-us \
             --image="$IMAGE" \
             --region=us-east4 \
             --project=${{ vars.GCP_PROJECT }} \
+            "${extra[@]}" \
             --quiet
+          if [ "${{ matrix.service }}" = "assets" ] && gcloud run services describe tokens-assets-jobs-stg-us --region=us-east4 --project=${{ vars.GCP_PROJECT }} >/dev/null 2>&1; then
+            gcloud run deploy tokens-assets-jobs-stg-us --image="$IMAGE" --region=us-east4 --project=${{ vars.GCP_PROJECT }} --update-env-vars=SERVICE_ROLE=worker,PG_POOL_MAX=8,PG_CONNECT_TIMEOUT=3 --quiet
+          fi
 
   deploy:
     needs: [changes, notify_start, cloudrun_stg]
@@ -683,11 +691,34 @@ jobs:
           IMAGE: ${{ steps.build.outputs.image }}
         run: |
           set -euo pipefail
-          gcloud run deploy tokens-${{ matrix.service }}-prd-us \
-            --image="$IMAGE" \
-            --region=us-east4 \
-            --project=${{ vars.GCP_PROJECT }} \
-            --quiet
+          extra=()
+          if [ "${{ matrix.service }}" = "assets" ]; then
+            extra+=(--update-env-vars=SERVICE_ROLE=api,PG_POOL_MAX=16,PG_CONNECT_TIMEOUT=3)
+            candidate_tag="resilience-${GITHUB_SHA:0:12}"
+            gcloud run deploy tokens-assets-prd-us \
+              --image="$IMAGE" \
+              --region=us-east4 \
+              --project=${{ vars.GCP_PROJECT }} \
+              --no-traffic \
+              --tag="$candidate_tag" \
+              "${extra[@]}" \
+              --quiet
+            candidate_revision=$(gcloud run services describe tokens-assets-prd-us --region=us-east4 --project=${{ vars.GCP_PROJECT }} --format='value(status.latestCreatedRevisionName)')
+            {
+              echo "### Assets production candidate"
+              echo "Revision \`$candidate_revision\` was deployed with **0% traffic**."
+              echo "Promote it manually through 10% → 50% → 100% using the assets DB resilience runbook."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            gcloud run deploy tokens-${{ matrix.service }}-prd-us \
+              --image="$IMAGE" \
+              --region=us-east4 \
+              --project=${{ vars.GCP_PROJECT }} \
+              --quiet
+          fi
+          if [ "${{ matrix.service }}" = "assets" ] && gcloud run services describe tokens-assets-jobs-prd-us --region=us-east4 --project=${{ vars.GCP_PROJECT }} >/dev/null 2>&1; then
+            gcloud run deploy tokens-assets-jobs-prd-us --image="$IMAGE" --region=us-east4 --project=${{ vars.GCP_PROJECT }} --update-env-vars=SERVICE_ROLE=worker,PG_POOL_MAX=8,PG_CONNECT_TIMEOUT=3 --no-traffic --tag="$candidate_tag" --quiet
+          fi
 
       - uses: oven-sh/setup-bun@v2
         with:

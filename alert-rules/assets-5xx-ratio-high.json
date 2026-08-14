@@ -1,0 +1,67 @@
+{
+    "uid": "tokens-assets-5xx-ratio-high",
+    "title": "tokens-assets: 5xx ratio > 1% for 5m",
+    "ruleGroup": "tokens-assets-availability",
+    "folderUID": "tokens-xyz",
+    "noDataState": "OK",
+    "execErrState": "Error",
+    "for": "2m",
+    "data": [
+        {
+            "refId": "A",
+            "datasourceUid": "grafanacloud-logs",
+            "queryType": "range",
+            "relativeTimeRange": { "from": 300, "to": 0 },
+            "model": {
+                "expr": "sum(count_over_time({service=\"tokens-assets-prd-us\"} | json | httpRequest_status >= 500 [5m])) / clamp_min(sum(count_over_time({service=\"tokens-assets-prd-us\"} | json | httpRequest_requestMethod != \"\" [5m])), 1)",
+                "queryType": "range",
+                "refId": "A"
+            }
+        },
+        {
+            "refId": "B",
+            "datasourceUid": "__expr__",
+            "queryType": "",
+            "relativeTimeRange": { "from": 0, "to": 0 },
+            "model": {
+                "type": "reduce",
+                "refId": "B",
+                "expression": "A",
+                "reducer": "last",
+                "settings": { "mode": "replaceNN", "replaceWithValue": 0 }
+            }
+        },
+        {
+            "refId": "C",
+            "datasourceUid": "__expr__",
+            "queryType": "",
+            "relativeTimeRange": { "from": 0, "to": 0 },
+            "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "B",
+                "conditions": [
+                    {
+                        "evaluator": { "type": "gt", "params": [0.01] },
+                        "operator": { "type": "and" },
+                        "query": { "params": ["B"] },
+                        "reducer": { "type": "last", "params": [] },
+                        "type": "query"
+                    }
+                ]
+            }
+        }
+    ],
+    "condition": "C",
+    "labels": {
+        "service": "tokens-assets",
+        "severity": "critical",
+        "pagerduty": "true",
+        "slack": "true"
+    },
+    "annotations": {
+        "summary": "tokens-assets is returning more than 1% 5xx responses",
+        "description": "The user-facing assets Cloud Run service exceeded a 1% 5xx ratio over five minutes. Correlate with normalized DB connection failures and transport canaries.",
+        "runbook_url": "https://github.com/solana-foundation/tokens/blob/main/docs/operations/assets-db-resilience.md"
+    }
+}

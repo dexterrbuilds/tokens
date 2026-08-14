@@ -34,6 +34,34 @@ resource "google_cloud_run_v2_service" "this" {
     containers {
       image = var.image
 
+      dynamic "startup_probe" {
+        for_each = var.startup_probe_path == null ? [] : [var.startup_probe_path]
+        content {
+          initial_delay_seconds = 0
+          timeout_seconds       = 3
+          period_seconds        = 5
+          failure_threshold     = 24
+
+          http_get {
+            path = startup_probe.value
+          }
+        }
+      }
+
+      dynamic "startup_probe" {
+        for_each = var.startup_probe_tcp_port == null ? [] : [var.startup_probe_tcp_port]
+        content {
+          initial_delay_seconds = 0
+          timeout_seconds       = 240
+          period_seconds        = 240
+          failure_threshold     = 1
+
+          tcp_socket {
+            port = startup_probe.value
+          }
+        }
+      }
+
       resources {
         limits = {
           cpu    = var.cpu

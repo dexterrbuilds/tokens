@@ -257,6 +257,103 @@ describe('assetsApiCuratedPrefetchForApi', () => {
         await expect(assetsApiCuratedPrefetchForApi(deps, null)).rejects.toThrow(/args must be/);
     });
 
+    it('bounds all chunked DB work in a composite request to four concurrent operations', async () => {
+        const base = makeEmptyDeps();
+        let active = 0;
+        let maximum = 0;
+        const tracked = async <T>(value: T): Promise<T> => {
+            active += 1;
+            maximum = Math.max(maximum, active);
+            await Bun.sleep(2);
+            active -= 1;
+            return value;
+        };
+
+        const deps = makeEmptyDeps({
+            assetsRepo: {
+                ...base.assetsRepo,
+                findByAssetIds: async () => tracked([]),
+            },
+            assetCollectionsReadsRepo: {
+                ...base.assetCollectionsReadsRepo,
+                listMembersBySlug: async () => tracked([]),
+            },
+            assetVariantsRepo: {
+                ...base.assetVariantsRepo,
+                findVariantsByAssetIds: async () => tracked([]),
+            },
+            variantMarketsRepo: { findLatestByMints: async () => tracked([]) },
+            fillQualityReadsRepo: {
+                findLatestByMints: async () => tracked([]),
+            },
+            assetMarketsRepo: {
+                ...base.assetMarketsRepo,
+                findLatestByAssetIds: async () => tracked([]),
+            },
+            deletionTombstonesRepo: {
+                findDeletedNormalizedRefs: async () => tracked([]),
+            },
+            stockReadsRepo: {
+                ...base.stockReadsRepo,
+                findInstrumentsByAssetIds: async () => tracked([]),
+                findPricesByAssetIds: async () => tracked([]),
+            },
+            coingeckoReadsRepo: {
+                ...base.coingeckoReadsRepo,
+                findPriceLatestByCoinIds: async () => tracked([]),
+            },
+            tokensReadsRepo: {
+                ...base.tokensReadsRepo,
+                findTokenMarketsLatestByMints: async () => tracked([]),
+            },
+        });
+
+        await assetsApiCuratedPrefetchForApi(deps, {
+            listId: 'all',
+            memberAssetIds: Array.from({ length: 2_001 }, (_, i) => `asset-${i}`),
+            memberMints: Array.from({ length: 1_001 }, (_, i) => `mint-${i}`),
+            additionalCoingeckoIds: Array.from({ length: 120 }, (_, i) => `coin-${i}`),
+            includeStock: true,
+            includeSanctum: true,
+        });
+
+        expect(maximum).toBe(4);
+    });
+
+    it('does not turn an optional-read connection timeout into a hollow success', async () => {
+        const base = makeEmptyDeps();
+        const deps = makeEmptyDeps({
+            fillQualityReadsRepo: {
+                async findLatestByMints() {
+                    throw Object.assign(new Error('connection timed out'), {
+                        code: 'CONNECT_TIMEOUT',
+                    });
+                },
+            },
+            assetsRepo: {
+                ...base.assetsRepo,
+                async findByAssetIds() {
+                    return [makeAssetRow()];
+                },
+            },
+        });
+
+        let thrown: unknown;
+        try {
+            await assetsApiCuratedPrefetchForApi(deps, {
+                listId: 'majors',
+                memberMints: ['So11111111111111111111111111111111111111112'],
+                memberAssetIds: ['solana'],
+                includeSanctum: false,
+                includeStock: false,
+            });
+        } catch (error) {
+            thrown = error;
+        }
+
+        expect((thrown as { code?: string } | undefined)?.code).toBe('CONNECT_TIMEOUT');
+    });
+
     it('returns empty envelopes when list has no members', async () => {
         const deps = makeEmptyDeps();
         const out = await assetsApiCuratedPrefetchForApi(deps, {
@@ -423,9 +520,7 @@ describe('assetsApiCuratedPrefetchForApi', () => {
             assetsRepo: {
                 ...makeEmptyDeps().assetsRepo,
                 async findByAssetIds(ids) {
-                    return ids.includes('solana')
-                        ? [makeAssetRow({ coingecko_id: 'solana' })]
-                        : [];
+                    return ids.includes('solana') ? [makeAssetRow({ coingecko_id: 'solana' })] : [];
                 },
             },
             coingeckoReadsRepo: {
@@ -475,7 +570,12 @@ describe('assetsApiCuratedPrefetchForApi', () => {
                 ...makeEmptyDeps().assetsRepo,
                 async findByAssetIds(ids) {
                     return ids.includes('bnb')
-                        ? [makeAssetRow({ asset_id: 'bnb', coingecko_id: 'bnb' })]
+                        ? [
+                              makeAssetRow({
+                                  asset_id: 'bnb',
+                                  coingecko_id: 'bnb',
+                              }),
+                          ]
                         : [];
                 },
             },

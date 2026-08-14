@@ -1,0 +1,8 @@
+FROM oven/bun:1.3.14-alpine
+WORKDIR /app
+COPY apps/cloudrun-db-canary/package.json ./package.json
+RUN bun install --production --frozen-lockfile=false
+COPY apps/cloudrun-db-canary/src ./src
+USER bun
+EXPOSE 8080
+CMD ["bun", "src/index.mjs"]

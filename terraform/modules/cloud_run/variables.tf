@@ -107,3 +107,17 @@ variable "deletion_protection" {
   description = "Provider-side guard against destroying the service. Keep true in prd; stg sets false so region moves can replace services."
   default     = true
 }
+
+variable "startup_probe_path" {
+  type        = string
+  description = "Optional HTTP path used as the Cloud Run startup probe. Null disables the probe."
+  default     = null
+  nullable    = true
+}
+
+variable "startup_probe_tcp_port" {
+  type        = number
+  description = "Optional TCP startup probe port used during phased migration to the database-aware HTTP probe."
+  default     = null
+  nullable    = true
+}

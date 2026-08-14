@@ -53,7 +53,7 @@ import type { TrendingCronDeps } from './handlers/crons.trending';
 import type { ClickhouseExtrasCronDeps } from './handlers/crons.clickhouse.extras';
 import type { PrestocksCronDeps } from './handlers/crons.prestocks';
 import { makeGoogleOidcVerifier } from './oidc';
-import { createApp } from './server';
+import { createApp, type ServiceRole } from './server';
 
 const authToken = process.env.TOKENS_CLOUDRUN_AUTH_TOKEN?.trim();
 if (!authToken) {
@@ -62,6 +62,12 @@ if (!authToken) {
 }
 
 const port = Number(process.env.PORT) || 8080;
+const serviceRoleRaw = process.env.SERVICE_ROLE?.trim() || 'api';
+if (serviceRoleRaw !== 'api' && serviceRoleRaw !== 'worker') {
+    console.error('SERVICE_ROLE must be api or worker');
+    process.exit(1);
+}
+const serviceRole: ServiceRole = serviceRoleRaw;
 const sql = getSql();
 
 const birdeyeApiKey = process.env.BIRDEYE_API_KEY?.trim();
@@ -205,12 +211,9 @@ if (birdeyeApiKey) {
             async fetchIdentityByMint(mint: string) {
                 const overview = await birdeyeClientForIdentity.fetchTokenOverview(mint);
                 if (!overview) return { symbol: null, name: null };
-                const sym = typeof overview.symbol === 'string' && overview.symbol.trim()
-                    ? overview.symbol.trim()
-                    : null;
-                const nameRaw = typeof overview.name === 'string' && overview.name.trim()
-                    ? overview.name.trim()
-                    : null;
+                const sym =
+                    typeof overview.symbol === 'string' && overview.symbol.trim() ? overview.symbol.trim() : null;
+                const nameRaw = typeof overview.name === 'string' && overview.name.trim() ? overview.name.trim() : null;
                 const name = nameRaw && nameRaw.toLowerCase() !== 'unknown' ? nameRaw : null;
                 return { symbol: sym, name };
             },
@@ -293,6 +296,10 @@ const app = createApp({
     ohlcvReadsRepo: makePostgresOhlcvReadsRepo(sql),
     prestocksReadsRepo: makePostgresPrestocksReadsRepo(sql),
     authToken,
+    serviceRole,
+    checkDatabase: async () => {
+        await sql`SELECT 1`;
+    },
     ...(cronDeps && verifyOidc ? { cronDeps, verifyOidc } : {}),
     ...(rpcVerifyOidc ? { rpcVerifyOidc } : {}),
     ...(clickhouseCronDeps ? { clickhouseCronDeps } : {}),

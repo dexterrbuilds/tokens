@@ -62,11 +62,41 @@ jobs:
         env:
           IMAGE: ${{ steps.build.outputs.image }}
         run: |
-          gcloud run deploy tokens-${{ inputs.service }}-${{ inputs.env }}-us \
-            --image="$IMAGE" \
-            --region=${{ env.GCP_REGION }} \
-            --project=${{ env.GCP_PROJECT }} \
-            --quiet
+          set -euo pipefail
+          extra=()
+          if [ "${{ inputs.service }}" = "assets" ]; then
+            extra+=(--update-env-vars=SERVICE_ROLE=api,PG_POOL_MAX=16,PG_CONNECT_TIMEOUT=3)
+          fi
+          if [ "${{ inputs.env }}" = "prd" ] && [ "${{ inputs.service }}" = "assets" ]; then
+            candidate_tag="resilience-${GITHUB_SHA:0:12}"
+            gcloud run deploy tokens-assets-prd-us \
+              --image="$IMAGE" \
+              --region=${{ env.GCP_REGION }} \
+              --project=${{ env.GCP_PROJECT }} \
+              --no-traffic \
+              --tag="$candidate_tag" \
+              "${extra[@]}" \
+              --quiet
+            candidate_revision=$(gcloud run services describe tokens-assets-prd-us --region=${{ env.GCP_REGION }} --project=${{ env.GCP_PROJECT }} --format='value(status.latestCreatedRevisionName)')
+            {
+              echo "### Assets production candidate"
+              echo "Revision \`$candidate_revision\` was deployed with **0% traffic**."
+              echo "Promote it manually through 10% → 50% → 100% using the assets DB resilience runbook."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            gcloud run deploy tokens-${{ inputs.service }}-${{ inputs.env }}-us \
+              --image="$IMAGE" \
+              --region=${{ env.GCP_REGION }} \
+              --project=${{ env.GCP_PROJECT }} \
+              "${extra[@]}" \
+              --quiet
+          fi
+          jobs_service=tokens-assets-jobs-${{ inputs.env }}-us
+          if [ "${{ inputs.service }}" = "assets" ] && gcloud run services describe "$jobs_service" --region=${{ env.GCP_REGION }} --project=${{ env.GCP_PROJECT }} >/dev/null 2>&1; then
+            worker_traffic=()
+            if [ "${{ inputs.env }}" = "prd" ]; then worker_traffic+=(--no-traffic --tag="$candidate_tag"); fi
+            gcloud run deploy "$jobs_service" --image="$IMAGE" --region=${{ env.GCP_REGION }} --project=${{ env.GCP_PROJECT }} --update-env-vars=SERVICE_ROLE=worker,PG_POOL_MAX=8,PG_CONNECT_TIMEOUT=3 "${worker_traffic[@]}" --quiet
+          fi
 
       - name: Notify Slack
         if: always()
