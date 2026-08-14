@@ -1,5 +1,5 @@
 {
-    "uid": "tokens-assets-db-connect-timeout-warning",
+    "uid": "tokens-assets-db-timeout-warning",
     "title": "tokens-assets: Postgres connect timeouts > 100/10m",
     "ruleGroup": "tokens-assets-availability",
     "folderUID": "tokens-xyz",

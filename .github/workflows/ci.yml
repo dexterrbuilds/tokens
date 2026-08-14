@@ -42,6 +42,7 @@ jobs:
 
       - run: bun install --frozen-lockfile
       - run: bun run check:repo-hygiene
+      - run: bun run validate:grafana-config
       - run: bun run verify:api-health-routes
       - run: bun run lint
       - run: bun run typecheck

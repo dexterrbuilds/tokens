@@ -17,6 +17,7 @@
         "typecheck": "turbo run typecheck",
         "test": "turbo run test",
         "check:repo-hygiene": "node scripts/check-repo-hygiene.mjs",
+        "validate:grafana-config": "node scripts/validate-grafana-config.mjs",
         "verify:api-health-routes": "bun scripts/verify-api-health-routes.ts",
         "audit:deps": "bun audit",
         "verify:assets-api-v1": "bun scripts/verify-assets-api-v1-contract.ts",
