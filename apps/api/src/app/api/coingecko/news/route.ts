@@ -2,6 +2,7 @@ import { Effect } from 'effect';
 
 import { fetchJsonWithRetry } from '@tokens/effect';
 import { route } from '@/effect/next-route';
+import { createCoinGeckoNewsNotFoundRecovery, validateCoinGeckoNewsCoinId } from '@/lib/coingecko-news';
 import { getRedisClient, type RedisClient } from '@/lib/redis';
 import { tapErrorAndDefault } from '@tokens/effect';
 
@@ -90,6 +91,9 @@ export const GET = route(
             const coinId = (url.searchParams.get('coin_id') ?? '').trim();
             const perPage = parseNewsPerPage(url.searchParams.get('per_page'));
 
+            const validation = yield* validateCoinGeckoNewsCoinId(coinId);
+            if (!validation.shouldFetch) return [];
+
             const apiKey = process.env.COINGECKO_API_KEY?.trim();
             if (!apiKey) {
                 const shouldLog = yield* Effect.tryPromise(() =>
@@ -120,6 +124,7 @@ export const GET = route(
                     next: { revalidate: 60 },
                 },
                 maxRetries: 2,
+                recoverHttpError: createCoinGeckoNewsNotFoundRecovery<CoinGeckoNewsResponse>([]),
             }).pipe(
                 Effect.catch(error =>
                     Effect.gen(function* () {

@@ -2,6 +2,7 @@ import { Effect } from 'effect';
 
 import { fetchJsonWithRetry, tapErrorAndDefault } from '@tokens/effect';
 import { route } from '@/effect/next-route';
+import { createCoinGeckoNewsNotFoundRecovery, validateCoinGeckoNewsCoinId } from '@/lib/coingecko-news';
 import { resolveXBearerToken, runXRequest } from '@/lib/x-auth';
 import { buildMediaByKey, getPostImage, type XMedia, type XPostMediaAttachment } from '@/lib/x-media';
 import {
@@ -128,9 +129,15 @@ function mapCoinGeckoNewsArticle(article: CoinGeckoNewsArticle): FeedArticle {
 }
 
 async function fetchCoinGeckoNews(coinId: string, requestedCount: number): Promise<FeedArticle[]> {
+    if (requestedCount <= 0) return [];
+
+    const validation = await Effect.runPromise(validateCoinGeckoNewsCoinId(coinId));
+    if (!validation.shouldFetch) return [];
+
     const apiKey = process.env.COINGECKO_API_KEY?.trim();
     if (!apiKey) return [];
-    if (requestedCount <= 0) return [];
+
+    const recoverCoinNotFound = createCoinGeckoNewsNotFoundRecovery<CoinGeckoNewsResponse>([]);
 
     const pageCount = getCoinGeckoNewsPageCount({
         requestedCount,
@@ -148,18 +155,21 @@ async function fetchCoinGeckoNews(coinId: string, requestedCount: number): Promi
             upstreamUrl.searchParams.set('type', 'news');
             if (coinId) upstreamUrl.searchParams.set('coin_id', coinId);
 
-            return Effect.runPromise(fetchJsonWithRetry<CoinGeckoNewsResponse>({
-                url: upstreamUrl.toString(),
-                service: 'coingecko',
-                init: {
-                    headers: {
-                        Accept: 'application/json',
-                        'x-cg-pro-api-key': apiKey,
+            return Effect.runPromise(
+                fetchJsonWithRetry<CoinGeckoNewsResponse>({
+                    url: upstreamUrl.toString(),
+                    service: 'coingecko',
+                    init: {
+                        headers: {
+                            Accept: 'application/json',
+                            'x-cg-pro-api-key': apiKey,
+                        },
+                        next: { revalidate: 60 },
                     },
-                    next: { revalidate: 60 },
-                },
-                maxRetries: 2,
-            }));
+                    maxRetries: 2,
+                    recoverHttpError: recoverCoinNotFound,
+                }),
+            );
         },
         mapPageItems: articles => articles.filter(item => item && item.type === 'news').map(mapCoinGeckoNewsArticle),
         onPageError: (error, context) => {

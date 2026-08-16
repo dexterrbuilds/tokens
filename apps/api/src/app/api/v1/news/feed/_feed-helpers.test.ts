@@ -130,6 +130,19 @@ describe('selectFeedArticles', () => {
         expect(selected.slice(3).every(item => item.feed_source === 'coingecko')).toBe(true);
     });
 
+    it('retains X results when CoinGecko has no candidates', () => {
+        const selected = selectFeedArticles({
+            newsArticles: [],
+            xArticles,
+            limit: 10,
+            source: 'all',
+            tweetReserve: 3,
+        });
+
+        expect(selected.length).toBe(3);
+        expect(selected.every(item => item.feed_source === 'x')).toBe(true);
+    });
+
     it('removes unsafe URLs and never exceeds the limit', () => {
         const selected = selectFeedArticles({
             newsArticles: [

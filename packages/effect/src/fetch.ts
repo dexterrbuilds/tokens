@@ -25,6 +25,11 @@ export interface FetchJsonArgs {
 
 export type FetchJsonError = RateLimitedError | UpstreamHttpError | FetchFailedError | JsonParseError | UpstreamDataError;
 
+export interface FetchHttpRecovery<T> {
+    value: T;
+    outcome: string;
+}
+
 function parseRetryAfterMs(value: string | null): number | undefined {
     if (!value) return undefined;
     const trimmed = value.trim();
@@ -149,7 +154,11 @@ export function fetchJson<T = unknown>(args: FetchJsonArgs): Effect.Effect<T, Fe
 }
 
 export function fetchJsonWithRetry<T = unknown>(
-    args: FetchJsonArgs & { maxRetries?: number; baseDelay?: Duration.Input },
+    args: FetchJsonArgs & {
+        maxRetries?: number;
+        baseDelay?: Duration.Input;
+        recoverHttpError?: (error: UpstreamHttpError) => FetchHttpRecovery<T> | null;
+    },
 ): Effect.Effect<T, FetchJsonError> {
     const maxRetries = Math.max(0, args.maxRetries ?? 3);
     const baseDelay = args.baseDelay ?? '200 millis';
@@ -157,20 +166,36 @@ export function fetchJsonWithRetry<T = unknown>(
     const started = Date.now();
     const endpoint = extractEndpoint(args.url);
 
-    return Effect.retry(fetchJson<T>(args), {
+    const request = Effect.retry(fetchJson<T>(args), {
         while: isRetryableFetchError,
         times: maxRetries,
         schedule: Schedule.exponential(baseDelay),
     }).pipe(
-        Effect.tap(() =>
+        Effect.map(value => ({ value, recovered: false as const })),
+        Effect.catchTag('UpstreamHttpError', error => {
+            const recovery = args.recoverHttpError?.(error) ?? null;
+            if (!recovery) return Effect.fail(error);
+
+            return Effect.succeed({
+                value: recovery.value,
+                recovered: true as const,
+                status: error.status,
+                outcome: recovery.outcome,
+            });
+        }),
+    );
+
+    return request.pipe(
+        Effect.tap(result =>
             Effect.service(CurrentRequestId).pipe(
                 Effect.map(requestId =>
                     emitExternalCall({
                         provider: args.service,
                         endpoint,
-                        status: null,
+                        status: result.recovered ? result.status : null,
                         duration_ms: Date.now() - started,
                         ok: true,
+                        ...(result.recovered ? { recovered: true, outcome: result.outcome } : {}),
                         ...(requestId ? { request_id: requestId } : {}),
                     }),
                 ),
@@ -191,6 +216,7 @@ export function fetchJsonWithRetry<T = unknown>(
                 ),
             ),
         ),
+        Effect.map(result => result.value),
         Effect.withSpan(`external.${args.service}`),
     );
 }
@@ -222,6 +248,8 @@ interface ExternalCallEvent {
     duration_ms: number;
     ok: boolean;
     error_tag?: string;
+    recovered?: boolean;
+    outcome?: string;
     request_id?: string;
 }
 

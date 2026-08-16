@@ -22,7 +22,7 @@ Return the filterable activity feed used by the floating market feed.
 - `limit` (optional): integer `1–50`, default `10`
 - `source` (optional): `all`, `news`, or `tweets`, default `all`
 - `tweet_reserve` (optional): integer `0–limit`, default `3`. Reserves visible slots for matching `@tokens` posts when `source=all`.
-- `coin_id` (optional): CoinGecko coin id, such as `bitcoin` or `solana`
+- `coin_id` (optional): active CoinGecko coin id, such as `bitcoin` or `solana`
 - `symbol` (optional): token symbol used to match related `@tokens` posts, such as `BTC`
 - `name` (optional): token/display name used to match related `@tokens` posts, such as `Bitcoin`
 - `asset_id` (optional): canonical asset id used as an additional matching term
@@ -88,6 +88,7 @@ curl -sS "$API_BASE_URL/v1/news/feed?terms=solana,SOL&source=tweets&limit=50" \
 - `feed_source="coingecko"` items come from CoinGecko news.
 - `feed_source="x"` items come from `@tokens` on X.
 - In token mode, `@tokens` posts are included only when their text/source metadata matches the supplied token terms.
+- Unknown or stale `coin_id` values produce no CoinGecko items. With `source=all`, matching X items may still be returned.
 - `limit` supports up to `50`; larger values are clamped to `50`.
 - `tweet_reserve` is ignored for single-source feeds (`source=news` or `source=tweets`).
-- Upstream provider failures are best-effort: the endpoint can return a partial feed when either CoinGecko or X is unavailable.
+- Provider content is best-effort: unknown or stale CoinGecko ids and upstream provider failures return an empty or partial feed with HTTP `200`, rather than failing the request.
