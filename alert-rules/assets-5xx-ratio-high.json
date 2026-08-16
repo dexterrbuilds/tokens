@@ -4,7 +4,7 @@
     "ruleGroup": "tokens-assets-availability",
     "folderUID": "tokens-xyz",
     "noDataState": "OK",
-    "execErrState": "Error",
+    "execErrState": "OK",
     "for": "2m",
     "data": [
         {
@@ -13,7 +13,7 @@
             "queryType": "range",
             "relativeTimeRange": { "from": 300, "to": 0 },
             "model": {
-                "expr": "sum(count_over_time({service=\"tokens-assets-prd-us\"} | json | httpRequest_status >= 500 [5m])) / clamp_min(sum(count_over_time({service=\"tokens-assets-prd-us\"} | json | httpRequest_requestMethod != \"\" [5m])), 1)",
+                "expr": "((sum(count_over_time({service=\"tokens-assets-prd-us\"} | json | httpRequest_status >= 500 [5m])) or on() vector(0)) / (sum(count_over_time({service=\"tokens-assets-prd-us\"} | json | httpRequest_requestMethod != \"\" [5m])) > 0)) or on() vector(0)",
                 "queryType": "range",
                 "refId": "A"
             }

@@ -33,6 +33,8 @@
         "hono": "^4.13.0"
     },
     "devDependencies": {
+        "@grafana/lezer-logql": "0.3.0",
+        "@lezer/lr": "1.4.10",
         "@solana/prettier-config-solana": "^0.0.5",
         "@tokens/asset-registry": "workspace:*",
         "@tokens/token-risk-helpers": "workspace:*",

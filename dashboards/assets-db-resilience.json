@@ -122,7 +122,7 @@
                 },
                 {
                     "refId": "B",
-                    "expr": "100 * sum(count_over_time({service=\"tokens-assets-prd-us\"} | json | httpRequest_status >= 500 [$__interval])) / clamp_min(sum(count_over_time({service=\"tokens-assets-prd-us\"} | json | httpRequest_requestMethod != \"\" [$__interval])), 1)",
+                    "expr": "100 * (((sum(count_over_time({service=\"tokens-assets-prd-us\"} | json | httpRequest_status >= 500 [$__interval])) or on() vector(0)) / (sum(count_over_time({service=\"tokens-assets-prd-us\"} | json | httpRequest_requestMethod != \"\" [$__interval])) > 0)) or on() vector(0))",
                     "legendFormat": "5xx percent"
                 }
             ],
