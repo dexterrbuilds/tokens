@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - '.github/workflows/grafana-push.yml'
       - 'dashboards/**'
       - 'alert-rules/**'
       - 'notification-policies/**'
