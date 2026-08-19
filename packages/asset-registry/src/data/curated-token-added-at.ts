@@ -622,4 +622,5 @@ export const CURATED_TOKEN_ADDED_AT: Record<string, number> = {
     'TTWofwAge91oFhZs7kpQdyrVRkmevgM88xijGvQFbKo': 1786001022385, // 2026-08-06
     'NBiSF3UaVUFtRzHwAfxyHsBCAZWGEKnMpewAE4oh7BG': 1786436068802, // 2026-08-11
     'PreC1KtJ1sBPPqaeeqL6Qb15GTLCYVvyYEwxhdfTwfx': 1786406400000, // 2026-08-11
+    'MRNAzXzhNcaEXJPibHEn8cd4vyekCDiivTyEwswLUCT': 1787166985000, // 2026-08-19
 };

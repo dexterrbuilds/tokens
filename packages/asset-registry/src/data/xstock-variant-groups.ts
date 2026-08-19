@@ -784,7 +784,10 @@ export const XSTOCK_VARIANT_GROUPS: TokenVariantGroup[] = [
     {
         id: 'xstock-moderna',
         label: 'Moderna variants',
-        addresses: [{ address: '14VP7DvCAdBCc5XGNZkPt6zhtPzJrWWS64Koxtxyondo', label: 'Ondo' }],
+        addresses: [
+            { address: '14VP7DvCAdBCc5XGNZkPt6zhtPzJrWWS64Koxtxyondo', label: 'Ondo' },
+            { address: 'MRNAzXzhNcaEXJPibHEn8cd4vyekCDiivTyEwswLUCT', label: 'Backpack Securities' },
+        ],
     },
     {
         id: 'xstock-monster',

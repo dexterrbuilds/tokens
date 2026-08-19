@@ -257,6 +257,7 @@ export const CURATED_TOKEN_LISTS = {
             'XspzcW1PRtgf6Wj92HCiZdjzKCyFekVD8P5Ueh3dRMX', // Microsoft
             'XsP7xzNPvEHS1m6qfanPUGjNmdnmsLKEoNAnHjdxxyZ', // MicroStrategy
             'MSTRdWXMeZxdE8osAQy3fA4rvTY5rgummDSMEx6U7Nz', // MicroStrategy (Backpack Securities)
+            'MRNAzXzhNcaEXJPibHEn8cd4vyekCDiivTyEwswLUCT', // Moderna (Backpack Securities)
             'XsyusqQvb8RDULsY9szwvUv2CxrDKa642w7kecZPdRM', // Monster
             'NBiSF3UaVUFtRzHwAfxyHsBCAZWGEKnMpewAE4oh7BG', // Nebius Group (Backpack Securities)
             'XsEH7wWfJJu2ZT3UCFeVfALnVA6CP5ur7Ee11KmzVpL', // Netflix
