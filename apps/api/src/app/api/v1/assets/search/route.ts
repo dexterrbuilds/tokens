@@ -862,6 +862,7 @@ export const GET = route(
                     aggregate: stats,
                     preferAggregateVolume24h: !shouldUseStockCanonicalMarket,
                     preferStockMarket: shouldUseStockCanonicalMarket,
+                    stockPriceMatchesTokenUnits: isCanonicalPublicEquityAsset(asset),
                 });
             }
 

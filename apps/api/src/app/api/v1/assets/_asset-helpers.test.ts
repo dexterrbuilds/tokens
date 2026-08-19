@@ -405,6 +405,98 @@ describe('canonical asset stat selection', () => {
         expect(selected?.liquidity).toBe(700);
     });
 
+    it('falls back to the stock benchmark when the on-chain market is dust', () => {
+        // Mirrors galaxy-digital: a single ~$10 trade on an empty pool printed
+        // ~3x the real GLXY price and a +360% 24h change.
+        const dustAggregate = {
+            price: 68.98,
+            liquidity: 0.52,
+            volume24hUSD: 8.38,
+            volume30dUSD: null,
+            marketCap: 6_608_913,
+            fdv: 40_008_995,
+            priceChange24hPercent: 359.9,
+            priceChange1hPercent: 359.9,
+            totalSupply: 580_000,
+            circulatingSupply: 95_807,
+        };
+
+        const selected = selectCanonicalAssetStats({
+            stock: {
+                priceUsd: 21.62,
+                volume24hUsd: 0,
+                priceChange24hPercent: 2.22,
+            },
+            aggregate: dustAggregate,
+            preferStockMarket: true,
+            stockPriceMatchesTokenUnits: true,
+        });
+
+        expect(selected?.price).toBe(21.62);
+        expect(selected?.priceChange24hPercent).toBe(2.22);
+        expect(selected?.priceChange1hPercent).toBeNull();
+        // On-chain activity figures stay truthful.
+        expect(selected?.volume24hUSD).toBe(8.38);
+        expect(selected?.liquidity).toBe(0.52);
+    });
+
+    it('only falls back percent change for dust markets when stock units differ from token units', () => {
+        const dustAggregate = {
+            price: 2600,
+            liquidity: 5,
+            volume24hUSD: 3,
+            volume30dUSD: null,
+            marketCap: 1_000_000,
+            fdv: 1_000_000,
+            priceChange24hPercent: 120,
+            priceChange1hPercent: 120,
+            totalSupply: 400,
+            circulatingSupply: 400,
+        };
+
+        const selected = selectCanonicalAssetStats({
+            stock: {
+                priceUsd: 240, // e.g. GLD share price — different units than the per-oz token
+                volume24hUsd: 0,
+                priceChange24hPercent: 0.8,
+            },
+            aggregate: dustAggregate,
+            preferStockMarket: true,
+        });
+
+        expect(selected?.price).toBe(2600);
+        expect(selected?.priceChange24hPercent).toBe(0.8);
+        expect(selected?.priceChange1hPercent).toBeNull();
+    });
+
+    it('keeps on-chain stats for stock-canonical assets with real activity', () => {
+        const selected = selectCanonicalAssetStats({
+            stock: {
+                priceUsd: 21.62,
+                volume24hUsd: 0,
+                priceChange24hPercent: 2.22,
+            },
+            aggregate: {
+                price: 21.8,
+                liquidity: 250_000,
+                volume24hUSD: 90_000,
+                volume30dUSD: null,
+                marketCap: 6_608_913,
+                fdv: 40_008_995,
+                priceChange24hPercent: 3.1,
+                priceChange1hPercent: 0.4,
+                totalSupply: 580_000,
+                circulatingSupply: 95_807,
+            },
+            preferStockMarket: true,
+            stockPriceMatchesTokenUnits: true,
+        });
+
+        expect(selected?.price).toBe(21.8);
+        expect(selected?.priceChange24hPercent).toBe(3.1);
+        expect(selected?.priceChange1hPercent).toBe(0.4);
+    });
+
     it('prefers the underlying company market cap for stock-canonical assets', () => {
         const selected = selectCanonicalAssetStats({
             stock: {

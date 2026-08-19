@@ -551,6 +551,13 @@ function weightedAverageByVariantActivity(
     return weightSum > 0 ? weightedSum / weightSum : null;
 }
 
+// On-chain markets below both floors are treated as inactive ("dust") for
+// stock-priced assets: a single tiny trade on an empty pool can print an
+// arbitrary price (and a wild 24h change computed from it), so the stock
+// benchmark is more trustworthy than anything derived from these markets.
+const DUST_ONCHAIN_MARKET_MAX_LIQUIDITY_USD = 100;
+const DUST_ONCHAIN_MARKET_MAX_VOLUME24H_USD = 100;
+
 export function selectCanonicalAssetStats(args: {
     coingecko?: {
         priceUsd?: number | null;
@@ -569,6 +576,13 @@ export function selectCanonicalAssetStats(args: {
     primaryVariant?: AssetStats | null;
     preferAggregateVolume24h?: boolean;
     preferStockMarket?: boolean;
+    /**
+     * One token represents one share of the underlying stock, so
+     * `stock.priceUsd` is a valid substitute for the on-chain token price.
+     * Leave unset for commodities and other assets where the benchmark's
+     * units differ from the token's (e.g. gold: GLD share vs per-oz spot).
+     */
+    stockPriceMatchesTokenUnits?: boolean;
 }): AssetStats | null {
     const coingecko = args.coingecko ?? null;
     const stock = args.stock ?? null;
@@ -584,8 +598,18 @@ export function selectCanonicalAssetStats(args: {
         return null;
     };
 
+    const onChainLiquidity = pick(aggregate?.liquidity, primaryVariant?.liquidity) ?? 0;
+    const onChainVolume24hUSD = pick(aggregate?.volume24hUSD, primaryVariant?.volume24hUSD) ?? 0;
+    const useStockForDustOnChain =
+        preferStockMarket &&
+        stock !== null &&
+        onChainLiquidity < DUST_ONCHAIN_MARKET_MAX_LIQUIDITY_USD &&
+        onChainVolume24hUSD < DUST_ONCHAIN_MARKET_MAX_VOLUME24H_USD;
+
     const price = preferStockMarket
-        ? pick(aggregate?.price, primaryVariant?.price, coingecko?.priceUsd)
+        ? useStockForDustOnChain && args.stockPriceMatchesTokenUnits === true
+            ? pick(stock?.priceUsd, aggregate?.price, primaryVariant?.price, coingecko?.priceUsd)
+            : pick(aggregate?.price, primaryVariant?.price, coingecko?.priceUsd)
         : pick(coingecko?.priceUsd, stock?.priceUsd, aggregate?.price, primaryVariant?.price);
     const volume24hUSD = preferStockMarket
         ? pick(aggregate?.volume24hUSD, primaryVariant?.volume24hUSD, coingecko?.volume24hUsd)
@@ -598,11 +622,18 @@ export function selectCanonicalAssetStats(args: {
           pick(stock?.marketCapUsd, aggregate?.marketCap, primaryVariant?.marketCap, coingecko?.marketCapUsd)
         : pick(coingecko?.marketCapUsd, aggregate?.marketCap, primaryVariant?.marketCap);
     const priceChange24hPercent = preferStockMarket
-        ? pick(
-              aggregate?.priceChange24hPercent,
-              primaryVariant?.priceChange24hPercent,
-              coingecko?.priceChange24hPercent,
-          )
+        ? useStockForDustOnChain
+            ? pick(
+                  stock?.priceChange24hPercent,
+                  aggregate?.priceChange24hPercent,
+                  primaryVariant?.priceChange24hPercent,
+                  coingecko?.priceChange24hPercent,
+              )
+            : pick(
+                  aggregate?.priceChange24hPercent,
+                  primaryVariant?.priceChange24hPercent,
+                  coingecko?.priceChange24hPercent,
+              )
         : pick(
               coingecko?.priceChange24hPercent,
               stock?.priceChange24hPercent,
@@ -618,7 +649,9 @@ export function selectCanonicalAssetStats(args: {
         marketCap,
         fdv: pick(aggregate?.fdv, primaryVariant?.fdv),
         priceChange24hPercent,
-        priceChange1hPercent: pick(aggregate?.priceChange1hPercent, primaryVariant?.priceChange1hPercent),
+        priceChange1hPercent: useStockForDustOnChain
+            ? null
+            : pick(aggregate?.priceChange1hPercent, primaryVariant?.priceChange1hPercent),
         totalSupply: pick(aggregate?.totalSupply, primaryVariant?.totalSupply),
         circulatingSupply: pick(aggregate?.circulatingSupply, primaryVariant?.circulatingSupply),
     };

@@ -556,12 +556,17 @@ export const GET = route(
             // underlying company's market cap (price × shares outstanding) when
             // shares data is available — the tokenized-supply aggregate remains the
             // fallback and stays available per-variant.
+            // EXCEPTION: when the on-chain markets are dust (a lone tiny trade
+            // on an empty pool can print an arbitrary price), the stock
+            // benchmark takes over percent change, and price too for public
+            // equities where one token equals one share.
             const effectiveStats = selectCanonicalAssetStats({
                 coingecko: shouldUseStockCanonicalMarket ? null : coinSnapshot,
                 stock: stockSnapshot ? { ...stockSnapshot, marketCapUsd: companyMarketCap } : null,
                 aggregate: stats,
                 preferAggregateVolume24h: !shouldUseStockCanonicalMarket,
                 preferStockMarket: shouldUseStockCanonicalMarket,
+                stockPriceMatchesTokenUnits: isCanonicalPublicEquityAsset(asset),
             });
 
             const primaryMint = primaryVariant?.mint ?? null;
