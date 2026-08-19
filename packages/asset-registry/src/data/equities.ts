@@ -16,6 +16,7 @@ const EQUITY_TICKER_BY_SLUG: Record<string, string> = {
     microsoft: 'MSFT',
     microstrategy: 'MSTR',
     micron: 'MU',
+    moderna: 'MRNA',
     nvidia: 'NVDA',
     robinhood: 'HOOD',
     'roundhill-memory-etf': 'DRAM',
