@@ -72,8 +72,10 @@ const XSTOCK_LOGOS = new Set([
     'MRKx',
     'MRVLx',
     'MSFTx',
+    'MRNAx',
     'MSTRx',
     'MUx',
+    'NBISx',
     'NFLXx',
     'NVDAx',
     'NVOx',
@@ -128,6 +130,10 @@ const SYMBOL_TO_FILENAME: Record<string, string> = {
     SPGIx: 'SPYx',
     STRKx: 'STRCx',
     GLD: 'GLDx',
+    // Backpack-led listings with no xStock variant; logo files follow the
+    // xstocks naming so the canonical-symbol mapper (<SYM>x) finds them.
+    MRNA: 'MRNAx',
+    NBIS: 'NBISx',
 };
 
 const POPULAR_LOGO_BY_SYMBOL: Record<string, string> = {
