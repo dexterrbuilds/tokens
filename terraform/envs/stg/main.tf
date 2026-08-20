@@ -1,5 +1,13 @@
 data "google_project" "this" {}
 
+# The isolated assets jobs worker was created out-of-band on 2026-08-19 to
+# restore Cloud Scheduler /jobs/* handling (404ing since the 2026-08-14 assets
+# deploy set SERVICE_ROLE=api); Terraform adopts it here, mirroring prd.
+import {
+  to = module.env.module.cloud_run_assets_jobs[0].google_cloud_run_v2_service.this
+  id = "projects/${data.google_project.this.project_id}/locations/${var.region}/services/tokens-assets-jobs-stg-us"
+}
+
 module "env" {
   source = "../../modules/env"
 
@@ -26,11 +34,12 @@ module "env" {
     "usage",
   ]
 
-  # Enable the DB-aware startup probe and isolated worker in a follow-up
-  # apply only after the application revision containing /startup is live.
+  # Worker cutover mirrors prd (see docs/operations/assets-db-resilience.md):
+  # the worker was created out-of-band on 2026-08-19 and is adopted via the
+  # import block above. The startup probe stays false pending its own rollout.
   enable_assets_db_startup_probe = false
-  enable_assets_worker           = false
-  route_assets_jobs_to_worker    = false
+  enable_assets_worker           = true
+  route_assets_jobs_to_worker    = true
 
   enable_load_balancer = false
   enable_crons         = true
