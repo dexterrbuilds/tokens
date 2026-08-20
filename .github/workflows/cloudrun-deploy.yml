@@ -94,7 +94,9 @@ jobs:
           jobs_service=tokens-assets-jobs-${{ inputs.env }}-us
           if [ "${{ inputs.service }}" = "assets" ] && gcloud run services describe "$jobs_service" --region=${{ env.GCP_REGION }} --project=${{ env.GCP_PROJECT }} >/dev/null 2>&1; then
             worker_traffic=()
-            if [ "${{ inputs.env }}" = "prd" ]; then worker_traffic+=(--no-traffic --tag="$candidate_tag"); fi
+            # Tag + service name are capped at 46 chars; the jobs service name is
+            # 25, so the API's resilience-<sha12> tag (23) does not fit here.
+            if [ "${{ inputs.env }}" = "prd" ]; then worker_traffic+=(--no-traffic --tag="res-${GITHUB_SHA:0:12}"); fi
             gcloud run deploy "$jobs_service" --image="$IMAGE" --region=${{ env.GCP_REGION }} --project=${{ env.GCP_PROJECT }} --update-env-vars=SERVICE_ROLE=worker,PG_POOL_MAX=8,PG_CONNECT_TIMEOUT=3 "${worker_traffic[@]}" --quiet
           fi
 
