@@ -3,7 +3,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { ArrowUpRight } from 'lucide-react';
 
-import type { AssetVariant, CanonicalAsset, LiquidityTier, TrustTier } from '@tokens/asset-registry';
+import type { AssetVariant, CanonicalAsset, LiquidityTier, TrustTier, VariantHub } from '@tokens/asset-registry';
 import { getVariantHubById, liquidityTierPriority } from '@tokens/asset-registry';
 import { Skeleton } from '@tokens/ui/skeleton';
 
@@ -246,19 +246,31 @@ function shouldShowSingletonVariantBadge(asset: CanonicalAsset): boolean {
     return asset.category === 'equity' && asset.variants.length === 1;
 }
 
-function buildVariantGroup(assetId: string, displayName: string, variants: VariantWithMarket[]) {
+function buildVariantGroup(
+    assetId: string,
+    displayName: string,
+    variants: VariantWithMarket[],
+    registryHub?: VariantHub | null,
+) {
     if (variants.length === 0) return null;
+
+    // API variants (registry ∪ DB) decide membership so admin-added variants
+    // appear without a redeploy; the static registry hub only supplies labels.
+    const registryLabelByMint = new Map(
+        (registryHub?.addresses ?? []).map(item => [item.address, item.label] as const),
+    );
 
     return {
         id: assetId,
         label: `${displayName} variants`,
         addresses: (() => {
-            const unique: Array<{ address: string }> = [];
+            const unique: Array<{ address: string; label?: string }> = [];
             const seen = new Set<string>();
             for (const variant of variants) {
                 if (seen.has(variant.mint)) continue;
                 seen.add(variant.mint);
-                unique.push({ address: variant.mint });
+                const label = registryLabelByMint.get(variant.mint) ?? variant.label?.trim() ?? undefined;
+                unique.push({ address: variant.mint, ...(label ? { label } : {}) });
             }
             return unique;
         })(),
@@ -742,10 +754,9 @@ function AssetPageShellFallback({ asset, requestedName, requestedMint }: AssetPa
     const variantHubFromRegistry = getVariantHubById(canonicalAssetId);
     const showSingletonVariantBadge = shouldShowSingletonVariantBadge(asset);
     const variantGroup =
-        variantHubFromRegistry ??
         (variants.length > 1 || showSingletonVariantBadge
-            ? buildVariantGroup(canonicalAssetId, displayName, variants)
-            : null);
+            ? buildVariantGroup(canonicalAssetId, displayName, variants, variantHubFromRegistry)
+            : null) ?? variantHubFromRegistry;
 
     return (
         <TokenPageScaffold
@@ -1020,10 +1031,9 @@ async function loadAssetPageModel({ asset, requestedName, requestedMint }: Asset
     const variantHubFromRegistry = getVariantHubById(canonicalAssetId);
     const showSingletonVariantBadge = shouldShowSingletonVariantBadge(effectiveAsset);
     const variantGroup =
-        variantHubFromRegistry ??
         (variants.length > 1 || showSingletonVariantBadge
-            ? buildVariantGroup(canonicalAssetId, displayName, variants)
-            : null);
+            ? buildVariantGroup(canonicalAssetId, displayName, variants, variantHubFromRegistry)
+            : null) ?? variantHubFromRegistry;
 
     return {
         assetRef,

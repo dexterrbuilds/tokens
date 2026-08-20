@@ -93,7 +93,7 @@ function getCoinDocImageUrl(coinDoc: CoinDoc | null): string | undefined {
 }
 
 function getRequestHost(headers: Headers): string {
-    const raw = headers.get('x-forwarded-host') ?? headers.get('host') ?? 'token.solana.com';
+    const raw = headers.get('x-forwarded-host') ?? headers.get('host') ?? 'tokens.xyz';
     const first = raw.split(',')[0]?.trim();
     return first && first.length > 0 ? first : raw.trim();
 }

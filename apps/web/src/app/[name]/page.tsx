@@ -87,9 +87,9 @@ function firstString(value: string | string[] | undefined): string | null {
 // Static so generateMetadata never touches request headers (keeps the route cacheable/ISR).
 function getMetadataBase(): URL {
     try {
-        return new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'https://token.solana.com');
+        return new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'https://tokens.xyz');
     } catch {
-        return new URL('https://token.solana.com');
+        return new URL('https://tokens.xyz');
     }
 }
 
