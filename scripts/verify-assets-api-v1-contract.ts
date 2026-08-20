@@ -176,7 +176,7 @@ async function verifyCurated(baseUrl: string, apiKey: string, prefix: string): P
     for (let i = 0; i < data.assets.length; i++) {
         const row = data.assets[i];
         assertObject(row, `curated.assets[${i}]`);
-        assertNoKeys(row, ['aliases', 'symbols'], `curated.assets[${i}]`);
+        assertNoKeys(row, ['aliases', 'symbols', 'variants'], `curated.assets[${i}]`);
         const assetId = row.assetId;
         assertNotMintAssetId(assetId, `curated.assets[${i}].assetId`);
         assertStatsSnapshot(row.stats ?? null, `curated.assets[${i}].stats`);
@@ -190,6 +190,40 @@ async function verifyCurated(baseUrl: string, apiKey: string, prefix: string): P
         }
 
         assetIds.push(assetId);
+    }
+
+    const withVariants = await fetchJson(
+        baseUrl,
+        `${prefix}/assets/curated?list=majors&groupBy=asset&variants=all`,
+        apiKey,
+    );
+    assertObject(withVariants, 'curated variants=all response');
+    assert(Array.isArray(withVariants.assets), 'curated variants=all assets must be an array');
+    for (let i = 0; i < withVariants.assets.length; i++) {
+        const row = withVariants.assets[i];
+        const path = `curated(variants=all).assets[${i}]`;
+        assertObject(row, path);
+        assert(Array.isArray(row.variants), `${path}.variants must be an array`);
+        for (let j = 0; j < row.variants.length; j++) {
+            const variant = row.variants[j];
+            assertObject(variant, `${path}.variants[${j}]`);
+            assert(typeof variant.mint === 'string', `${path}.variants[${j}].mint must be a string`);
+            assert('market' in variant, `${path}.variants[${j}].market must exist (null allowed)`);
+            assertMarketSnapshot(variant.market ?? null, `${path}.variants[${j}].market`);
+        }
+        const primary = row.primaryVariant ?? null;
+        if (primary !== null) {
+            assertObject(primary, `${path}.primaryVariant`);
+            assert(
+                row.variants.some(
+                    variant =>
+                        typeof variant === 'object' &&
+                        variant !== null &&
+                        (variant as Record<string, unknown>).mint === primary.mint,
+                ),
+                `${path}.variants must include the primaryVariant mint`,
+            );
+        }
     }
 
     return assetIds;
