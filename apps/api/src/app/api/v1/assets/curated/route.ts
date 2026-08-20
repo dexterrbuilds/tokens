@@ -198,17 +198,21 @@ function curatedStaleCacheKey(request: Request): string | null {
         const rawListId = (searchParams.get('list') ?? 'all').trim();
         const listId = rawListId === 'all' ? 'all' : (normalizeCuratedTokenListId(rawListId) ?? 'all');
         const groupBy = parseGroupBy(searchParams.get('groupBy'));
+        const includeVariants = groupBy === 'asset' && (searchParams.get('variants') ?? '').trim() === 'all';
         const variantsMode = (searchParams.get('variantsMode') ?? '').trim();
         const strategy = (searchParams.get('primaryVariantStrategy') ?? '').trim();
         const shouldPaginate = searchParams.has('limit') || searchParams.has('offset');
         const offset = shouldPaginate ? (searchParams.get('offset') ?? '').trim() : '';
         const limit = shouldPaginate ? (searchParams.get('limit') ?? '').trim() : '';
+        // `variants` is spread conditionally so pre-existing key hashes (incl.
+        // the warmer's) stay stable.
         const canonical = JSON.stringify({
             listId,
             groupBy,
             variantsMode,
             strategy,
             pagination: shouldPaginate ? { offset, limit } : null,
+            ...(includeVariants ? { variants: 'all' } : {}),
         });
         const shapeHash = createHash('sha256').update(canonical).digest('hex').slice(0, 32);
         return `stale-response:v2:assets-curated:${shapeHash}`;
@@ -229,6 +233,7 @@ export const GET = route(
                 return normalizeCuratedTokenListId(trimmed) ?? 'all';
             })();
             const groupBy = parseGroupBy(searchParams.get('groupBy'));
+            const includeVariants = groupBy === 'asset' && (searchParams.get('variants') ?? '').trim() === 'all';
             const shouldPaginate = searchParams.has('limit') || searchParams.has('offset');
             const offset = shouldPaginate ? yield* decodeOffset(searchParams.get('offset')) : 0;
             const limit = shouldPaginate
@@ -502,9 +507,12 @@ export const GET = route(
 
             const canonicalAssets = Array.from(canonicalAssetById.values()).map(mergeRegistryVariantMetadata);
 
-            const shouldLoadSanctumLsts = groupBy === 'mint' && (listId === 'lsts' || listId === 'all');
+            // variants=all needs sanctum ranks too: shouldIncludeMintRow gates
+            // nested solana LST variants on sanctum membership.
+            const shouldLoadSanctumLsts =
+                (groupBy === 'mint' || includeVariants) && (listId === 'lsts' || listId === 'all');
             // Prefetch already loaded sanctum when the caller asked for it (listId=all|lsts);
-            // groupBy=asset short-circuits below because shouldLoadSanctumLsts is false anyway.
+            // plain groupBy=asset short-circuits below because shouldLoadSanctumLsts is false anyway.
             const sanctumLsts = shouldLoadSanctumLsts
                 ? prefetch && prefetch.sanctumLsts.length > 0
                     ? prefetch.sanctumLsts
@@ -951,6 +959,65 @@ export const GET = route(
                 return primaryVariantStrategy;
             }
 
+            function makeVariantWithMarketBuilder(ctx: {
+                responseSymbol: string | undefined;
+                imageUrl: string | null;
+            }) {
+                return function buildVariantWithMarket(variant: CanonicalAsset['variants'][number]) {
+                    const token = tokenByMint.get(variant.mint);
+                    const marketMeta = marketMetaByMint.get(variant.mint);
+                    const variantSymbol = resolveVariantSymbol({
+                        variantSymbol: variant.symbol,
+                        marketSymbol: token?.symbol,
+                        label: variant.label,
+                        canonicalSymbol: ctx.responseSymbol,
+                    });
+                    const variantName =
+                        optionalText(variant.name) ??
+                        optionalText(token?.name) ??
+                        optionalText(variant.label) ??
+                        variantSymbol;
+                    const market = token
+                        ? {
+                              ...(token.source ? { source: token.source } : {}),
+                              ...(token.metricsSource ? { metricsSource: token.metricsSource } : {}),
+                              price: token.price,
+                              liquidity: token.liquidity,
+                              volume1hUSD: token.volume1hUSD ?? null,
+                              volume24hUSD: token.volume24hUSD,
+                              trade1h: token.trade1h ?? null,
+                              trade24h: token.trade24h ?? null,
+                              uniqueWallet1h: token.uniqueWallet1h ?? null,
+                              uniqueWallet24h: token.uniqueWallet24h ?? null,
+                              marketCap: token.marketCap,
+                              fdv: token.fdv,
+                              holder: token.holder,
+                              totalSupply: token.totalSupply,
+                              circulatingSupply: token.circulatingSupply,
+                              priceChange24hPercent: token.priceChange24hPercent,
+                              priceChange1hPercent: token.priceChange1hPercent,
+                              decimals: token.decimals,
+                              logoURI: token.logoURI ?? ctx.imageUrl ?? null,
+                              lastTradeAt: token.lastTradeAt ?? null,
+                              asOf: token.asOf ?? null,
+                              lastFetchedAt: marketMeta ? marketMeta.lastFetchedAt : null,
+                          }
+                        : null;
+                    const executionQuality = fillQualityByMint.get(variant.mint) ?? null;
+
+                    return withDerivedVariantTier(
+                        {
+                            ...variant,
+                            ...(variantSymbol ? { symbol: variantSymbol } : {}),
+                            ...(variantName ? { name: variantName } : {}),
+                            market,
+                            executionQuality,
+                        },
+                        market?.liquidity,
+                    );
+                };
+            }
+
             const results =
                 groupBy === 'mint'
                     ? (() => {
@@ -981,52 +1048,16 @@ export const GET = route(
                                   imageUrl: assetImageById.get(asset.assetId) ?? null,
                               });
 
+                              const buildVariantWithMarket = makeVariantWithMarketBuilder({
+                                  responseSymbol,
+                                  imageUrl,
+                              });
+
                               return asset.variants
                                   .filter(variant =>
                                       shouldIncludeMintRow(asset, variant, tokenByMint.get(variant.mint)),
                                   )
                                   .map(variant => {
-                                      const token = tokenByMint.get(variant.mint);
-                                      const marketMeta = marketMetaByMint.get(variant.mint);
-                                      const variantSymbol = resolveVariantSymbol({
-                                          variantSymbol: variant.symbol,
-                                          marketSymbol: token?.symbol,
-                                          label: variant.label,
-                                          canonicalSymbol: responseSymbol,
-                                      });
-                                      const variantName =
-                                          optionalText(variant.name) ??
-                                          optionalText(token?.name) ??
-                                          optionalText(variant.label) ??
-                                          variantSymbol;
-                                      const market = token
-                                          ? {
-                                                ...(token.source ? { source: token.source } : {}),
-                                                ...(token.metricsSource ? { metricsSource: token.metricsSource } : {}),
-                                                price: token.price,
-                                                liquidity: token.liquidity,
-                                                volume1hUSD: token.volume1hUSD ?? null,
-                                                volume24hUSD: token.volume24hUSD,
-                                                trade1h: token.trade1h ?? null,
-                                                trade24h: token.trade24h ?? null,
-                                                uniqueWallet1h: token.uniqueWallet1h ?? null,
-                                                uniqueWallet24h: token.uniqueWallet24h ?? null,
-                                                marketCap: token.marketCap,
-                                                fdv: token.fdv,
-                                                holder: token.holder,
-                                                totalSupply: token.totalSupply,
-                                                circulatingSupply: token.circulatingSupply,
-                                                priceChange24hPercent: token.priceChange24hPercent,
-                                                priceChange1hPercent: token.priceChange1hPercent,
-                                                decimals: token.decimals,
-                                                logoURI: token.logoURI ?? imageUrl ?? null,
-                                                lastTradeAt: token.lastTradeAt ?? null,
-                                                asOf: token.asOf ?? null,
-                                                lastFetchedAt: marketMeta ? marketMeta.lastFetchedAt : null,
-                                            }
-                                          : null;
-                                      const executionQuality = fillQualityByMint.get(variant.mint) ?? null;
-
                                       const out = {
                                           assetId: asset.assetId,
                                           name: asset.name,
@@ -1035,16 +1066,7 @@ export const GET = route(
                                           imageUrl,
                                           stats: effectiveStats,
                                           ...(canonicalMarket ? { canonicalMarket } : {}),
-                                          primaryVariant: withDerivedVariantTier(
-                                              {
-                                                  ...variant,
-                                                  ...(variantSymbol ? { symbol: variantSymbol } : {}),
-                                                  ...(variantName ? { name: variantName } : {}),
-                                                  market,
-                                                  executionQuality,
-                                              },
-                                              market?.liquidity,
-                                          ),
+                                          primaryVariant: buildVariantWithMarket(variant),
                                       };
 
                                       const rank = shouldSortBySanctumRank
@@ -1075,7 +1097,6 @@ export const GET = route(
                                   },
                               );
                               const token = primaryVariant ? tokenByMint.get(primaryVariant.mint) : undefined;
-                              const marketMeta = primaryVariant ? marketMetaByMint.get(primaryVariant.mint) : undefined;
                               const aggregates = aggregatesByAssetId.get(asset.assetId) ?? null;
 
                               const stats = mergeAssetStatsWithAggregates(
@@ -1091,45 +1112,21 @@ export const GET = route(
                                   symbol: responseSymbol ?? null,
                                   imageUrl: assetImageById.get(asset.assetId) ?? null,
                               });
-                              const variantSymbol = resolveVariantSymbol({
-                                  variantSymbol: primaryVariant?.symbol,
-                                  marketSymbol: token?.symbol,
-                                  label: primaryVariant?.label,
-                                  canonicalSymbol: responseSymbol,
+                              const buildVariantWithMarket = makeVariantWithMarketBuilder({
+                                  responseSymbol,
+                                  imageUrl,
                               });
-                              const variantName =
-                                  optionalText(primaryVariant?.name) ??
-                                  optionalText(token?.name) ??
-                                  optionalText(primaryVariant?.label) ??
-                                  variantSymbol;
-                              const market = token
-                                  ? {
-                                        ...(token.source ? { source: token.source } : {}),
-                                        ...(token.metricsSource ? { metricsSource: token.metricsSource } : {}),
-                                        price: token.price,
-                                        liquidity: token.liquidity,
-                                        volume1hUSD: token.volume1hUSD ?? null,
-                                        volume24hUSD: token.volume24hUSD,
-                                        trade1h: token.trade1h ?? null,
-                                        trade24h: token.trade24h ?? null,
-                                        uniqueWallet1h: token.uniqueWallet1h ?? null,
-                                        uniqueWallet24h: token.uniqueWallet24h ?? null,
-                                        marketCap: token.marketCap,
-                                        fdv: token.fdv,
-                                        holder: token.holder,
-                                        totalSupply: token.totalSupply,
-                                        circulatingSupply: token.circulatingSupply,
-                                        priceChange24hPercent: token.priceChange24hPercent,
-                                        priceChange1hPercent: token.priceChange1hPercent,
-                                        decimals: token.decimals,
-                                        logoURI: token.logoURI ?? imageUrl ?? null,
-                                        lastTradeAt: token.lastTradeAt ?? null,
-                                        asOf: token.asOf ?? null,
-                                        lastFetchedAt: marketMeta ? marketMeta.lastFetchedAt : null,
-                                    }
-                                  : null;
-                              const executionQuality = primaryVariant
-                                  ? (fillQualityByMint.get(primaryVariant.mint) ?? null)
+                              // Same eligibility gate as groupBy=mint rows, so nested
+                              // counts agree with mint-grouping for the same params.
+                              const variants = includeVariants
+                                  ? asset.variants
+                                        .filter(variant =>
+                                            shouldIncludeMintRow(asset, variant, tokenByMint.get(variant.mint)),
+                                        )
+                                        .map(buildVariantWithMarket)
+                                        .sort(
+                                            (a, b) => (b.market?.liquidity ?? 0) - (a.market?.liquidity ?? 0),
+                                        )
                                   : null;
 
                               return {
@@ -1140,18 +1137,8 @@ export const GET = route(
                                   imageUrl,
                                   stats: effectiveStats,
                                   ...(canonicalMarket ? { canonicalMarket } : {}),
-                                  primaryVariant: primaryVariant
-                                      ? withDerivedVariantTier(
-                                            {
-                                                ...primaryVariant,
-                                                ...(variantSymbol ? { symbol: variantSymbol } : {}),
-                                                ...(variantName ? { name: variantName } : {}),
-                                                market,
-                                                executionQuality,
-                                            },
-                                            market?.liquidity,
-                                        )
-                                      : null,
+                                  primaryVariant: primaryVariant ? buildVariantWithMarket(primaryVariant) : null,
+                                  ...(variants ? { variants } : {}),
                               };
                           })
                           .sort((a, b) => (b.stats?.volume24hUSD ?? 0) - (a.stats?.volume24hUSD ?? 0));

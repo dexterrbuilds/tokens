@@ -592,12 +592,14 @@ Get curated assets from a list.
 - `groupBy` (optional): `asset` (default) or `mint`
 - `limit` (optional): opt into pagination with this page size (default `250` when `offset` is provided, max `500`)
 - `offset` (optional): opt into pagination from this zero-based result offset
-- `variantsMode=all` (optional): disable the default Solana LST liquidity filter for `groupBy=mint`
+- `variantsMode=all` (optional): disable the default Solana LST liquidity filter (applies to `groupBy=mint` rows and to nested `variants[]`)
+- `variants=all` (optional): include every known variant for each canonical asset as `variants[]` (each with per-variant `market` and `executionQuality`, sorted by `market.liquidity` descending). Only applies to `groupBy=asset`; ignored for `groupBy=mint`. By default only `primaryVariant` is returned.
 - `primaryVariantStrategy` (optional): `liquidity` (default), `execution_quality`, or `stock_redeemability`
 
 ### Notes
 
 - Results are sorted by `stats.volume24hUSD` descending when available.
+- With `variants=all`, the `solana` asset's nested LST variants follow the same active-LST plus `$250k` liquidity filter as `groupBy=mint` rows; pass `variantsMode=all` to disable the liquidity floor. `primaryVariant` also appears within `variants[]` (no dedup).
 - `list=lsts` is backed by the same dynamic, capped Solana yield-variant set used by the variants API, rather than a fixed static mint list. `list=all` includes that same dynamic LST membership.
 - For Solana LST mint rows, the default response only includes active LSTs with at least `$250k` liquidity. Pass `variantsMode=all` to return all active LST rows.
 - `groupBy=mint` expands the response to one row per variant mint.
@@ -671,6 +673,9 @@ interface AssetsCuratedResponse {
             };
             executionQuality: VariantExecutionQuality;
         };
+        // Present when variants=all and groupBy=asset. Same element shape as
+        // primaryVariant, sorted by market.liquidity descending.
+        variants?: Array<NonNullable<AssetsCuratedResponse['assets'][number]['primaryVariant']>>;
     }>;
 }
 ```
@@ -695,6 +700,11 @@ curl -sS "$API_BASE_URL/v1/assets/curated?list=all&groupBy=asset&limit=250" \
 
 ```bash
 curl -sS "$API_BASE_URL/v1/assets/curated?list=lsts&groupBy=mint&variantsMode=all" \
+  -H "x-api-key: $API_KEY"
+```
+
+```bash
+curl -sS "$API_BASE_URL/v1/assets/curated?list=stocks&variants=all" \
   -H "x-api-key: $API_KEY"
 ```
 
