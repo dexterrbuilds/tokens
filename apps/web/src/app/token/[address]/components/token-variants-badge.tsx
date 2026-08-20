@@ -93,6 +93,7 @@ interface VariantListItem {
     address: string;
     symbol: string;
     name: string;
+    label?: string;
     decimals: number;
     logoURI?: string;
     liquidity: number;
@@ -186,7 +187,10 @@ function VariantTokenRow({
 }: VariantTokenRowProps) {
     const isLight = appearance === 'light';
     const isCurrent = token.address === currentAddress;
-    const label = group.id === 'solana' ? undefined : normalizeVariantBadgeLabel(getAddressLabel(group, token.address));
+    const label =
+        group.id === 'solana'
+            ? undefined
+            : normalizeVariantBadgeLabel(getAddressLabel(group, token.address) ?? token.label);
     const shouldShowLabelBadge =
         Boolean(label) && normalizeBadgeToken(label ?? '') !== normalizeBadgeToken(token.symbol);
     const href = `/${encodeURIComponent(routeName)}?solana=${encodeURIComponent(token.address)}`;
@@ -508,12 +512,13 @@ export function TokenVariantsBadge({
     });
 
     const variantCount = React.useMemo(() => {
-        if (group.id === 'solana') {
-            const apiCount = new Set((data?.variants ?? []).map(v => v.mint)).size;
-            if (apiCount > 0) return apiCount;
-        }
+        // API variants (registry ∪ DB) are the source of truth so admin-added
+        // variants show without a redeploy; fall back to the static registry
+        // hub until the query has loaded.
+        const apiCount = new Set((data?.variants ?? []).map(v => v.mint)).size;
+        if (apiCount > 0) return apiCount;
         return new Set(group.addresses.map(item => item.address)).size;
-    }, [data?.variants, group.addresses, group.id]);
+    }, [data?.variants, group.addresses]);
     const variantCountLabel = variantCount > 1 ? `${variantCount}+` : `${variantCount}`;
 
     const tokens: VariantListItem[] = React.useMemo(() => {
@@ -521,7 +526,7 @@ export function TokenVariantsBadge({
         const byMint = new Map(variants.map(v => [v.mint, v]));
 
         const items: VariantListItem[] = [];
-        const addresses = group.id === 'solana' ? variants.map(v => ({ address: v.mint })) : group.addresses;
+        const addresses = variants.length > 0 ? variants.map(v => ({ address: v.mint })) : group.addresses;
         for (const item of addresses) {
             const v = byMint.get(item.address);
             const market = v?.market ?? null;
@@ -549,10 +554,12 @@ export function TokenVariantsBadge({
             });
             const logoURI = normalizeOptionalText(market?.logoURI) || getMintLogoOverride(item.address);
 
+            const rowLabel = itemLabel || apiLabel;
             items.push({
                 address: item.address,
                 symbol,
                 name,
+                ...(rowLabel ? { label: rowLabel } : {}),
                 decimals,
                 ...(logoURI ? { logoURI } : {}),
                 liquidity,
@@ -562,7 +569,7 @@ export function TokenVariantsBadge({
         }
 
         return items.sort((a, b) => (b.liquidity ?? 0) - (a.liquidity ?? 0));
-    }, [data?.variants, group.addresses, group.id]);
+    }, [data?.variants, group.addresses]);
 
     return (
         <>
