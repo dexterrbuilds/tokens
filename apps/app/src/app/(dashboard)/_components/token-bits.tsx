@@ -93,6 +93,11 @@ export function humanize(code: string): string {
     return code.replaceAll('_', ' ');
 }
 
+export function formatDate(ms: number | undefined | null): string {
+    if (!ms) return '—';
+    return new Date(ms).toLocaleDateString();
+}
+
 export function VerifiedBadge({ verified }: { verified: boolean }) {
     return (
         <Badge variant={verified ? 'success' : 'secondary'} className="flex items-center gap-1.5 px-1.5">

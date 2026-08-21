@@ -34,11 +34,13 @@ import {
 } from '@/components/app-ui/dialog';
 import { EmptyState } from '@/components/global/empty-state';
 import { ListSettingsDialog } from './list-settings-dialog';
+import { MEMBER_GRID_TEMPLATE_COLUMNS, MemberTable } from './member-table';
+import { SelectionDock } from './selection-dock';
+import { BulkRemoveError, useListSelection } from './use-list-selection';
 import {
     SectionHeading,
     SummaryField,
     TokenIdentity,
-    VerifiedBadge,
     WarningChips,
     formatUsd,
     formatValue,
@@ -70,11 +72,6 @@ interface V2ListSummary {
 }
 
 type WriteAccess = 'checking' | 'granted' | 'denied';
-
-function formatDate(ms: number | undefined | null): string {
-    if (!ms) return '—';
-    return new Date(ms).toLocaleDateString();
-}
 
 function slugify(value: string): string {
     return value
@@ -236,7 +233,6 @@ function IconButton({
     );
 }
 
-const MEMBER_COLUMNS = 'grid-cols-[minmax(0,1.5fr)_minmax(0,0.9fr)_minmax(0,0.7fr)_minmax(0,0.55fr)_72px]';
 
 /**
  * Metadata viewer modeled on the admin app's mint preview: identity header,
@@ -621,6 +617,43 @@ export function ListsTab(): React.JSX.Element {
         [selectedSlug, playgroundFetch, refreshDetail, refreshLists],
     );
 
+    const removeSingleMint = useCallback(
+        (token: V2ListToken) => {
+            void handleRemoveMint(token);
+        },
+        [handleRemoveMint],
+    );
+
+    // ---- multi-select + bulk removal (svela-style selection dock) ----
+    const removeSelectedMints = useCallback(
+        async (mints: string[]) => {
+            if (!selectedSlug) return;
+            // Per-mint fan-out (no bulk endpoint; member counts are small). A
+            // partial failure reports exact counts via BulkRemoveError.
+            const results = await Promise.allSettled(
+                mints.map(async mint => {
+                    const res = await playgroundFetch(`/api/v2/lists/${selectedSlug}/members/${mint}`, {
+                        method: 'DELETE',
+                    });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                }),
+            );
+            const failedCount = results.filter(result => result.status === 'rejected').length;
+            await Promise.all([refreshDetail(), refreshLists()]);
+            if (failedCount > 0) {
+                throw new BulkRemoveError({ removedCount: mints.length - failedCount, failedCount });
+            }
+        },
+        [selectedSlug, playgroundFetch, refreshDetail, refreshLists],
+    );
+    const memberSelection = useListSelection({ removeSelected: removeSelectedMints });
+    const clearMemberSelection = memberSelection.clear;
+
+    // Selection belongs to one list — switching lists drops it.
+    useEffect(() => {
+        clearMemberSelection();
+    }, [selectedSlug, clearMemberSelection]);
+
     // ---- metadata dialog ----
     const [metadataOpen, setMetadataOpen] = useState(false);
     const [metadataMint, setMetadataMint] = useState<string | null>(null);
@@ -869,111 +902,57 @@ export function ListsTab(): React.JSX.Element {
                                     </button>
                                 </div>
                                 {tokens === null ? (
-                                    <TableSection columns={MEMBER_COLUMNS}>
-                                        {Array.from({ length: 3 }).map((_, index) => (
-                                            <div
-                                                key={index}
-                                                className={`grid ${MEMBER_COLUMNS} gap-4 px-4 py-3 border-b last:border-b-0`}
-                                            >
-                                                <div className="flex items-center gap-3">
-                                                    <Skeleton className="h-8 w-8 rounded-full" />
-                                                    <Skeleton className="h-4 w-28" />
+                                    <div className="rounded-[12px] bg-gray-100/60 p-0.5">
+                                        <div className="bg-white dark:bg-zinc-950/30 border border-black/[0.15] rounded-lg shadow-sm overflow-hidden">
+                                            {Array.from({ length: 3 }).map((_, index) => (
+                                                <div
+                                                    key={index}
+                                                    className="grid gap-4 px-4 py-3 border-b last:border-b-0"
+                                                    style={{ gridTemplateColumns: MEMBER_GRID_TEMPLATE_COLUMNS }}
+                                                >
+                                                    <div className="flex items-center gap-3">
+                                                        <Skeleton className="h-8 w-8 rounded-full" />
+                                                        <Skeleton className="h-4 w-28" />
+                                                    </div>
+                                                    <div className="flex items-center">
+                                                        <Skeleton className="h-4 w-24" />
+                                                    </div>
+                                                    <div className="flex items-center">
+                                                        <Skeleton className="h-5 w-20 rounded-full" />
+                                                    </div>
+                                                    <div className="flex items-center">
+                                                        <Skeleton className="h-4 w-16" />
+                                                    </div>
+                                                    <div className="flex items-center justify-end">
+                                                        <Skeleton className="h-8 w-8" />
+                                                    </div>
                                                 </div>
-                                                <div className="flex items-center">
-                                                    <Skeleton className="h-4 w-24" />
-                                                </div>
-                                                <div className="flex items-center">
-                                                    <Skeleton className="h-5 w-20 rounded-full" />
-                                                </div>
-                                                <div className="flex items-center">
-                                                    <Skeleton className="h-4 w-16" />
-                                                </div>
-                                                <div className="flex items-center justify-end">
-                                                    <Skeleton className="h-8 w-8" />
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </TableSection>
+                                            ))}
+                                        </div>
+                                    </div>
                                 ) : tokens.length === 0 ? (
                                     <div className="bg-background/80 rounded-2xl border border-dashed border-black/20 px-6 py-8 text-center text-sm text-muted-foreground">
                                         Empty list — press ⌘K (or use the search above) to add the first token.
                                     </div>
                                 ) : (
-                                    <TableSection
-                                        columns={MEMBER_COLUMNS}
-                                        header={
-                                            <>
-                                                <div>Token</div>
-                                                <div>Mint</div>
-                                                <div>Status</div>
-                                                <div>Added</div>
-                                                <div className="text-right">Actions</div>
-                                            </>
-                                        }
-                                    >
-                                        {tokens.map(token => (
-                                            <div
-                                                key={token.mint}
-                                                role="button"
-                                                tabIndex={0}
-                                                onClick={() => openMetadataForMember(token)}
-                                                onKeyDown={event => {
-                                                    if (event.key === 'Enter') openMetadataForMember(token);
-                                                }}
-                                                className={`grid ${MEMBER_COLUMNS} gap-4 px-4 py-3 border-b last:border-b-0 cursor-pointer hover:bg-gray-50/50 transition-colors`}
-                                            >
-                                                <TokenIdentity
-                                                    mint={token.mint}
-                                                    symbol={token.symbol}
-                                                    name={token.name}
-                                                    logoURI={token.logoURI}
-                                                />
-                                                <div
-                                                    className="flex items-center gap-1"
-                                                    onClick={event => event.stopPropagation()}
-                                                >
-                                                    <span className="font-mono text-xs text-muted-foreground">
-                                                        {shortMint(token.mint)}
-                                                    </span>
-                                                    <CopyButton
-                                                        textToCopy={token.mint}
-                                                        showText={false}
-                                                        ariaLabel={`Copy ${token.symbol ?? token.mint} mint address`}
-                                                        className="h-7 w-7 rounded-sm hover:bg-gray-50/60 transition-colors duration-150"
-                                                        iconClassName="h-3 w-3 text-muted-foreground"
-                                                        iconClassNameCheck="h-3 w-3"
-                                                        onCopied={() => toast.success('Mint address copied')}
-                                                    />
-                                                </div>
-                                                <div className="flex items-center">
-                                                    <VerifiedBadge verified={token.verified} />
-                                                </div>
-                                                <div className="flex items-center text-sm text-muted-foreground">
-                                                    {formatDate(token.addedAt)}
-                                                </div>
-                                                <div className="flex items-center justify-end">
-                                                    <Button
-                                                        size="sm"
-                                                        variant="ghost"
-                                                        aria-label={`Remove ${token.symbol ?? token.mint}`}
-                                                        className="h-8 w-8 rounded-sm p-0"
-                                                        onClick={event => {
-                                                            event.stopPropagation();
-                                                            void handleRemoveMint(token);
-                                                        }}
-                                                    >
-                                                        <IconTrashFill className="h-3.5 w-3.5 fill-muted-foreground" />
-                                                    </Button>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </TableSection>
+                                    <MemberTable
+                                        tokens={tokens}
+                                        selection={memberSelection}
+                                        onRowClick={openMetadataForMember}
+                                        onRemove={removeSingleMint}
+                                    />
                                 )}
                             </div>
                         </>
                     )}
                 </div>
             </div>
+
+            <SelectionDock
+                selection={memberSelection}
+                totalCount={tokens?.length ?? 0}
+                allMints={tokens?.map(token => token.mint) ?? []}
+            />
 
             {selectedSlug && (
                 <TokenSearchCommand
