@@ -31,6 +31,7 @@ import {
     DialogTitle,
 } from '@/components/app-ui/dialog';
 import { EmptyState } from '@/components/global/empty-state';
+import { ComposeEndpointDialog, type ComposableList } from './compose-endpoint-dialog';
 import { ListSettingsDialog } from './list-settings-dialog';
 import { PencilIcon, TrashCanFillIcon } from './icons';
 import { MEMBER_GRID_TEMPLATE_COLUMNS, MemberTable } from './member-table';
@@ -178,6 +179,57 @@ function ListRailRow({
             )}
         </div>
     );
+}
+
+/** Read-only rail pill for lists the project doesn't own (curated + other projects'). */
+function CommunityRailRow({
+    list,
+    selected,
+    onSelect,
+}: {
+    list: V2ListSummary;
+    selected: boolean;
+    onSelect: () => void;
+}) {
+    return (
+        <div
+            role="button"
+            tabIndex={0}
+            onClick={onSelect}
+            onKeyDown={event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onSelect();
+                }
+            }}
+            className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2.5 text-left shadow-sm transition-colors ${
+                selected
+                    ? 'border-black/25 bg-gray-100/80 dark:border-white/25 dark:bg-zinc-900/60'
+                    : 'border-black/[0.12] bg-white hover:border-black/20 hover:bg-gray-50/60 dark:border-white/10 dark:bg-zinc-950/30 dark:hover:bg-zinc-900/40'
+            }`}
+        >
+            <span className="truncate text-sm font-inter-medium">{list.name}</span>
+            <Badge variant="secondary" className="shrink-0 px-1.5 font-berkeley-mono text-[10px]">
+                {list.tokenCount}
+            </Badge>
+            <span className="ml-auto shrink-0">
+                {list.curated ? (
+                    <Badge variant="outline" className="px-1.5 text-[10px]">
+                        Curated
+                    </Badge>
+                ) : (
+                    <span className="font-berkeley-mono text-[10px] text-muted-foreground">
+                        {shortOwnerId(list.owner.projectId)}
+                    </span>
+                )}
+            </span>
+        </div>
+    );
+}
+
+function shortOwnerId(projectId: string | undefined): string {
+    if (!projectId) return '—';
+    return projectId.length > 12 ? `${projectId.slice(0, 8)}…` : projectId;
 }
 
 /** Square hover affordance used by the list rail — icon-only, accessible name via aria-label. */
@@ -387,7 +439,8 @@ export function ListsTab(): React.JSX.Element {
     );
 
     const [writeAccess, setWriteAccess] = useState<WriteAccess>('checking');
-    const [myLists, setMyLists] = useState<V2ListSummary[] | null>(null);
+    const [allLists, setAllLists] = useState<V2ListSummary[] | null>(null);
+    const [railTab, setRailTab] = useState<'mine' | 'community'>('mine');
     const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
     const [tokens, setTokens] = useState<V2ListToken[] | null>(null);
 
@@ -418,14 +471,45 @@ export function ListsTab(): React.JSX.Element {
         const res = await playgroundFetch('/api/v2/lists?limit=500');
         if (!res.ok) return;
         const body = (await res.json()) as { lists: V2ListSummary[] };
-        setMyLists(body.lists.filter(list => !list.curated && list.owner.projectId === projectId));
-    }, [ready, playgroundFetch, projectId]);
+        setAllLists(body.lists);
+    }, [ready, playgroundFetch]);
 
     useEffect(() => {
-        setMyLists(null);
+        setAllLists(null);
         setSelectedSlug(null);
         void refreshLists();
     }, [refreshLists]);
+
+    const myLists = useMemo(
+        () => (allLists ? allLists.filter(list => !list.curated && list.owner.projectId === projectId) : null),
+        [allLists, projectId],
+    );
+    // Everything browsable that isn't mine: curated lists lead (API order), then
+    // other projects' published lists.
+    const communityLists = useMemo(
+        () => (allLists ? allLists.filter(list => list.curated || list.owner.projectId !== projectId) : null),
+        [allLists, projectId],
+    );
+
+    const selectedList = useMemo(
+        () => allLists?.find(list => list.slug === selectedSlug) ?? null,
+        [allLists, selectedSlug],
+    );
+    const selectedIsOwned = useMemo(
+        () => Boolean(selectedList && !selectedList.curated && selectedList.owner.projectId === projectId),
+        [selectedList, projectId],
+    );
+    const composableLists = useMemo<ComposableList[]>(
+        () =>
+            (allLists ?? []).map(list => ({
+                slug: list.slug,
+                name: list.name,
+                curated: list.curated,
+                ownedByMe: !list.curated && list.owner.projectId === projectId,
+                tokenCount: list.tokenCount,
+            })),
+        [allLists, projectId],
+    );
 
     const refreshDetail = useCallback(async () => {
         if (!selectedSlug) {
@@ -448,6 +532,7 @@ export function ListsTab(): React.JSX.Element {
 
     // ---- create dialog ----
     const [createOpen, setCreateOpen] = useState(false);
+    const [composeOpen, setComposeOpen] = useState(false);
     const [createSlug, setCreateSlug] = useState('');
     const [slugTouched, setSlugTouched] = useState(false);
     const [createName, setCreateName] = useState('');
@@ -537,9 +622,9 @@ export function ListsTab(): React.JSX.Element {
 
     const memberMints = useMemo(() => new Set((tokens ?? []).map(t => t.mint)), [tokens]);
 
-    // ⌘K / Ctrl+K opens the palette whenever a list is selected.
+    // ⌘K / Ctrl+K opens the palette whenever an OWNED list is selected.
     useEffect(() => {
-        if (!selectedSlug) return;
+        if (!selectedSlug || !selectedIsOwned) return;
         function onKeyDown(event: KeyboardEvent) {
             if (event.key === 'k' && (event.metaKey || event.ctrlKey)) {
                 event.preventDefault();
@@ -548,7 +633,7 @@ export function ListsTab(): React.JSX.Element {
         }
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [selectedSlug]);
+    }, [selectedSlug, selectedIsOwned]);
 
     const handleAddMint = useCallback(
         async (result: SearchResult) => {
@@ -641,10 +726,6 @@ export function ListsTab(): React.JSX.Element {
         [playgroundFetch],
     );
 
-    const selectedList = useMemo(
-        () => myLists?.find(list => list.slug === selectedSlug) ?? null,
-        [myLists, selectedSlug],
-    );
     const settingsList = useMemo(
         () => myLists?.find(list => list.slug === settingsSlug) ?? null,
         [myLists, settingsSlug],
@@ -734,21 +815,56 @@ export function ListsTab(): React.JSX.Element {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-8 items-start">
-                {/* My lists — heading left, create action opposite it */}
+                {/* Rail — mine/community tabs left, create + compose actions opposite */}
                 <div className="space-y-4">
-                    <div className="flex items-center justify-between gap-4">
-                        <h4 className="font-inter-medium">My lists</h4>
-                        <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 px-2.5 text-xs"
-                            onClick={() => setCreateOpen(true)}
-                        >
-                            New list
-                        </Button>
+                    <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center rounded-lg bg-gray-100/60 p-0.5 dark:bg-zinc-900/60">
+                            {(
+                                [
+                                    { id: 'mine', label: 'My lists' },
+                                    { id: 'community', label: 'Community' },
+                                ] as const
+                            ).map(tab => (
+                                <button
+                                    key={tab.id}
+                                    type="button"
+                                    onClick={() => setRailTab(tab.id)}
+                                    className={`rounded-md px-2.5 py-1 text-xs font-inter-medium transition-colors ${
+                                        railTab === tab.id
+                                            ? 'bg-white text-foreground shadow-sm dark:bg-zinc-800'
+                                            : 'text-muted-foreground hover:text-foreground'
+                                    }`}
+                                >
+                                    {tab.label}
+                                    {tab.id === 'community' && communityLists && (
+                                        <span className="ml-1 font-berkeley-mono text-[10px] text-muted-foreground">
+                                            {communityLists.length}
+                                        </span>
+                                    )}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2.5 text-xs"
+                                onClick={() => setComposeOpen(true)}
+                            >
+                                Compose
+                            </Button>
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2.5 text-xs"
+                                onClick={() => setCreateOpen(true)}
+                            >
+                                New list
+                            </Button>
+                        </div>
                     </div>
                     <div className="space-y-1.5">
-                        {myLists === null ? (
+                        {allLists === null ? (
                             Array.from({ length: 3 }).map((_, index) => (
                                 <div
                                     key={index}
@@ -757,26 +873,41 @@ export function ListsTab(): React.JSX.Element {
                                     <Skeleton className="h-4 w-32" />
                                 </div>
                             ))
-                        ) : myLists.length === 0 ? (
+                        ) : railTab === 'mine' ? (
+                            !myLists || myLists.length === 0 ? (
+                                <div className="rounded-lg border border-dashed border-black/20 px-4 py-6 text-center text-sm text-muted-foreground">
+                                    No lists yet — create one to get started.
+                                </div>
+                            ) : (
+                                myLists.map(list => (
+                                    <ListRailRow
+                                        key={list.slug}
+                                        list={list}
+                                        selected={list.slug === selectedSlug}
+                                        onSelect={() => setSelectedSlug(list.slug)}
+                                        onEdit={() => {
+                                            setDeleteSlug(null);
+                                            setSettingsSlug(list.slug);
+                                        }}
+                                        confirmingDelete={deleteSlug === list.slug}
+                                        deleting={deleting}
+                                        onDeleteArm={() => setDeleteSlug(list.slug)}
+                                        onDeleteCancel={() => setDeleteSlug(null)}
+                                        onDeleteConfirm={() => void handleDelete(list.slug)}
+                                    />
+                                ))
+                            )
+                        ) : !communityLists || communityLists.length === 0 ? (
                             <div className="rounded-lg border border-dashed border-black/20 px-4 py-6 text-center text-sm text-muted-foreground">
-                                No lists yet — create one to get started.
+                                No community lists published yet.
                             </div>
                         ) : (
-                            myLists.map(list => (
-                                <ListRailRow
+                            communityLists.map(list => (
+                                <CommunityRailRow
                                     key={list.slug}
                                     list={list}
                                     selected={list.slug === selectedSlug}
                                     onSelect={() => setSelectedSlug(list.slug)}
-                                    onEdit={() => {
-                                        setDeleteSlug(null);
-                                        setSettingsSlug(list.slug);
-                                    }}
-                                    confirmingDelete={deleteSlug === list.slug}
-                                    deleting={deleting}
-                                    onDeleteArm={() => setDeleteSlug(list.slug)}
-                                    onDeleteCancel={() => setDeleteSlug(null)}
-                                    onDeleteConfirm={() => void handleDelete(list.slug)}
                                 />
                             ))
                         )}
@@ -806,6 +937,18 @@ export function ListsTab(): React.JSX.Element {
                                     <div className="space-y-1">
                                         <div className="flex items-center gap-1.5">
                                             <h2 className="text-xl font-inter-semibold">{selectedList.name}</h2>
+                                            {selectedList.curated ? (
+                                                <Badge variant="outline" className="px-1.5 text-[10px]">
+                                                    Curated
+                                                </Badge>
+                                            ) : !selectedIsOwned ? (
+                                                <Badge
+                                                    variant="secondary"
+                                                    className="px-1.5 font-berkeley-mono text-[10px]"
+                                                >
+                                                    {shortOwnerId(selectedList.owner.projectId)}
+                                                </Badge>
+                                            ) : null}
                                             <Tooltip delayDuration={300}>
                                                 <TooltipTrigger asChild>
                                                     <button
@@ -837,6 +980,7 @@ export function ListsTab(): React.JSX.Element {
                                             onCopied={() => toast.success('Endpoint URL copied')}
                                         />
                                     </div>
+                                    {selectedIsOwned && (
                                     <button
                                         type="button"
                                         onClick={() => setSearchOpen(true)}
@@ -853,6 +997,7 @@ export function ListsTab(): React.JSX.Element {
                                             </kbd>
                                         </span>
                                     </button>
+                                    )}
                                 </div>
                                 {tokens === null ? (
                                     <div className="rounded-[12px] bg-gray-100/60 p-0.5">
@@ -882,12 +1027,14 @@ export function ListsTab(): React.JSX.Element {
                                     </div>
                                 ) : tokens.length === 0 ? (
                                     <div className="bg-background/80 rounded-2xl border border-dashed border-black/20 px-6 py-8 text-center text-sm text-muted-foreground">
-                                        Empty list — press ⌘K (or use the search above) to add the first token.
+                                        {selectedIsOwned
+                                            ? 'Empty list — press ⌘K (or use the search above) to add the first token.'
+                                            : 'This list has no tokens yet.'}
                                     </div>
                                 ) : (
                                     <MemberTable
                                         tokens={tokens}
-                                        selection={memberSelection}
+                                        {...(selectedIsOwned ? { selection: memberSelection } : {})}
                                         onRowClick={openMetadataForMember}
                                     />
                                 )}
@@ -897,13 +1044,15 @@ export function ListsTab(): React.JSX.Element {
                 </div>
             </div>
 
-            <SelectionDock
-                selection={memberSelection}
-                totalCount={tokens?.length ?? 0}
-                allMints={tokens?.map(token => token.mint) ?? []}
-            />
+            {selectedIsOwned && (
+                <SelectionDock
+                    selection={memberSelection}
+                    totalCount={tokens?.length ?? 0}
+                    allMints={tokens?.map(token => token.mint) ?? []}
+                />
+            )}
 
-            {selectedSlug && (
+            {selectedSlug && selectedIsOwned && (
                 <TokenSearchCommand
                     open={searchOpen}
                     onOpenChange={setSearchOpen}
@@ -914,6 +1063,13 @@ export function ListsTab(): React.JSX.Element {
                     onAdd={result => void handleAddMint(result)}
                 />
             )}
+
+            <ComposeEndpointDialog
+                open={composeOpen}
+                onOpenChange={setComposeOpen}
+                lists={composableLists}
+                playgroundFetch={playgroundFetch}
+            />
 
             <TokenMetadataDialog
                 open={metadataOpen}

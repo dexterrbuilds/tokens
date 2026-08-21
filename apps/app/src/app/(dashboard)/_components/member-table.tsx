@@ -155,12 +155,15 @@ function MemberTableHeader({ table }: { table: Table<V2ListToken> }) {
 
 function MemberTableRowInner({
     row,
+    selectable,
     isSelected,
     hasSelected,
     onSelect,
     onRowClick,
 }: {
     row: Row<V2ListToken>;
+    /** False for read-only tables (browsing someone else's list). */
+    selectable: boolean;
     isSelected: boolean;
     hasSelected: boolean;
     onSelect: (mint: string, selected: boolean) => void;
@@ -186,7 +189,7 @@ function MemberTableRowInner({
         // First cell — merged select + token: hover reveals the checkbox, but
         // only the checkbox itself toggles selection. Clicks anywhere else in
         // the cell fall through to the row (metadata dialog / selection toggle).
-        if (cellIndex === 0) {
+        if (cellIndex === 0 && selectable) {
             return (
                 <div key={cell.id} className={cellClassName}>
                     <motion.div
@@ -294,11 +297,14 @@ const MemberTableRow = memo(
     (prev, next) =>
         prev.row.id === next.row.id &&
         prev.row.original === next.row.original &&
+        prev.selectable === next.selectable &&
         prev.isSelected === next.isSelected &&
         prev.hasSelected === next.hasSelected &&
         prev.onSelect === next.onSelect &&
         prev.onRowClick === next.onRowClick,
 );
+
+const NOOP_SELECT = () => {};
 
 export function MemberTable({
     tokens,
@@ -306,7 +312,8 @@ export function MemberTable({
     onRowClick,
 }: {
     tokens: V2ListToken[];
-    selection: ListSelection;
+    /** Omit for read-only tables — rows lose the checkbox cell and never dim. */
+    selection?: ListSelection;
     onRowClick: (token: V2ListToken) => void;
 }) {
     const [sorting, setSorting] = useState<SortingState>([]);
@@ -322,7 +329,10 @@ export function MemberTable({
         state: { sorting },
     });
 
-    const { selected, hasSelected, handleSelect } = selection;
+    const selectable = selection !== undefined;
+    const selected = selection?.selected;
+    const hasSelected = selection?.hasSelected ?? false;
+    const handleSelect = selection?.handleSelect ?? NOOP_SELECT;
 
     return (
         <div className="rounded-[12px] bg-gray-100/60 p-0.5">
@@ -334,7 +344,8 @@ export function MemberTable({
                     <MemberTableRow
                         key={row.id}
                         row={row}
-                        isSelected={selected.has(row.original.mint)}
+                        selectable={selectable}
+                        isSelected={selected?.has(row.original.mint) ?? false}
                         hasSelected={hasSelected}
                         onSelect={handleSelect}
                         onRowClick={onRowClick}
