@@ -1,10 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { IconCircleGridCrossFill } from 'symbols-react';
+import { motion } from 'motion/react';
+import { toast } from 'sonner';
+import { IconCircleFill, IconCircleGridCrossFill, IconTrashFill } from 'symbols-react';
 
+import { Badge } from '@tokens/ui/badge';
 import { Button } from '@tokens/ui/button';
 import { Input } from '@tokens/ui/input';
+import { Label } from '@tokens/ui/label';
 import { Skeleton } from '@tokens/ui/skeleton';
 import { Spinner } from '@tokens/ui/spinner';
 import {
@@ -77,19 +81,61 @@ function formatUsd(value: number | null): string {
     return `$${value.toFixed(2)}`;
 }
 
+function slugify(value: string): string {
+    return value
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 63);
+}
+
+function VerifiedBadge({ verified }: { verified: boolean }) {
+    return (
+        <Badge variant={verified ? 'success' : 'secondary'} className="flex items-center gap-1.5 px-1.5">
+            <IconCircleFill className={`w-1.5 h-1.5 rounded-full ${verified ? 'fill-emerald-500' : 'fill-zinc-400'}`} />
+            {verified ? 'Verified' : 'Unverified'}
+        </Badge>
+    );
+}
+
 function WarningChips({ warnings }: { warnings: string[] }) {
     if (warnings.length === 0) return null;
     return (
         <span className="flex flex-wrap gap-1">
             {warnings.map(warning => (
-                <span
-                    key={warning}
-                    className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800"
-                >
+                <Badge key={warning} variant="warning" className="px-1.5 text-[10px]">
                     {warning.replaceAll('_', ' ')}
-                </span>
+                </Badge>
             ))}
         </span>
+    );
+}
+
+/** Section chrome shared with the API-keys tables: gray gutter, uppercase header, white card. */
+function TableSection({
+    header,
+    columns,
+    children,
+}: {
+    header?: React.ReactNode;
+    columns: string;
+    children: React.ReactNode;
+}) {
+    return (
+        <div className="rounded-[12px] bg-gray-100/60 overflow-hidden p-0.5">
+            {header && (
+                <div className="px-3 py-2">
+                    <div
+                        className={`grid ${columns} gap-4 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide`}
+                    >
+                        {header}
+                    </div>
+                </div>
+            )}
+            <div className="bg-white dark:bg-zinc-950/30 border border-black/[0.15] rounded-lg shadow-sm overflow-hidden">
+                {children}
+            </div>
+        </div>
     );
 }
 
@@ -117,7 +163,6 @@ export function ListsTab(): React.JSX.Element {
     const [myLists, setMyLists] = useState<V2ListSummary[] | null>(null);
     const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
     const [tokens, setTokens] = useState<V2ListToken[] | null>(null);
-    const [actionError, setActionError] = useState<string | null>(null);
 
     const ready = Boolean(projectId && currentApiKeyId && hasActiveApiKey);
 
@@ -177,6 +222,7 @@ export function ListsTab(): React.JSX.Element {
     // ---- create dialog ----
     const [createOpen, setCreateOpen] = useState(false);
     const [createSlug, setCreateSlug] = useState('');
+    const [slugTouched, setSlugTouched] = useState(false);
     const [createName, setCreateName] = useState('');
     const [createDescription, setCreateDescription] = useState('');
     const [createError, setCreateError] = useState<string | null>(null);
@@ -200,6 +246,8 @@ export function ListsTab(): React.JSX.Element {
             setCreateSlug('');
             setCreateName('');
             setCreateDescription('');
+            setSlugTouched(false);
+            toast.success(`List "${createName.trim()}" created`);
             await refreshLists();
             if (body.list) setSelectedSlug(body.list.slug);
         } catch (error) {
@@ -209,17 +257,30 @@ export function ListsTab(): React.JSX.Element {
         }
     }, [playgroundFetch, createSlug, createName, createDescription, refreshLists]);
 
+    // ---- archive (two-step confirm) ----
+    const [confirmArchive, setConfirmArchive] = useState(false);
+    const [archiving, setArchiving] = useState(false);
+
+    useEffect(() => setConfirmArchive(false), [selectedSlug]);
+
     const handleArchive = useCallback(async () => {
         if (!selectedSlug) return;
-        setActionError(null);
-        const res = await playgroundFetch(`/api/v2/lists/${selectedSlug}`, { method: 'DELETE' });
-        if (!res.ok) {
-            const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-            setActionError(body?.error?.message ?? `Archive failed (HTTP ${res.status})`);
-            return;
+        setArchiving(true);
+        try {
+            const res = await playgroundFetch(`/api/v2/lists/${selectedSlug}`, { method: 'DELETE' });
+            if (!res.ok) {
+                const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+                throw new Error(body?.error?.message ?? `Archive failed (HTTP ${res.status})`);
+            }
+            toast.success(`List "${selectedSlug}" archived`);
+            setSelectedSlug(null);
+            await refreshLists();
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : String(error));
+        } finally {
+            setArchiving(false);
+            setConfirmArchive(false);
         }
-        setSelectedSlug(null);
-        await refreshLists();
     }, [selectedSlug, playgroundFetch, refreshLists]);
 
     // ---- curator search ----
@@ -254,20 +315,24 @@ export function ListsTab(): React.JSX.Element {
         return () => clearTimeout(handle);
     }, [search, selectedSlug, playgroundFetch]);
 
+    const memberMints = useMemo(() => new Set((tokens ?? []).map(t => t.mint)), [tokens]);
+
     const handleAddMint = useCallback(
-        async (mint: string) => {
+        async (result: SearchResult) => {
             if (!selectedSlug) return;
-            setActionError(null);
-            setAddingMint(mint);
+            setAddingMint(result.mint);
             try {
-                const res = await playgroundFetch(`/api/v2/lists/${selectedSlug}/members/${mint}`, { method: 'PUT' });
+                const res = await playgroundFetch(`/api/v2/lists/${selectedSlug}/members/${result.mint}`, {
+                    method: 'PUT',
+                });
                 if (!res.ok) {
                     const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
                     throw new Error(body?.error?.message ?? `Add failed (HTTP ${res.status})`);
                 }
+                toast.success(`${result.claims.symbol ?? shortMint(result.mint)} added to ${selectedSlug}`);
                 await Promise.all([refreshDetail(), refreshLists()]);
             } catch (error) {
-                setActionError(error instanceof Error ? error.message : String(error));
+                toast.error(error instanceof Error ? error.message : String(error));
             } finally {
                 setAddingMint(null);
             }
@@ -276,15 +341,17 @@ export function ListsTab(): React.JSX.Element {
     );
 
     const handleRemoveMint = useCallback(
-        async (mint: string) => {
+        async (token: V2ListToken) => {
             if (!selectedSlug) return;
-            setActionError(null);
-            const res = await playgroundFetch(`/api/v2/lists/${selectedSlug}/members/${mint}`, { method: 'DELETE' });
+            const res = await playgroundFetch(`/api/v2/lists/${selectedSlug}/members/${token.mint}`, {
+                method: 'DELETE',
+            });
             if (!res.ok) {
                 const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-                setActionError(body?.error?.message ?? `Remove failed (HTTP ${res.status})`);
+                toast.error(body?.error?.message ?? `Remove failed (HTTP ${res.status})`);
                 return;
             }
+            toast.success(`${token.symbol ?? shortMint(token.mint)} removed`);
             await Promise.all([refreshDetail(), refreshLists()]);
         },
         [selectedSlug, playgroundFetch, refreshDetail, refreshLists],
@@ -298,9 +365,14 @@ export function ListsTab(): React.JSX.Element {
     if (!ready || writeAccess === 'checking') {
         return (
             <div className="space-y-6 container max-w-7xl mx-auto py-16 px-6">
-                <Skeleton className="h-9 w-48" />
-                <Skeleton className="h-4 w-[520px] max-w-full" />
-                <Skeleton className="h-[320px] w-full" />
+                <div className="mb-6 space-y-2">
+                    <Skeleton className="h-9 w-48" />
+                    <Skeleton className="h-4 w-[520px] max-w-full" />
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-8">
+                    <Skeleton className="h-[280px] w-full rounded-[12px]" />
+                    <Skeleton className="h-[420px] w-full rounded-[12px]" />
+                </div>
             </div>
         );
     }
@@ -321,6 +393,18 @@ export function ListsTab(): React.JSX.Element {
                         subtitle="Your project's API key doesn't have the lists:write scope yet. Reach out to the Tokens team to request access for your community."
                         className="p-12 w-full sm:w-[480px] mx-auto"
                     />
+                    <motion.div
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.22, ease: 'easeOut' }}
+                        className="flex justify-center"
+                    >
+                        <Button asChild variant="ghost" size="sm" className="rounded-lg">
+                            <a href="https://docs.tokens.xyz" target="_blank" rel="noreferrer">
+                                Read the lists documentation
+                            </a>
+                        </Button>
+                    </motion.div>
                 </div>
             </div>
         );
@@ -332,202 +416,295 @@ export function ListsTab(): React.JSX.Element {
                 <div>
                     <h1 className="text-3xl font-bold text-foreground">Token Lists</h1>
                     <p className="text-muted-foreground">
-                        Curate lists of tokens for your community — any app can consume them via{' '}
-                        <code className="text-xs">GET /v2/lists/&#123;slug&#125;</code>.
+                        Curate lists of tokens for your community — any app can consume them via the v2 API.
                     </p>
                 </div>
-                <Button size="sm" onClick={() => setCreateOpen(true)}>
+                <Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
                     New list
                 </Button>
             </div>
 
-            {actionError && (
-                <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-                    {actionError}
-                </div>
-            )}
-
-            <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-8">
+            <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-8 items-start">
                 {/* My lists */}
-                <div className="space-y-2">
-                    <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">My lists</h2>
-                    {myLists === null ? (
-                        <Skeleton className="h-24 w-full" />
-                    ) : myLists.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">
-                            No lists yet — create one to get started.
-                        </p>
-                    ) : (
-                        myLists.map(list => (
-                            <button
-                                key={list.slug}
-                                type="button"
-                                onClick={() => setSelectedSlug(list.slug)}
-                                className={`w-full rounded-lg border p-3 text-left text-sm transition-colors ${
-                                    list.slug === selectedSlug
-                                        ? 'border-foreground/40 bg-gray-100/80'
-                                        : 'border-black/15 bg-white hover:bg-gray-50'
-                                }`}
-                            >
-                                <div className="font-medium">{list.name}</div>
-                                <div className="text-xs text-muted-foreground">
-                                    {list.slug} · {list.tokenCount} tokens
-                                </div>
-                            </button>
-                        ))
-                    )}
+                <div className="space-y-4">
+                    <div>
+                        <h4 className="font-medium">My lists</h4>
+                        <p className="text-sm text-muted-foreground">Published under your project</p>
+                    </div>
+                    <TableSection columns="grid-cols-1">
+                        {myLists === null ? (
+                            <div className="px-4 py-3 space-y-3">
+                                <Skeleton className="h-4 w-40" />
+                                <Skeleton className="h-4 w-32" />
+                            </div>
+                        ) : myLists.length === 0 ? (
+                            <div className="px-4 py-6 text-sm text-muted-foreground text-center">
+                                No lists yet — create one to get started.
+                            </div>
+                        ) : (
+                            myLists.map(list => (
+                                <button
+                                    key={list.slug}
+                                    type="button"
+                                    onClick={() => setSelectedSlug(list.slug)}
+                                    className={`w-full px-4 py-3 text-left border-b last:border-b-0 transition-colors ${
+                                        list.slug === selectedSlug
+                                            ? 'bg-gray-100/80 dark:bg-zinc-900/60'
+                                            : 'hover:bg-gray-50/50'
+                                    }`}
+                                >
+                                    <div className="text-sm font-medium">{list.name}</div>
+                                    <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                                        <span className="font-mono">{list.slug}</span>
+                                        <span>·</span>
+                                        <span>
+                                            {list.tokenCount} token{list.tokenCount === 1 ? '' : 's'}
+                                        </span>
+                                    </div>
+                                </button>
+                            ))
+                        )}
+                    </TableSection>
                 </div>
 
                 {/* Selected list */}
-                <div className="space-y-6">
+                <div className="space-y-8">
                     {!selectedList ? (
-                        <div className="rounded-2xl border border-dashed border-black/20 p-12 text-center text-sm text-muted-foreground">
-                            Select a list to manage its tokens.
+                        <div className="bg-background/80 backdrop-blur-sm rounded-2xl border border-dashed border-black/20 py-12">
+                            <EmptyState
+                                icon={<IconCircleGridCrossFill className="size-[48px] mb-2 fill-muted-foreground" />}
+                                title={myLists && myLists.length > 0 ? 'Select a list' : 'Create your first list'}
+                                subtitle={
+                                    myLists && myLists.length > 0
+                                        ? 'Pick a list on the left to manage its tokens.'
+                                        : 'Lists are served publicly at /api/v2/lists/{slug}.'
+                                }
+                                className="p-8 w-full sm:w-[420px] mx-auto"
+                            />
                         </div>
                     ) : (
                         <>
+                            {/* List header */}
                             <div className="flex items-start justify-between gap-4">
-                                <div>
-                                    <h2 className="text-xl font-semibold">{selectedList.name}</h2>
+                                <div className="space-y-1">
+                                    <div className="flex items-center gap-3">
+                                        <h2 className="text-xl font-semibold">{selectedList.name}</h2>
+                                        <code className="rounded-md bg-gray-100 dark:bg-zinc-900 px-1.5 py-0.5 text-xs text-muted-foreground">
+                                            /v2/lists/{selectedList.slug}
+                                        </code>
+                                    </div>
                                     <p className="text-sm text-muted-foreground">
                                         {selectedList.description ?? 'No description'}
                                     </p>
                                 </div>
-                                <Button variant="outline" size="sm" onClick={() => void handleArchive()}>
-                                    Archive list
-                                </Button>
+                                {confirmArchive ? (
+                                    <div className="flex items-center gap-2">
+                                        <Button
+                                            variant="destructive"
+                                            size="sm"
+                                            disabled={archiving}
+                                            onClick={() => void handleArchive()}
+                                        >
+                                            {archiving ? <Spinner size="sm" /> : 'Confirm archive'}
+                                        </Button>
+                                        <Button variant="ghost" size="sm" onClick={() => setConfirmArchive(false)}>
+                                            Cancel
+                                        </Button>
+                                    </div>
+                                ) : (
+                                    <Button variant="outline" size="sm" onClick={() => setConfirmArchive(true)}>
+                                        Archive list
+                                    </Button>
+                                )}
                             </div>
 
                             {/* Curator-assist search */}
-                            <div className="space-y-3">
+                            <div className="space-y-4">
+                                <div>
+                                    <h4 className="font-medium">Add tokens</h4>
+                                    <p className="text-sm text-muted-foreground">
+                                        Search by symbol, name, or mint address — results are judged for
+                                        impersonation, liquidity, and provenance before you pick.
+                                    </p>
+                                </div>
                                 <Input
                                     value={search}
                                     onChange={event => setSearch(event.target.value)}
-                                    placeholder="Search a token to add (symbol, name, or mint address)…"
+                                    placeholder="Search a token to add…"
+                                    className="max-w-lg"
                                 />
                                 {searching && (
                                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                                         <Spinner size="sm" /> Judging candidates…
                                     </div>
                                 )}
-                                {results !== null && !searching && (
-                                    <div className="space-y-2">
-                                        {results.length === 0 && (
-                                            <p className="text-sm text-muted-foreground">No candidates.</p>
-                                        )}
-                                        {results.map(result => (
-                                            <div
-                                                key={result.mint}
-                                                className="flex items-center justify-between gap-3 rounded-lg border border-black/15 bg-white p-3"
-                                            >
-                                                <div className="min-w-0 space-y-1">
-                                                    <div className="flex items-center gap-2 text-sm">
-                                                        <span className="font-semibold">
-                                                            {result.claims.symbol ?? shortMint(result.mint)}
-                                                        </span>
-                                                        <span className="truncate text-muted-foreground">
-                                                            {result.claims.name}
-                                                        </span>
-                                                        {result.verified ? (
-                                                            <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[11px] font-medium text-emerald-800">
-                                                                verified
-                                                            </span>
-                                                        ) : (
-                                                            <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
-                                                                unverified
-                                                            </span>
-                                                        )}
-                                                        <span className="text-[11px] text-muted-foreground">
-                                                            score {result.score.total}
-                                                        </span>
-                                                    </div>
-                                                    <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                                                        <span>{shortMint(result.mint)}</span>
-                                                        <span>liq {formatUsd(result.market.liquidityUsd)}</span>
-                                                        <span>vol {formatUsd(result.market.volume24hUsd)}</span>
-                                                        {result.inLists.length > 0 && (
-                                                            <span>in: {result.inLists.join(', ')}</span>
-                                                        )}
-                                                    </div>
-                                                    <WarningChips warnings={result.warnings} />
-                                                </div>
-                                                <Button
-                                                    size="sm"
-                                                    variant="outline"
-                                                    disabled={addingMint === result.mint}
-                                                    onClick={() => void handleAddMint(result.mint)}
+                                {results !== null && !searching && results.length === 0 && (
+                                    <p className="text-sm text-muted-foreground">No candidates.</p>
+                                )}
+                                {results !== null && !searching && results.length > 0 && (
+                                    <TableSection
+                                        columns="grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(0,0.6fr))_72px]"
+                                        header={
+                                            <>
+                                                <div>Token</div>
+                                                <div>Score</div>
+                                                <div>Liquidity</div>
+                                                <div>Already in</div>
+                                                <div className="text-right">Action</div>
+                                            </>
+                                        }
+                                    >
+                                        {results.map(result => {
+                                            const isMember = memberMints.has(result.mint);
+                                            return (
+                                                <div
+                                                    key={result.mint}
+                                                    className="grid grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(0,0.6fr))_72px] gap-4 px-4 py-3 border-b last:border-b-0 hover:bg-gray-50/50 transition-colors"
                                                 >
-                                                    {addingMint === result.mint ? <Spinner size="sm" /> : 'Add'}
-                                                </Button>
-                                            </div>
-                                        ))}
-                                        {suppressed.length > 0 && (
-                                            <details className="rounded-lg border border-black/10 bg-gray-50 p-3 text-sm">
-                                                <summary className="cursor-pointer text-muted-foreground">
-                                                    {suppressed.length} suppressed candidate
-                                                    {suppressed.length === 1 ? '' : 's'} (filtered by policy)
-                                                </summary>
-                                                <div className="mt-2 space-y-2">
-                                                    {suppressed.map(item => (
-                                                        <div key={item.mint} className="flex flex-wrap items-center gap-2">
-                                                            <span className="font-medium">
-                                                                {item.symbol ?? shortMint(item.mint)}
+                                                    <div className="min-w-0 space-y-1">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="text-sm font-semibold">
+                                                                {result.claims.symbol ?? shortMint(result.mint)}
                                                             </span>
-                                                            <span className="text-xs text-muted-foreground">
-                                                                suppressed by: {item.suppressedBy.join(', ')}
+                                                            <span className="truncate text-sm text-muted-foreground">
+                                                                {result.claims.name}
                                                             </span>
-                                                            <WarningChips warnings={item.warnings} />
+                                                            <VerifiedBadge verified={result.verified} />
                                                         </div>
-                                                    ))}
+                                                        <div className="flex flex-wrap items-center gap-2">
+                                                            <span className="font-mono text-[11px] text-muted-foreground">
+                                                                {shortMint(result.mint)}
+                                                            </span>
+                                                            <WarningChips warnings={result.warnings} />
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center font-mono text-sm">
+                                                        {result.score.total}
+                                                    </div>
+                                                    <div className="flex items-center text-sm text-muted-foreground">
+                                                        {formatUsd(result.market.liquidityUsd)}
+                                                    </div>
+                                                    <div className="flex items-center truncate text-xs text-muted-foreground">
+                                                        {result.inLists.length > 0 ? result.inLists.join(', ') : '—'}
+                                                    </div>
+                                                    <div className="flex items-center justify-end">
+                                                        <Button
+                                                            size="sm"
+                                                            variant="outline"
+                                                            disabled={isMember || addingMint === result.mint}
+                                                            onClick={() => void handleAddMint(result)}
+                                                        >
+                                                            {addingMint === result.mint ? (
+                                                                <Spinner size="sm" />
+                                                            ) : isMember ? (
+                                                                'Added'
+                                                            ) : (
+                                                                'Add'
+                                                            )}
+                                                        </Button>
+                                                    </div>
                                                 </div>
-                                            </details>
-                                        )}
-                                    </div>
+                                            );
+                                        })}
+                                    </TableSection>
+                                )}
+                                {results !== null && !searching && suppressed.length > 0 && (
+                                    <details className="group">
+                                        <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground transition-colors">
+                                            {suppressed.length} candidate{suppressed.length === 1 ? '' : 's'} filtered
+                                            by policy
+                                        </summary>
+                                        <div className="mt-3">
+                                            <TableSection columns="grid-cols-1">
+                                                {suppressed.map(item => (
+                                                    <div
+                                                        key={item.mint}
+                                                        className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b last:border-b-0"
+                                                    >
+                                                        <span className="text-sm font-medium">
+                                                            {item.symbol ?? shortMint(item.mint)}
+                                                        </span>
+                                                        <span className="text-xs text-muted-foreground">
+                                                            suppressed by {item.suppressedBy.join(', ')}
+                                                        </span>
+                                                        <WarningChips warnings={item.warnings} />
+                                                    </div>
+                                                ))}
+                                            </TableSection>
+                                        </div>
+                                    </details>
                                 )}
                             </div>
 
                             {/* Members */}
-                            <div className="space-y-2">
-                                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                                    Tokens ({tokens?.length ?? selectedList.tokenCount})
-                                </h3>
-                                {tokens === null ? (
-                                    <Skeleton className="h-32 w-full" />
-                                ) : tokens.length === 0 ? (
+                            <div className="space-y-4">
+                                <div>
+                                    <h4 className="font-medium">
+                                        Tokens{' '}
+                                        <span className="text-muted-foreground font-normal">
+                                            ({tokens?.length ?? selectedList.tokenCount})
+                                        </span>
+                                    </h4>
                                     <p className="text-sm text-muted-foreground">
-                                        Empty list — search above to add the first token.
+                                        What consumers of this list receive, in rank order
                                     </p>
+                                </div>
+                                {tokens === null ? (
+                                    <TableSection columns="grid-cols-1">
+                                        <div className="px-4 py-3 space-y-3">
+                                            <Skeleton className="h-4 w-full" />
+                                            <Skeleton className="h-4 w-full" />
+                                        </div>
+                                    </TableSection>
+                                ) : tokens.length === 0 ? (
+                                    <div className="bg-background/80 rounded-2xl border border-dashed border-black/20 px-6 py-8 text-center text-sm text-muted-foreground">
+                                        Empty list — search above to add the first token.
+                                    </div>
                                 ) : (
-                                    <div className="divide-y divide-black/10 rounded-lg border border-black/15 bg-white">
+                                    <TableSection
+                                        columns="grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,0.7fr)_72px]"
+                                        header={
+                                            <>
+                                                <div>Token</div>
+                                                <div>Mint</div>
+                                                <div>Status</div>
+                                                <div className="text-right">Actions</div>
+                                            </>
+                                        }
+                                    >
                                         {tokens.map(token => (
                                             <div
                                                 key={token.mint}
-                                                className="flex items-center justify-between gap-3 p-3 text-sm"
+                                                className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,0.7fr)_72px] gap-4 px-4 py-3 border-b last:border-b-0 hover:bg-gray-50/50 transition-colors"
                                             >
                                                 <div className="flex min-w-0 items-center gap-2">
-                                                    <span className="font-semibold">
+                                                    <span className="text-sm font-semibold">
                                                         {token.symbol ?? shortMint(token.mint)}
                                                     </span>
-                                                    <span className="truncate text-muted-foreground">{token.name}</span>
-                                                    {!token.verified && (
-                                                        <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
-                                                            unverified
-                                                        </span>
-                                                    )}
-                                                    <span className="text-[11px] text-muted-foreground">
-                                                        {shortMint(token.mint)}
+                                                    <span className="truncate text-sm text-muted-foreground">
+                                                        {token.name}
                                                     </span>
                                                 </div>
-                                                <Button
-                                                    size="sm"
-                                                    variant="ghost"
-                                                    onClick={() => void handleRemoveMint(token.mint)}
-                                                >
-                                                    Remove
-                                                </Button>
+                                                <div className="flex items-center font-mono text-xs text-muted-foreground">
+                                                    {shortMint(token.mint)}
+                                                </div>
+                                                <div className="flex items-center">
+                                                    <VerifiedBadge verified={token.verified} />
+                                                </div>
+                                                <div className="flex items-center justify-end">
+                                                    <Button
+                                                        size="sm"
+                                                        variant="ghost"
+                                                        aria-label={`Remove ${token.symbol ?? token.mint}`}
+                                                        className="h-8 w-8 rounded-sm p-0"
+                                                        onClick={() => void handleRemoveMint(token)}
+                                                    >
+                                                        <IconTrashFill className="h-3.5 w-3.5 fill-muted-foreground" />
+                                                    </Button>
+                                                </div>
                                             </div>
                                         ))}
-                                    </div>
+                                    </TableSection>
                                 )}
                             </div>
                         </>
@@ -540,37 +717,62 @@ export function ListsTab(): React.JSX.Element {
                     <DialogHeader>
                         <DialogTitle>Create a token list</DialogTitle>
                         <DialogDescription>
-                            The slug is permanent and globally unique — prefix it with your community name (e.g.
-                            ownership-core).
+                            Consumers pull it from <code className="text-xs">/api/v2/lists/&#123;slug&#125;</code>. The
+                            slug is permanent and globally unique — prefix it with your community name.
                         </DialogDescription>
                     </DialogHeader>
-                    <div className="space-y-3">
-                        <Input
-                            value={createSlug}
-                            onChange={event => setCreateSlug(event.target.value)}
-                            placeholder="slug (lowercase, hyphens)"
-                        />
-                        <Input
-                            value={createName}
-                            onChange={event => setCreateName(event.target.value)}
-                            placeholder="Display name"
-                        />
-                        <Input
-                            value={createDescription}
-                            onChange={event => setCreateDescription(event.target.value)}
-                            placeholder="Description (optional)"
-                        />
-                        {createError && <p className="text-sm text-destructive">{createError}</p>}
+                    <div className="space-y-4 py-2">
+                        <div className="space-y-1.5">
+                            <Label htmlFor="list-name">Name</Label>
+                            <Input
+                                id="list-name"
+                                value={createName}
+                                onChange={event => {
+                                    setCreateName(event.target.value);
+                                    if (!slugTouched) setCreateSlug(slugify(event.target.value));
+                                }}
+                                placeholder="Ownership Core"
+                            />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="list-slug">Slug</Label>
+                            <Input
+                                id="list-slug"
+                                value={createSlug}
+                                onChange={event => {
+                                    setSlugTouched(true);
+                                    setCreateSlug(event.target.value);
+                                }}
+                                placeholder="ownership-core"
+                                className="font-mono"
+                            />
+                            <p className="text-xs text-muted-foreground">Lowercase letters, numbers, and hyphens.</p>
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="list-description">Description (optional)</Label>
+                            <Input
+                                id="list-description"
+                                value={createDescription}
+                                onChange={event => setCreateDescription(event.target.value)}
+                                placeholder="Tokens curated by the Ownership community"
+                            />
+                        </div>
+                        {createError && (
+                            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-2.5 text-sm text-destructive">
+                                {createError}
+                            </div>
+                        )}
                     </div>
                     <DialogFooter>
                         <Button variant="ghost" onClick={() => setCreateOpen(false)}>
                             Cancel
                         </Button>
                         <Button
+                            variant="outline"
                             onClick={() => void handleCreate()}
                             disabled={creating || !createSlug.trim() || !createName.trim()}
                         >
-                            {creating ? <Spinner size="sm" /> : 'Create'}
+                            {creating ? <Spinner size="sm" /> : 'Create list'}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
