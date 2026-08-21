@@ -5,15 +5,6 @@ import { motion } from 'motion/react';
 import { toast } from 'sonner';
 import { IconCircleFill, IconCircleGridCrossFill, IconTrashFill } from 'symbols-react';
 
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableCellCopyable,
-    TableHead,
-    TableHeader,
-    TableRow,
-} from '@solana/design-system/table';
 import { Avatar, AvatarFallback, AvatarImage } from '@tokens/ui/avatar';
 import { Badge } from '@tokens/ui/badge';
 import { Button } from '@tokens/ui/button';
@@ -209,6 +200,37 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
         <div className="text-xs font-inter-semibold uppercase tracking-[0.08em] text-muted-foreground">{children}</div>
     );
 }
+
+/** Dashboard table chrome (shared with the API-keys tables): gray gutter, uppercase header, white card. */
+function TableSection({
+    header,
+    columns,
+    children,
+}: {
+    header?: React.ReactNode;
+    columns: string;
+    children: React.ReactNode;
+}) {
+    return (
+        <div className="rounded-[12px] bg-gray-100/60 overflow-hidden p-0.5">
+            {header && (
+                <div className="px-3 py-2">
+                    <div
+                        className={`grid ${columns} gap-4 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide`}
+                    >
+                        {header}
+                    </div>
+                </div>
+            )}
+            <div className="bg-white dark:bg-zinc-950/30 border border-black/[0.15] rounded-lg shadow-sm overflow-hidden">
+                {children}
+            </div>
+        </div>
+    );
+}
+
+const SEARCH_COLUMNS = 'grid-cols-[minmax(0,1.6fr)_minmax(0,0.4fr)_minmax(0,0.55fr)_minmax(0,0.7fr)_72px]';
+const MEMBER_COLUMNS = 'grid-cols-[minmax(0,1.5fr)_minmax(0,0.9fr)_minmax(0,0.7fr)_minmax(0,0.55fr)_72px]';
 
 /**
  * Metadata viewer modeled on the admin app's mint preview: identity header,
@@ -714,7 +736,7 @@ export function ListsTab(): React.JSX.Element {
                         <h4 className="font-inter-medium">My lists</h4>
                         <p className="text-sm text-muted-foreground">Published under your project</p>
                     </div>
-                    <div className="rounded-lg border border-border-medium bg-white dark:bg-zinc-950/30 shadow-sm overflow-hidden">
+                    <TableSection columns="grid-cols-1">
                         {myLists === null ? (
                             <div className="px-4 py-3 space-y-3">
                                 <Skeleton className="h-4 w-40" />
@@ -747,7 +769,7 @@ export function ListsTab(): React.JSX.Element {
                                 </button>
                             ))
                         )}
-                    </div>
+                    </TableSection>
                 </div>
 
                 {/* Selected list */}
@@ -825,77 +847,76 @@ export function ListsTab(): React.JSX.Element {
                                     <p className="text-sm text-muted-foreground">No candidates.</p>
                                 )}
                                 {results !== null && !searching && results.length > 0 && (
-                                    <Table>
-                                        <TableHeader>
-                                            <TableRow>
-                                                <TableHead>Token</TableHead>
-                                                <TableHead align="right">Score</TableHead>
-                                                <TableHead align="right">Liquidity</TableHead>
-                                                <TableHead>Already in</TableHead>
-                                                <TableHead align="right" pinned="right">
-                                                    Action
-                                                </TableHead>
-                                            </TableRow>
-                                        </TableHeader>
-                                        <TableBody>
-                                            {results.map(result => {
-                                                const isMember = memberMints.has(result.mint);
-                                                return (
-                                                    <TableRow
-                                                        key={result.mint}
-                                                        className="cursor-pointer"
-                                                        onClick={() => openMetadataForResult(result)}
+                                    <TableSection
+                                        columns={SEARCH_COLUMNS}
+                                        header={
+                                            <>
+                                                <div>Token</div>
+                                                <div className="text-right">Score</div>
+                                                <div className="text-right">Liquidity</div>
+                                                <div>Already in</div>
+                                                <div className="text-right">Action</div>
+                                            </>
+                                        }
+                                    >
+                                        {results.map(result => {
+                                            const isMember = memberMints.has(result.mint);
+                                            return (
+                                                <div
+                                                    key={result.mint}
+                                                    role="button"
+                                                    tabIndex={0}
+                                                    onClick={() => openMetadataForResult(result)}
+                                                    onKeyDown={event => {
+                                                        if (event.key === 'Enter') openMetadataForResult(result);
+                                                    }}
+                                                    className={`grid ${SEARCH_COLUMNS} gap-4 px-4 py-3 border-b last:border-b-0 cursor-pointer hover:bg-gray-50/50 transition-colors`}
+                                                >
+                                                    <TokenIdentity
+                                                        mint={result.mint}
+                                                        symbol={result.claims.symbol}
+                                                        name={result.claims.name}
+                                                        logoURI={result.market.logoURI}
+                                                        verified={result.verified}
                                                     >
-                                                        <TableCell>
-                                                            <TokenIdentity
-                                                                mint={result.mint}
-                                                                symbol={result.claims.symbol}
-                                                                name={result.claims.name}
-                                                                logoURI={result.market.logoURI}
-                                                                verified={result.verified}
-                                                            >
-                                                                {result.warnings.length > 0 && (
-                                                                    <div className="mt-1">
-                                                                        <WarningChips warnings={result.warnings} />
-                                                                    </div>
-                                                                )}
-                                                            </TokenIdentity>
-                                                        </TableCell>
-                                                        <TableCell align="right" numeric>
-                                                            {result.score.total}
-                                                        </TableCell>
-                                                        <TableCell align="right" numeric>
-                                                            {formatUsd(result.market.liquidityUsd)}
-                                                        </TableCell>
-                                                        <TableCell className="text-xs text-muted-foreground">
-                                                            {result.inLists.length > 0
-                                                                ? result.inLists.join(', ')
-                                                                : '—'}
-                                                        </TableCell>
-                                                        <TableCell align="right" pinned="right">
-                                                            <Button
-                                                                size="sm"
-                                                                variant="outline"
-                                                                disabled={isMember || addingMint === result.mint}
-                                                                onClick={event => {
-                                                                    event.stopPropagation();
-                                                                    void handleAddMint(result);
-                                                                }}
-                                                            >
-                                                                {addingMint === result.mint ? (
-                                                                    <Spinner size="sm" />
-                                                                ) : isMember ? (
-                                                                    'Added'
-                                                                ) : (
-                                                                    'Add'
-                                                                )}
-                                                            </Button>
-                                                        </TableCell>
-                                                    </TableRow>
-                                                );
-                                            })}
-                                        </TableBody>
-                                    </Table>
+                                                        {result.warnings.length > 0 && (
+                                                            <div className="mt-1">
+                                                                <WarningChips warnings={result.warnings} />
+                                                            </div>
+                                                        )}
+                                                    </TokenIdentity>
+                                                    <div className="flex items-center justify-end font-mono text-sm tabular-nums">
+                                                        {result.score.total}
+                                                    </div>
+                                                    <div className="flex items-center justify-end text-sm text-muted-foreground tabular-nums">
+                                                        {formatUsd(result.market.liquidityUsd)}
+                                                    </div>
+                                                    <div className="flex items-center truncate text-xs text-muted-foreground">
+                                                        {result.inLists.length > 0 ? result.inLists.join(', ') : '—'}
+                                                    </div>
+                                                    <div className="flex items-center justify-end">
+                                                        <Button
+                                                            size="sm"
+                                                            variant="outline"
+                                                            disabled={isMember || addingMint === result.mint}
+                                                            onClick={event => {
+                                                                event.stopPropagation();
+                                                                void handleAddMint(result);
+                                                            }}
+                                                        >
+                                                            {addingMint === result.mint ? (
+                                                                <Spinner size="sm" />
+                                                            ) : isMember ? (
+                                                                'Added'
+                                                            ) : (
+                                                                'Add'
+                                                            )}
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </TableSection>
                                 )}
                                 {results !== null && !searching && suppressed.length > 0 && (
                                     <details className="group">
@@ -903,7 +924,8 @@ export function ListsTab(): React.JSX.Element {
                                             {suppressed.length} candidate{suppressed.length === 1 ? '' : 's'} filtered
                                             by policy
                                         </summary>
-                                        <div className="mt-3 rounded-lg border border-border-medium bg-white dark:bg-zinc-950/30 shadow-sm overflow-hidden">
+                                        <div className="mt-3">
+                                            <TableSection columns="grid-cols-1">
                                             {suppressed.map(item => (
                                                 <div
                                                     key={item.mint}
@@ -918,6 +940,7 @@ export function ListsTab(): React.JSX.Element {
                                                     <WarningChips warnings={item.warnings} />
                                                 </div>
                                             ))}
+                                            </TableSection>
                                         </div>
                                     </details>
                                 )}
@@ -937,107 +960,105 @@ export function ListsTab(): React.JSX.Element {
                                     </p>
                                 </div>
                                 {tokens === null ? (
-                                    <Table>
-                                        <TableHeader>
-                                            <TableRow>
-                                                <TableHead>Token</TableHead>
-                                                <TableHead>Mint</TableHead>
-                                                <TableHead>Status</TableHead>
-                                                <TableHead>Added</TableHead>
-                                                <TableHead align="right" pinned="right">
-                                                    Actions
-                                                </TableHead>
-                                            </TableRow>
-                                        </TableHeader>
-                                        <TableBody>
-                                            {Array.from({ length: 3 }).map((_, index) => (
-                                                <TableRow key={index}>
-                                                    <TableCell>
-                                                        <div className="flex items-center gap-3">
-                                                            <Skeleton className="h-8 w-8 rounded-full" />
-                                                            <Skeleton className="h-4 w-28" />
-                                                        </div>
-                                                    </TableCell>
-                                                    <TableCell>
-                                                        <Skeleton className="h-4 w-40" />
-                                                    </TableCell>
-                                                    <TableCell>
-                                                        <Skeleton className="h-5 w-20 rounded-full" />
-                                                    </TableCell>
-                                                    <TableCell>
-                                                        <Skeleton className="h-4 w-20" />
-                                                    </TableCell>
-                                                    <TableCell align="right" pinned="right">
-                                                        <Skeleton className="ml-auto h-8 w-8" />
-                                                    </TableCell>
-                                                </TableRow>
-                                            ))}
-                                        </TableBody>
-                                    </Table>
+                                    <TableSection columns={MEMBER_COLUMNS}>
+                                        {Array.from({ length: 3 }).map((_, index) => (
+                                            <div
+                                                key={index}
+                                                className={`grid ${MEMBER_COLUMNS} gap-4 px-4 py-3 border-b last:border-b-0`}
+                                            >
+                                                <div className="flex items-center gap-3">
+                                                    <Skeleton className="h-8 w-8 rounded-full" />
+                                                    <Skeleton className="h-4 w-28" />
+                                                </div>
+                                                <div className="flex items-center">
+                                                    <Skeleton className="h-4 w-24" />
+                                                </div>
+                                                <div className="flex items-center">
+                                                    <Skeleton className="h-5 w-20 rounded-full" />
+                                                </div>
+                                                <div className="flex items-center">
+                                                    <Skeleton className="h-4 w-16" />
+                                                </div>
+                                                <div className="flex items-center justify-end">
+                                                    <Skeleton className="h-8 w-8" />
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </TableSection>
                                 ) : tokens.length === 0 ? (
                                     <div className="bg-background/80 rounded-2xl border border-dashed border-black/20 px-6 py-8 text-center text-sm text-muted-foreground">
                                         Empty list — search above to add the first token.
                                     </div>
                                 ) : (
-                                    <Table>
-                                        <TableHeader>
-                                            <TableRow>
-                                                <TableHead>Token</TableHead>
-                                                <TableHead>Mint</TableHead>
-                                                <TableHead>Status</TableHead>
-                                                <TableHead>Added</TableHead>
-                                                <TableHead align="right" pinned="right">
-                                                    Actions
-                                                </TableHead>
-                                            </TableRow>
-                                        </TableHeader>
-                                        <TableBody>
-                                            {tokens.map(token => (
-                                                <TableRow
-                                                    key={token.mint}
-                                                    className="cursor-pointer"
-                                                    onClick={() => openMetadataForMember(token)}
+                                    <TableSection
+                                        columns={MEMBER_COLUMNS}
+                                        header={
+                                            <>
+                                                <div>Token</div>
+                                                <div>Mint</div>
+                                                <div>Status</div>
+                                                <div>Added</div>
+                                                <div className="text-right">Actions</div>
+                                            </>
+                                        }
+                                    >
+                                        {tokens.map(token => (
+                                            <div
+                                                key={token.mint}
+                                                role="button"
+                                                tabIndex={0}
+                                                onClick={() => openMetadataForMember(token)}
+                                                onKeyDown={event => {
+                                                    if (event.key === 'Enter') openMetadataForMember(token);
+                                                }}
+                                                className={`grid ${MEMBER_COLUMNS} gap-4 px-4 py-3 border-b last:border-b-0 cursor-pointer hover:bg-gray-50/50 transition-colors`}
+                                            >
+                                                <TokenIdentity
+                                                    mint={token.mint}
+                                                    symbol={token.symbol}
+                                                    name={token.name}
+                                                    logoURI={token.logoURI}
+                                                />
+                                                <div
+                                                    className="flex items-center gap-1"
+                                                    onClick={event => event.stopPropagation()}
                                                 >
-                                                    <TableCell>
-                                                        <TokenIdentity
-                                                            mint={token.mint}
-                                                            symbol={token.symbol}
-                                                            name={token.name}
-                                                            logoURI={token.logoURI}
-                                                        />
-                                                    </TableCell>
-                                                    <TableCellCopyable
-                                                        mono
-                                                        truncate={180}
-                                                        value={token.mint}
-                                                        onClick={event => event.stopPropagation()}
+                                                    <span className="font-mono text-xs text-muted-foreground">
+                                                        {shortMint(token.mint)}
+                                                    </span>
+                                                    <CopyButton
+                                                        textToCopy={token.mint}
+                                                        showText={false}
+                                                        ariaLabel={`Copy ${token.symbol ?? token.mint} mint address`}
+                                                        className="h-7 w-7 rounded-sm hover:bg-gray-50/60 transition-colors duration-150"
+                                                        iconClassName="h-3 w-3 text-muted-foreground"
+                                                        iconClassNameCheck="h-3 w-3"
+                                                        onCopied={() => toast.success('Mint address copied')}
+                                                    />
+                                                </div>
+                                                <div className="flex items-center">
+                                                    <VerifiedBadge verified={token.verified} />
+                                                </div>
+                                                <div className="flex items-center text-sm text-muted-foreground">
+                                                    {formatDate(token.addedAt)}
+                                                </div>
+                                                <div className="flex items-center justify-end">
+                                                    <Button
+                                                        size="sm"
+                                                        variant="ghost"
+                                                        aria-label={`Remove ${token.symbol ?? token.mint}`}
+                                                        className="h-8 w-8 rounded-sm p-0"
+                                                        onClick={event => {
+                                                            event.stopPropagation();
+                                                            void handleRemoveMint(token);
+                                                        }}
                                                     >
-                                                        {token.mint}
-                                                    </TableCellCopyable>
-                                                    <TableCell>
-                                                        <VerifiedBadge verified={token.verified} />
-                                                    </TableCell>
-                                                    <TableCell className="text-sm text-muted-foreground">
-                                                        {formatDate(token.addedAt)}
-                                                    </TableCell>
-                                                    <TableCell align="right" pinned="right">
-                                                        <Button
-                                                            size="sm"
-                                                            variant="ghost"
-                                                            aria-label={`Remove ${token.symbol ?? token.mint}`}
-                                                            className="h-8 w-8 rounded-sm p-0"
-                                                            onClick={event => {
-                                                                event.stopPropagation();
-                                                                void handleRemoveMint(token);
-                                                            }}
-                                                        >
-                                                            <IconTrashFill className="h-3.5 w-3.5 fill-muted-foreground" />
-                                                        </Button>
-                                                    </TableCell>
-                                                </TableRow>
-                                            ))}
-                                        </TableBody>
-                                    </Table>
+                                                        <IconTrashFill className="h-3.5 w-3.5 fill-muted-foreground" />
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </TableSection>
                                 )}
                             </div>
                         </>
