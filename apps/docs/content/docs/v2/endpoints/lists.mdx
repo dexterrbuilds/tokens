@@ -20,7 +20,7 @@ interface ListsResponse {
     lists: Array<{
         slug: string;
         name: string;
-        description: string | null;
+        description: string | null; // curated lists only; null for community lists
         curated: boolean;
         owner: { name: string } | { projectId: string };
         tokenCount: number;
@@ -43,7 +43,7 @@ lists 404).
 interface ListDetailResponse {
     slug: string;
     name: string;
-    description: string | null;
+    description: string | null; // curated lists only; null for community lists
     curated: boolean;
     owner: { name: string } | { projectId: string };
     tokenCount: number;
@@ -103,7 +103,7 @@ keys from other projects get `403`.
 
 Create a list.
 
-- **Body**: `{ slug, name, description?, status? }`
+- **Body**: `{ slug, name, status? }`
   - `slug`: globally unique, `^[a-z][a-z0-9-]{2,62}$`. Curated ids and route words
     (`all`, `lists`, `curated`, `tokens`, `search-tokens`) are reserved. Prefix by convention:
     `ownership-core`.
@@ -112,7 +112,7 @@ Create a list.
 
 ### `PATCH /v2/lists/{slug}`
 
-Update `name`, `description` (pass `null` to clear), or `status` (`draft` | `published` | `archived`).
+Update `name`, `slug` (rename — the old path stops resolving), or `status` (`draft` | `published` | `archived`).
 
 ### `DELETE /v2/lists/{slug}`
 

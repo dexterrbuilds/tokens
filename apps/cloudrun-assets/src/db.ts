@@ -3290,7 +3290,6 @@ const TOKEN_LIST_ROW_COLUMNS = `
     tl.slug,
     tl.owner_project_id,
     tl.name,
-    tl.description,
     tl.status,
     (SELECT COUNT(*)::int FROM token_list_members m WHERE m.list_id = tl.id) AS member_count,
     (EXTRACT(EPOCH FROM tl.created_at) * 1000)::bigint AS created_at,
@@ -3303,7 +3302,6 @@ export function makePostgresTokenListsReadsRepo(sql: Sql): TokenListsReadsRepo {
             const rows = await sql<TokenListSummaryRow[]>`
                 SELECT tl.slug,
                        tl.name,
-                       tl.description,
                        tl.owner_project_id,
                        (SELECT COUNT(*)::int FROM token_list_members m WHERE m.list_id = tl.id) AS member_count,
                        (EXTRACT(EPOCH FROM tl.updated_at) * 1000)::bigint AS updated_at
@@ -3388,9 +3386,8 @@ export function makePostgresTokenListsMutationsRepo(sql: Sql): TokenListsMutatio
             const id = randomId('tl');
             try {
                 await sql`
-                    INSERT INTO token_lists (id, slug, owner_project_id, name, description, status, created_at, updated_at)
-                    VALUES (${id}, ${args.slug}, ${args.ownerProjectId}, ${args.name}, ${args.description},
-                            ${args.status}, ${now}, ${now})
+                    INSERT INTO token_lists (id, slug, owner_project_id, name, status, created_at, updated_at)
+                    VALUES (${id}, ${args.slug}, ${args.ownerProjectId}, ${args.name}, ${args.status}, ${now}, ${now})
                 `;
             } catch (err) {
                 if ((err as { code?: string }).code === UNIQUE_VIOLATION) {
@@ -3410,7 +3407,6 @@ export function makePostgresTokenListsMutationsRepo(sql: Sql): TokenListsMutatio
                     UPDATE token_lists SET
                         slug = ${patch.slug !== undefined ? patch.slug : current.slug},
                         name = ${patch.name !== undefined ? patch.name : current.name},
-                        description = ${patch.description !== undefined ? patch.description : current.description},
                         status = ${patch.status !== undefined ? patch.status : current.status},
                         updated_at = ${new Date(nowMs)}
                     WHERE id = ${listId}

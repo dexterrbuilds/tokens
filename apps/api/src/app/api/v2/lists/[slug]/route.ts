@@ -64,7 +64,8 @@ export const GET = route(
                 return {
                     slug: detail.slug,
                     name: detail.name,
-                    description: detail.description,
+                    // Community lists have no descriptions; curated registry lists keep theirs.
+                    description: null,
                     curated: false,
                     owner: { projectId: detail.ownerProjectId },
                     tokenCount: detail.tokenCount,
@@ -89,7 +90,6 @@ const patchBodySchema = Schema.Struct({
     /** Rename. The old path stops resolving immediately and frees the slug. */
     slug: Schema.optional(Schema.String),
     name: Schema.optional(Schema.String),
-    description: Schema.optional(Schema.NullOr(Schema.String)),
     status: Schema.optional(Schema.Literals(['draft', 'published', 'archived'])),
 });
 
@@ -110,7 +110,6 @@ export const PATCH = route(
                 slug: slug.trim().toLowerCase(),
                 ...(body.slug !== undefined ? { newSlug: body.slug.trim().toLowerCase() } : {}),
                 ...(body.name !== undefined ? { name: body.name } : {}),
-                ...(body.description !== undefined ? { description: body.description } : {}),
                 ...(body.status !== undefined ? { status: body.status } : {}),
             });
             const list = yield* unwrapOutcome(outcome);

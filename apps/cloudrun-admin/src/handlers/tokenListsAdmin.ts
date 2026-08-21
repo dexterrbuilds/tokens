@@ -14,7 +14,6 @@ export interface TokenListAdminRow {
     slug: string;
     ownerProjectId: string;
     name: string;
-    description: string | null;
     status: string;
     memberCount: number;
     /** Unix ms. */

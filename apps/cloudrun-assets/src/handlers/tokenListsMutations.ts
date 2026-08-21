@@ -38,7 +38,6 @@ export interface TokenListMutationRow {
     slug: string;
     owner_project_id: string;
     name: string;
-    description: string | null;
     status: string;
     /** Unix ms. */
     created_at: number;
@@ -60,14 +59,13 @@ export interface TokenListsMutationsRepo {
         slug: string;
         ownerProjectId: string;
         name: string;
-        description: string | null;
         status: TokenListStatus;
         nowMs: number;
     }): Promise<TokenListMutationRow>;
     /** Throws SlugConflictError when a slug change collides with a live list. */
     updateList(
         listId: string,
-        patch: { slug?: string; name?: string; description?: string | null; status?: TokenListStatus },
+        patch: { slug?: string; name?: string; status?: TokenListStatus },
         nowMs: number,
     ): Promise<TokenListMutationRow>;
     /** Hard delete — members cascade, and the slug goes back to the pool. */
@@ -118,7 +116,6 @@ export interface TokenListResult {
     slug: string;
     ownerProjectId: string;
     name: string;
-    description: string | null;
     status: string;
     createdAt: number;
     updatedAt: number;
@@ -138,7 +135,6 @@ function listResult(row: TokenListMutationRow): TokenListResult {
         slug: row.slug,
         ownerProjectId: row.owner_project_id,
         name: row.name,
-        description: row.description,
         status: row.status,
         createdAt: Number(row.created_at),
         updatedAt: Number(row.updated_at),
@@ -196,7 +192,6 @@ export async function createList(
     const ownerProjectId = requireString(a, 'ownerProjectId');
     const slug = requireString(a, 'slug').toLowerCase();
     const name = requireString(a, 'name');
-    const description = optionalString(a, 'description') ?? null;
     const status = optionalStatus(a) ?? 'published';
 
     if (!TOKEN_LIST_SLUG_REGEX.test(slug)) return { ok: false, error: 'invalid_slug' };
@@ -207,7 +202,6 @@ export async function createList(
             slug,
             ownerProjectId,
             name,
-            description,
             status,
             nowMs: deps.now(),
         });
@@ -232,9 +226,7 @@ export async function updateList(
     const slug = requireString(a, 'slug');
     const newSlug = optionalString(a, 'newSlug')?.trim().toLowerCase();
     const name = optionalString(a, 'name');
-    const description = optionalString(a, 'description');
     const status = optionalStatus(a);
-    const clearDescription = a.description === null;
 
     if (newSlug !== undefined && newSlug.length > 0) {
         if (!TOKEN_LIST_SLUG_REGEX.test(newSlug)) return { ok: false, error: 'invalid_slug' };
@@ -244,12 +236,10 @@ export async function updateList(
     const owned = await requireOwnedList(deps, slug, ownerProjectId);
     if (!owned.ok) return owned;
 
-    const patch: { slug?: string; name?: string; description?: string | null; status?: TokenListStatus } = {};
+    const patch: { slug?: string; name?: string; status?: TokenListStatus } = {};
     // A no-op rename must not reach the unique index and self-conflict.
     if (newSlug !== undefined && newSlug.length > 0 && newSlug !== owned.value.slug) patch.slug = newSlug;
     if (name !== undefined) patch.name = name;
-    if (description !== undefined) patch.description = description;
-    else if (clearDescription) patch.description = null;
     if (status !== undefined) patch.status = status;
 
     try {

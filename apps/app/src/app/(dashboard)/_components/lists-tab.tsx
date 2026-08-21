@@ -63,7 +63,6 @@ import { useDashboardTab } from '@/hooks/use-dashboard-tab';
 interface V2ListSummary {
     slug: string;
     name: string;
-    description: string | null;
     curated: boolean;
     owner: { name?: string; projectId?: string };
     tokenCount: number;
@@ -483,7 +482,6 @@ export function ListsTab(): React.JSX.Element {
     const [createSlug, setCreateSlug] = useState('');
     const [slugTouched, setSlugTouched] = useState(false);
     const [createName, setCreateName] = useState('');
-    const [createDescription, setCreateDescription] = useState('');
     const [createError, setCreateError] = useState<string | null>(null);
     const [creating, setCreating] = useState(false);
 
@@ -500,18 +498,13 @@ export function ListsTab(): React.JSX.Element {
         try {
             const res = await playgroundFetch('/api/v2/lists', {
                 method: 'POST',
-                body: {
-                    slug: createSlug.trim(),
-                    name: createName.trim(),
-                    ...(createDescription.trim() ? { description: createDescription.trim() } : {}),
-                },
+                body: { slug: createSlug.trim(), name: createName.trim() },
             });
             const body = (await res.json()) as { list?: { slug: string }; error?: { message?: string } };
             if (!res.ok) throw new Error(body.error?.message ?? `Create failed (HTTP ${res.status})`);
             setCreateOpen(false);
             setCreateSlug('');
             setCreateName('');
-            setCreateDescription('');
             setSlugTouched(false);
             toast.success(`List "${createName.trim()}" created`);
             await refreshLists();
@@ -521,7 +514,7 @@ export function ListsTab(): React.JSX.Element {
         } finally {
             setCreating(false);
         }
-    }, [playgroundFetch, createSlug, createName, createDescription, refreshLists]);
+    }, [playgroundFetch, createSlug, createName, refreshLists]);
 
     // ---- row actions: quick delete (two-step confirm) + settings dialog ----
     const [deleteSlug, setDeleteSlug] = useState<string | null>(null);
@@ -553,7 +546,7 @@ export function ListsTab(): React.JSX.Element {
 
     /** A slug change here renames the list; the previous path stops resolving. */
     const handleUpdateList = useCallback(
-        async (slug: string, patch: { slug: string; name: string; description: string | null }) => {
+        async (slug: string, patch: { slug: string; name: string }) => {
             const res = await playgroundFetch(`/api/v2/lists/${slug}`, { method: 'PATCH', body: patch });
             if (!res.ok) {
                 const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
@@ -821,46 +814,42 @@ export function ListsTab(): React.JSX.Element {
                         </div>
                     ) : (
                         <>
-                            {/* List header */}
-                            <div className="flex items-start justify-between gap-4">
-                                <div className="space-y-1">
-                                    <div className="flex items-center gap-3">
-                                        <h2 className="text-xl font-inter-semibold">{selectedList.name}</h2>
-                                        <code className="rounded-md bg-gray-100 dark:bg-zinc-900 px-1.5 py-0.5 text-xs text-muted-foreground">
-                                            /v2/lists/{selectedList.slug}
-                                        </code>
-                                    </div>
-                                    <p className="text-sm text-muted-foreground">
-                                        {selectedList.description ?? 'No description'}
-                                    </p>
-                                </div>
-                            </div>
-
-                            {/* Members — title left, ⌘K search trigger opposite it */}
+                            {/* Members — list title + copyable endpoint left, ⌘K search trigger opposite */}
                             <div className="space-y-4">
                                 <div className="flex items-end justify-between gap-4">
-                                    <div className="flex items-center gap-1.5">
-                                        <h4 className="font-inter-medium">Tokens</h4>
-                                        <Tooltip delayDuration={300}>
-                                            <TooltipTrigger asChild>
-                                                <button
-                                                    type="button"
-                                                    aria-label="About this table"
-                                                    className="flex size-5 items-center justify-center rounded-md transition-colors hover:bg-black/[0.06] dark:hover:bg-white/10"
+                                    <div className="space-y-1">
+                                        <div className="flex items-center gap-1.5">
+                                            <h2 className="text-xl font-inter-semibold">{selectedList.name}</h2>
+                                            <Tooltip delayDuration={300}>
+                                                <TooltipTrigger asChild>
+                                                    <button
+                                                        type="button"
+                                                        aria-label="About this table"
+                                                        className="flex size-5 items-center justify-center rounded-md transition-colors hover:bg-black/[0.06] dark:hover:bg-white/10"
+                                                    >
+                                                        <IconInfoCircle className="size-3.5 fill-muted-foreground" />
+                                                    </button>
+                                                </TooltipTrigger>
+                                                <TooltipContent
+                                                    side="top"
+                                                    className="max-w-[260px] rounded-sm bg-zinc-800 px-2 py-1 dark:bg-zinc-900"
                                                 >
-                                                    <IconInfoCircle className="size-3.5 fill-muted-foreground" />
-                                                </button>
-                                            </TooltipTrigger>
-                                            <TooltipContent
-                                                side="top"
-                                                className="max-w-[260px] rounded-sm bg-zinc-800 px-2 py-1 dark:bg-zinc-900"
-                                            >
-                                                <p className="text-xs text-white">
-                                                    What consumers of this list receive, in rank order — click a row for
-                                                    metadata.
-                                                </p>
-                                            </TooltipContent>
-                                        </Tooltip>
+                                                    <p className="text-xs text-white">
+                                                        What consumers of this list receive, in rank order — click a
+                                                        row for metadata.
+                                                    </p>
+                                                </TooltipContent>
+                                            </Tooltip>
+                                        </div>
+                                        <CopyButton
+                                            textToCopy={`https://api.tokens.xyz/api/v2/lists/${selectedList.slug}`}
+                                            ariaLabel="Copy list endpoint URL"
+                                            displayText={`/v2/lists/${selectedList.slug}`}
+                                            className="rounded-md bg-gray-100 dark:bg-zinc-900 px-1.5 py-0.5"
+                                            iconClassName="h-3 w-3 text-muted-foreground"
+                                            iconClassNameCheck="h-3 w-3"
+                                            onCopied={() => toast.success('Endpoint URL copied')}
+                                        />
                                     </div>
                                     <button
                                         type="button"
@@ -1076,15 +1065,6 @@ export function ListsTab(): React.JSX.Element {
                                     {createSlugAvailability.state === 'available' && ' — available'}
                                 </div>
                             )}
-                        </div>
-                        <div className="space-y-1.5">
-                            <Label htmlFor="list-description">Description (optional)</Label>
-                            <Input
-                                id="list-description"
-                                value={createDescription}
-                                onChange={event => setCreateDescription(event.target.value)}
-                                placeholder="Tokens curated by the Ownership community"
-                            />
                         </div>
                         {createError && (
                             <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-2.5 text-sm text-destructive">

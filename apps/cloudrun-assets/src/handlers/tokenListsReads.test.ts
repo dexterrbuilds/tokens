@@ -15,7 +15,6 @@ import {
 const SUMMARY_ROW: TokenListSummaryRow = {
     slug: 'ownership-core',
     name: 'Ownership Core',
-    description: 'Tokens curated by the Ownership community',
     owner_project_id: 'proj_1',
     member_count: 3,
     updated_at: 1_780_000_000_000,
@@ -26,7 +25,6 @@ const LIST_ROW: TokenListRow = {
     slug: 'ownership-core',
     owner_project_id: 'proj_1',
     name: 'Ownership Core',
-    description: null,
     status: 'published',
     member_count: 3,
     created_at: 1_779_000_000_000,
@@ -62,7 +60,6 @@ describe('tokenListsReads.listPublished', () => {
             {
                 slug: 'ownership-core',
                 name: 'Ownership Core',
-                description: 'Tokens curated by the Ownership community',
                 ownerProjectId: 'proj_1',
                 tokenCount: 3,
                 updatedAt: 1_780_000_000_000,

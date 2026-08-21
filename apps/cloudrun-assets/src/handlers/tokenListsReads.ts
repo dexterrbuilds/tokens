@@ -9,7 +9,6 @@ import { InvalidArgsError } from './assets';
 export interface TokenListSummaryRow {
     slug: string;
     name: string;
-    description: string | null;
     owner_project_id: string;
     member_count: number;
     /** Unix ms. */
@@ -21,7 +20,6 @@ export interface TokenListRow {
     slug: string;
     owner_project_id: string;
     name: string;
-    description: string | null;
     status: string;
     member_count: number;
     /** Unix ms. */
@@ -61,7 +59,6 @@ export interface TokenListsReadsRepo {
 export interface TokenListSummary {
     slug: string;
     name: string;
-    description: string | null;
     ownerProjectId: string;
     tokenCount: number;
     updatedAt: number;
@@ -106,7 +103,6 @@ function summaryFromRow(row: TokenListSummaryRow): TokenListSummary {
     return {
         slug: row.slug,
         name: row.name,
-        description: row.description,
         ownerProjectId: row.owner_project_id,
         tokenCount: row.member_count,
         updatedAt: Number(row.updated_at),

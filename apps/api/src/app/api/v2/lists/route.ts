@@ -28,7 +28,8 @@ export const GET = route(
             const communitySummaries: V2ListSummary[] = community.map(list => ({
                 slug: list.slug,
                 name: list.name,
-                description: list.description,
+                // Community lists have no descriptions; curated registry lists keep theirs.
+                description: null,
                 curated: false,
                 owner: { projectId: list.ownerProjectId },
                 tokenCount: list.tokenCount,
@@ -46,7 +47,6 @@ export const GET = route(
 const createBodySchema = Schema.Struct({
     slug: Schema.String,
     name: Schema.String,
-    description: Schema.optional(Schema.String),
     status: Schema.optional(Schema.Literals(['draft', 'published'])),
 });
 
@@ -61,7 +61,6 @@ export const POST = route(
                 ownerProjectId: ctx.platformAuth.projectId,
                 slug: body.slug,
                 name: body.name,
-                ...(body.description !== undefined ? { description: body.description } : {}),
                 ...(body.status !== undefined ? { status: body.status } : {}),
             });
             const list = yield* unwrapOutcome(outcome);

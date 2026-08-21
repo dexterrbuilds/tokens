@@ -9,7 +9,6 @@ interface PgTokenListRow {
     slug: string;
     owner_project_id: string;
     name: string;
-    description: string | null;
     status: string;
     member_count: number;
     created_at: string | number;
@@ -24,7 +23,6 @@ export function makePostgresTokenListsAdminRepo(sql: Sql): TokenListsAdminRepo {
                        tl.slug,
                        tl.owner_project_id,
                        tl.name,
-                       tl.description,
                        tl.status,
                        (SELECT COUNT(*)::int FROM token_list_members m WHERE m.list_id = tl.id) AS member_count,
                        (EXTRACT(EPOCH FROM tl.created_at) * 1000)::bigint AS created_at,
@@ -39,7 +37,6 @@ export function makePostgresTokenListsAdminRepo(sql: Sql): TokenListsAdminRepo {
                     slug: row.slug,
                     ownerProjectId: row.owner_project_id,
                     name: row.name,
-                    description: row.description,
                     status: row.status,
                     memberCount: row.member_count,
                     createdAt: Number(row.created_at),

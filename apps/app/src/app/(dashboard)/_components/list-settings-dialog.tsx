@@ -7,7 +7,6 @@ import { Button } from '@tokens/ui/button';
 import { Input } from '@tokens/ui/input';
 import { Label } from '@tokens/ui/label';
 import { Spinner } from '@tokens/ui/spinner';
-import { Textarea } from '@tokens/ui/textarea';
 import { CopyButton } from '@/components/app-ui/copy-button';
 import {
     Dialog,
@@ -24,7 +23,6 @@ import { slugAvailabilityMessage, useSlugAvailability } from './use-slug-availab
 export interface EditableList {
     slug: string;
     name: string;
-    description: string | null;
     tokenCount: number;
 }
 
@@ -35,7 +33,7 @@ interface ListSettingsDialogProps {
     /** Authenticated fetch used for the live slug-availability check. */
     fetcher: (path: string) => Promise<Response>;
     /** Sends the PATCH; resolves on success, rejects with a user-facing message. */
-    onSave: (patch: { slug: string; name: string; description: string | null }) => Promise<void>;
+    onSave: (patch: { slug: string; name: string }) => Promise<void>;
     /** Permanently deletes the list; the caller owns navigation away from it. */
     onDelete: () => Promise<void>;
 }
@@ -55,7 +53,6 @@ const SLUG_REGEX = /^[a-z][a-z0-9-]{2,62}$/;
 export function ListSettingsDialog({ list, isOpen, onClose, fetcher, onSave, onDelete }: ListSettingsDialogProps) {
     const [slug, setSlug] = useState(list?.slug ?? '');
     const [name, setName] = useState(list?.name ?? '');
-    const [description, setDescription] = useState(list?.description ?? '');
     const [isSaving, setIsSaving] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
     const [confirmDelete, setConfirmDelete] = useState(false);
@@ -65,7 +62,6 @@ export function ListSettingsDialog({ list, isOpen, onClose, fetcher, onSave, onD
         if (!isOpen || !list) return;
         setSlug(list.slug);
         setName(list.name);
-        setDescription(list.description ?? '');
         setConfirmDelete(false);
     }, [isOpen, list]);
 
@@ -83,8 +79,7 @@ export function ListSettingsDialog({ list, isOpen, onClose, fetcher, onSave, onD
 
     const busy = isSaving || isDeleting;
     const slugValid = SLUG_REGEX.test(nextSlug);
-    const dirty =
-        slugChanged || name.trim() !== list.name || (description.trim() || null) !== (list.description ?? null);
+    const dirty = slugChanged || name.trim() !== list.name;
     const availabilityMessage = slugAvailabilityMessage(availability);
     const slugBlocked = availability.state === 'unavailable';
 
@@ -100,7 +95,7 @@ export function ListSettingsDialog({ list, isOpen, onClose, fetcher, onSave, onD
         }
         setIsSaving(true);
         try {
-            await onSave({ slug: nextSlug, name: name.trim(), description: description.trim() || null });
+            await onSave({ slug: nextSlug, name: name.trim() });
             toast.success(slugChanged ? `List moved to /api/v2/lists/${nextSlug}` : 'List updated');
             onClose();
         } catch (error) {
@@ -203,21 +198,6 @@ export function ListSettingsDialog({ list, isOpen, onClose, fetcher, onSave, onD
                             )}
                         </div>
 
-                        <div className="grid gap-2">
-                            <Label htmlFor="list-settings-description" className={LABEL_CLASS}>
-                                Description (optional)
-                            </Label>
-                            <Textarea
-                                id="list-settings-description"
-                                value={description}
-                                onChange={event => setDescription(event.target.value)}
-                                placeholder="Tokens curated by the Ownership community"
-                                maxLength={200}
-                                rows={3}
-                                disabled={busy}
-                                className={FIELD_CLASS}
-                            />
-                        </div>
                     </div>
 
                     <DialogFooter className="flex !flex-col gap-2">

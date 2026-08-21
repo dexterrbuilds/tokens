@@ -58,7 +58,8 @@ function resolveCommunity(slug: string) {
             summary: {
                 slug: detail.slug,
                 name: detail.name,
-                description: detail.description,
+                // Community lists have no descriptions; curated registry lists keep theirs.
+                description: null,
                 curated: false,
                 owner: { projectId: detail.ownerProjectId },
                 tokenCount: detail.tokenCount,

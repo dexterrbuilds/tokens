@@ -13,7 +13,6 @@ import type { CloudRunError } from './errors';
 export type TokenListSummary = {
     slug: string;
     name: string;
-    description: string | null;
     ownerProjectId: string;
     tokenCount: number;
     updatedAt: number;
@@ -78,7 +77,6 @@ export type TokenListMutationResult = {
     slug: string;
     ownerProjectId: string;
     name: string;
-    description: string | null;
     status: string;
     createdAt: number;
     updatedAt: number;
@@ -94,7 +92,6 @@ export function tokenListsCreate(args: {
     ownerProjectId: string;
     slug: string;
     name: string;
-    description?: string;
     status?: string;
 }): Effect.Effect<TokenListMutationOutcome<TokenListMutationResult>, CloudRunError> {
     return cloudRunMutation('assets', 'tokenListsCreate', { ...args });
@@ -106,7 +103,6 @@ export function tokenListsUpdate(args: {
     /** Rename: the old slug stops resolving and returns to the pool. */
     newSlug?: string;
     name?: string;
-    description?: string | null;
     status?: string;
 }): Effect.Effect<TokenListMutationOutcome<TokenListMutationResult>, CloudRunError> {
     return cloudRunMutation('assets', 'tokenListsUpdate', { ...args });
