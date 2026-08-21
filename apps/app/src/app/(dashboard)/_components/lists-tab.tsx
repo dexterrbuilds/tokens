@@ -251,7 +251,7 @@ function RailAction({
                     type="button"
                     aria-label={label}
                     onClick={onClick}
-                    className="flex cursor-pointer items-center justify-center rounded-md p-0 transition-colors hover:bg-black/[0.06] dark:hover:bg-white/10"
+                    className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md p-0 transition-colors hover:bg-black/[0.06] dark:hover:bg-white/10"
                 >
                     {children}
                 </button>
