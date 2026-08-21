@@ -11,7 +11,6 @@ import {
     IconK,
     IconKeySlashFill,
     IconMagnifyingglass,
-    IconPencil,
     IconXmark,
 } from 'symbols-react';
 
@@ -33,7 +32,7 @@ import {
 } from '@/components/app-ui/dialog';
 import { EmptyState } from '@/components/global/empty-state';
 import { ListSettingsDialog } from './list-settings-dialog';
-import { TrashCanIcon } from './trash-can-icon';
+import { PencilIcon, TrashCanFillIcon } from './icons';
 import { MEMBER_GRID_TEMPLATE_COLUMNS, MemberTable } from './member-table';
 import { SelectionDock } from './selection-dock';
 import { BulkRemoveError, useListSelection } from './use-list-selection';
@@ -164,7 +163,7 @@ function ListRailRow({
                             onEdit();
                         }}
                     >
-                        <IconPencil className="size-3 fill-muted-foreground" />
+                        <PencilIcon className="size-3.5 text-muted-foreground" />
                     </IconButton>
                     <IconButton
                         label={`Delete ${list.name}`}
@@ -173,7 +172,7 @@ function ListRailRow({
                             onDeleteArm();
                         }}
                     >
-                        <TrashCanIcon className="size-3.5 text-muted-foreground" />
+                        <TrashCanFillIcon className="size-3.5 text-muted-foreground" />
                     </IconButton>
                 </div>
             )}

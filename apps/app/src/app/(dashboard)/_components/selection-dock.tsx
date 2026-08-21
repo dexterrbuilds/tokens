@@ -7,7 +7,7 @@ import { Button } from '@tokens/ui/button';
 import { Checkbox } from '@tokens/ui/checkbox';
 import { Spinner } from '@tokens/ui/spinner';
 
-import { TrashCanIcon } from './trash-can-icon';
+import { TrashCanIcon } from './icons';
 import type { ListSelection } from './use-list-selection';
 
 
