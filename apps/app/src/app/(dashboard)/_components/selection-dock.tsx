@@ -54,7 +54,9 @@ export function SelectionDock({
                         <div className="flex h-full w-full items-center justify-between px-2">
                             <div className="flex items-center gap-3">
                                 <Checkbox
-                                    className="border-white/20"
+                                    // Dark pill: the default checked fill (bg-primary) would
+                                    // disappear against zinc-800, so invert to white-on-dark.
+                                    className="border-white/25 bg-white/10 hover:border-white/40 hover:bg-white/20 focus-visible:ring-white/30 data-[state=checked]:border-white data-[state=checked]:bg-white data-[state=checked]:text-zinc-900 data-[state=checked]:hover:bg-white/90"
                                     checked={selected.size === totalCount && totalCount > 0}
                                     onCheckedChange={checked => handleSelectAll(checked === true, allMints)}
                                     aria-label="Select all tokens"
