@@ -120,7 +120,12 @@ export function WarningChips({ warnings }: { warnings: string[] }) {
     );
 }
 
-/** Admin curation table's identity cell: logo avatar with initials fallback + symbol/name stack. */
+/**
+ * Admin curation table's identity cell: logo avatar with initials fallback +
+ * symbol/name. `layout="inline"` puts the name beside the symbol on one line
+ * (shorter table rows); `"stacked"` keeps the name on its own line, which the
+ * search palette and metadata dialog want for their extra child content.
+ */
 export function TokenIdentity({
     mint,
     symbol,
@@ -128,6 +133,7 @@ export function TokenIdentity({
     logoURI,
     verified,
     size = 'row',
+    layout = 'stacked',
     children,
 }: {
     mint: string;
@@ -136,23 +142,34 @@ export function TokenIdentity({
     logoURI: string | null;
     verified?: boolean;
     size?: 'row' | 'dialog';
+    layout?: 'stacked' | 'inline';
     children?: React.ReactNode;
 }) {
-    const avatarSize = size === 'dialog' ? 'h-12 w-12' : 'h-8 w-8';
+    const avatarSize = size === 'dialog' ? 'h-12 w-12' : layout === 'inline' ? 'h-7 w-7' : 'h-8 w-8';
+    const symbolText = symbol ?? shortMint(mint);
     return (
         <div className="flex items-center gap-3 min-w-0">
             <Avatar className={`${avatarSize} shrink-0`}>
                 {logoURI ? <AvatarImage src={logoURI} alt={symbol ?? mint} /> : null}
                 <AvatarFallback className="text-[10px]">{(symbol ?? mint).slice(0, 2)}</AvatarFallback>
             </Avatar>
-            <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                    <span className="truncate font-inter-medium">{symbol ?? shortMint(mint)}</span>
+            {layout === 'inline' ? (
+                <div className="flex min-w-0 items-center gap-2">
+                    <span className="shrink-0 font-inter-medium">{symbolText}</span>
+                    <span className="truncate text-sm text-muted-foreground">{name ?? '—'}</span>
                     {verified !== undefined && <VerifiedBadge verified={verified} />}
+                    {children}
                 </div>
-                <div className="truncate text-sm text-muted-foreground">{name ?? '—'}</div>
-                {children}
-            </div>
+            ) : (
+                <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <span className="truncate font-inter-medium">{symbolText}</span>
+                        {verified !== undefined && <VerifiedBadge verified={verified} />}
+                    </div>
+                    <div className="truncate text-sm text-muted-foreground">{name ?? '—'}</div>
+                    {children}
+                </div>
+            )}
         </div>
     );
 }

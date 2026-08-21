@@ -62,6 +62,7 @@ function createMemberColumns(onRemove: (token: V2ListToken) => void): ColumnDef<
                     symbol={row.original.symbol}
                     name={row.original.name}
                     logoURI={row.original.logoURI}
+                    layout="inline"
                 />
             ),
         },
@@ -188,7 +189,7 @@ function MemberTableRowInner({
     const selectRevealTransition = useSelectRevealTransition();
 
     const className = [
-        'grid gap-4 px-4 py-2.5 border-b last:border-b-0 cursor-pointer transition-opacity duration-200',
+        'grid gap-4 px-4 py-2 border-b last:border-b-0 cursor-pointer transition-opacity duration-200',
         'hover:bg-gray-50/50 dark:hover:bg-zinc-900/30',
         hasSelected && !isSelected ? 'opacity-40' : '',
     ].join(' ');
