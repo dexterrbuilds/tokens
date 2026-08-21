@@ -198,6 +198,7 @@ function TokenHeaderLinks({
     explorerHref,
     explorerAriaLabel,
     orbHref,
+    birdeyeHref,
     showSolanaBadge,
     linkTrackingProperties,
     drawerLinkTrackingProperties,
@@ -207,6 +208,7 @@ function TokenHeaderLinks({
     explorerHref: string;
     explorerAriaLabel: string;
     orbHref: string | null;
+    birdeyeHref: string | null;
     showSolanaBadge: boolean;
     linkTrackingProperties: Record<string, unknown>;
     drawerLinkTrackingProperties: Record<string, unknown>;
@@ -263,6 +265,26 @@ function TokenHeaderLinks({
                                     Orb
                                 </a>
                             </DropdownMenuItem>
+                            {birdeyeHref && (
+                                <DropdownMenuItem asChild className="gap-2">
+                                    <a
+                                        href={birdeyeHref}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={() =>
+                                            trackEvent('external_link_clicked', {
+                                                link_type: 'birdeye',
+                                                link_url: birdeyeHref,
+                                                source: 'token_header_menu',
+                                                token_address: address,
+                                            })
+                                        }
+                                    >
+                                        <Search className="h-4 w-4" aria-hidden="true" />
+                                        Birdeye
+                                    </a>
+                                </DropdownMenuItem>
+                            )}
                         </DropdownMenuContent>
                     </DropdownMenu>
                 ) : (
@@ -356,6 +378,15 @@ function TokenHeaderLinks({
                                         trackingProperties={drawerLinkTrackingProperties}
                                     />
                                 )}
+                                {birdeyeHref && (
+                                    <LinkDrawerItem
+                                        href={birdeyeHref}
+                                        label="Birdeye"
+                                        icon={<Search className="h-4 w-4" aria-hidden="true" />}
+                                        linkType="birdeye"
+                                        trackingProperties={drawerLinkTrackingProperties}
+                                    />
+                                )}
                                 {links?.website && (
                                     <LinkDrawerItem
                                         href={links.website}
@@ -446,6 +477,10 @@ export function TokenHeader({
     const orbHref =
         showSolanaBadge && looksLikeSolanaMintAddress(address)
             ? `https://orbmarkets.io/token/${encodeURIComponent(address)}`
+            : null;
+    const birdeyeHref =
+        showSolanaBadge && looksLikeSolanaMintAddress(address)
+            ? `https://birdeye.so/solana/token/${encodeURIComponent(address)}?tab=trades&trades_layout=table`
             : null;
 
     const linkTrackingProperties = {
@@ -584,6 +619,7 @@ export function TokenHeader({
                     explorerHref={explorerHref}
                     explorerAriaLabel={explorerAriaLabel}
                     orbHref={orbHref}
+                    birdeyeHref={birdeyeHref}
                     showSolanaBadge={showSolanaBadge}
                     linkTrackingProperties={linkTrackingProperties}
                     drawerLinkTrackingProperties={drawerLinkTrackingProperties}
