@@ -190,9 +190,9 @@ export function ListSettingsDialog({ list, isOpen, onClose, fetcher, onSave, onD
                                 </p>
                             )}
                             {slugChanged && availability.state === 'checking' && (
-                                <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                     <Spinner size="sm" /> Checking availability…
-                                </p>
+                                </div>
                             )}
                             {slugChanged && slugValid && !slugBlocked && (
                                 <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2 text-xs text-muted-foreground">

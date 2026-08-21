@@ -7,6 +7,7 @@ import {
     IconCheckmark,
     IconCircleGridCrossFill,
     IconCommand,
+    IconInfoCircle,
     IconK,
     IconKeySlashFill,
     IconMagnifyingglass,
@@ -21,6 +22,7 @@ import { Input } from '@tokens/ui/input';
 import { Label } from '@tokens/ui/label';
 import { Skeleton } from '@tokens/ui/skeleton';
 import { Spinner } from '@tokens/ui/spinner';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@tokens/ui/tooltip';
 import { CopyButton } from '@/components/app-ui/copy-button';
 import {
     Dialog,
@@ -749,24 +751,26 @@ export function ListsTab(): React.JSX.Element {
 
     return (
         <div className="space-y-6 container max-w-7xl mx-auto py-16 px-6">
-            <div className="mb-6 flex items-end justify-between gap-4">
-                <div>
-                    <h1 className="text-3xl font-bold text-foreground">Token Lists</h1>
-                    <p className="text-muted-foreground">
-                        Curate lists of tokens for your community — any app can consume them via the v2 API.
-                    </p>
-                </div>
-                <Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
-                    New list
-                </Button>
+            <div className="mb-6">
+                <h1 className="text-3xl font-bold text-foreground">Token Lists</h1>
+                <p className="text-muted-foreground">
+                    Curate lists of tokens for your community — any app can consume them via the v2 API.
+                </p>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-8 items-start">
-                {/* My lists */}
+                {/* My lists — heading left, create action opposite it */}
                 <div className="space-y-4">
-                    <div>
+                    <div className="flex items-center justify-between gap-4">
                         <h4 className="font-inter-medium">My lists</h4>
-                        <p className="text-sm text-muted-foreground">Published under your project</p>
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2.5 text-xs"
+                            onClick={() => setCreateOpen(true)}
+                        >
+                            New list
+                        </Button>
                     </div>
                     <TableSection columns="grid-cols-1">
                         {myLists === null ? (
@@ -832,47 +836,48 @@ export function ListsTab(): React.JSX.Element {
                                 </div>
                             </div>
 
-                            {/* Curator-assist search (⌘K palette) */}
+                            {/* Members — title left, ⌘K search trigger opposite it */}
                             <div className="space-y-4">
-                                <div>
-                                    <h4 className="font-inter-medium">Add tokens</h4>
-                                    <p className="text-sm text-muted-foreground">
-                                        Search by symbol, name, or mint address — results are judged for impersonation,
-                                        liquidity, and provenance before you pick.
-                                    </p>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => setSearchOpen(true)}
-                                    className="group flex w-full max-w-lg items-center justify-between gap-2 rounded-lg border border-border-medium bg-white dark:bg-zinc-950/30 px-3 py-2 text-sm text-muted-foreground shadow-sm transition-colors hover:border-black/25 hover:text-foreground cursor-pointer active:scale-[0.99]"
-                                >
-                                    <div className="flex items-center gap-2">
-                                        <IconMagnifyingglass className="size-4 fill-muted-foreground transition-colors group-hover:fill-foreground" />
-                                        <span>Search tokens to add…</span>
+                                <div className="flex items-end justify-between gap-4">
+                                    <div className="flex items-center gap-1.5">
+                                        <h4 className="font-inter-medium">Tokens</h4>
+                                        <Tooltip delayDuration={300}>
+                                            <TooltipTrigger asChild>
+                                                <button
+                                                    type="button"
+                                                    aria-label="About this table"
+                                                    className="flex size-5 items-center justify-center rounded-md transition-colors hover:bg-black/[0.06] dark:hover:bg-white/10"
+                                                >
+                                                    <IconInfoCircle className="size-3.5 fill-muted-foreground" />
+                                                </button>
+                                            </TooltipTrigger>
+                                            <TooltipContent
+                                                side="top"
+                                                className="max-w-[260px] rounded-sm bg-zinc-800 px-2 py-1 dark:bg-zinc-900"
+                                            >
+                                                <p className="text-xs text-white">
+                                                    What consumers of this list receive, in rank order — click a row for
+                                                    metadata.
+                                                </p>
+                                            </TooltipContent>
+                                        </Tooltip>
                                     </div>
-                                    <div className="flex items-center gap-1">
-                                        <kbd className="rounded-sm bg-gray-100 dark:bg-zinc-800 p-1.5">
-                                            <IconCommand className="size-2 fill-muted-foreground" />
-                                        </kbd>
-                                        <kbd className="rounded-sm bg-gray-100 dark:bg-zinc-800 p-1.5">
-                                            <IconK className="size-2 fill-muted-foreground" />
-                                        </kbd>
-                                    </div>
-                                </button>
-                            </div>
-
-                            {/* Members */}
-                            <div className="space-y-4">
-                                <div>
-                                    <h4 className="font-inter-medium">
-                                        Tokens{' '}
-                                        <span className="text-muted-foreground font-inter">
-                                            ({tokens?.length ?? selectedList.tokenCount})
+                                    <button
+                                        type="button"
+                                        onClick={() => setSearchOpen(true)}
+                                        className="group flex shrink-0 cursor-pointer items-center gap-2 rounded-lg border border-border-medium bg-white px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm transition-colors hover:border-black/25 hover:text-foreground active:scale-[0.99] dark:bg-zinc-950/30"
+                                    >
+                                        <IconMagnifyingglass className="size-3 fill-muted-foreground transition-colors group-hover:fill-foreground" />
+                                        <span>Add tokens</span>
+                                        <span className="flex items-center gap-0.5">
+                                            <kbd className="rounded-sm bg-gray-100 p-1 dark:bg-zinc-800">
+                                                <IconCommand className="size-2 fill-muted-foreground" />
+                                            </kbd>
+                                            <kbd className="rounded-sm bg-gray-100 p-1 dark:bg-zinc-800">
+                                                <IconK className="size-2 fill-muted-foreground" />
+                                            </kbd>
                                         </span>
-                                    </h4>
-                                    <p className="text-sm text-muted-foreground">
-                                        What consumers of this list receive, in rank order — click a row for metadata
-                                    </p>
+                                    </button>
                                 </div>
                                 {tokens === null ? (
                                     <TableSection columns={MEMBER_COLUMNS}>
@@ -1059,7 +1064,7 @@ export function ListsTab(): React.JSX.Element {
                                     {createSlugMessage}
                                 </p>
                             ) : (
-                                <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                     {createSlugAvailability.state === 'checking' && <Spinner size="sm" />}
                                     {createSlugAvailability.state === 'available' && (
                                         <IconCheckmark className="size-3 fill-emerald-600" />
@@ -1069,7 +1074,7 @@ export function ListsTab(): React.JSX.Element {
                                         /api/v2/lists/{createSlug.trim() || '{slug}'}
                                     </code>
                                     {createSlugAvailability.state === 'available' && ' — available'}
-                                </p>
+                                </div>
                             )}
                         </div>
                         <div className="space-y-1.5">
