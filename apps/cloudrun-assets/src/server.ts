@@ -77,6 +77,7 @@ import {
     addMembersBatch as tokenListsAddMembersBatch,
     archiveList as tokenListsArchiveList,
     createList as tokenListsCreateList,
+    deleteList as tokenListsDeleteList,
     removeMember as tokenListsRemoveMember,
     updateList as tokenListsUpdateList,
     upsertMember as tokenListsUpsertMember,
@@ -456,6 +457,7 @@ export function createApp(deps: ServerDeps) {
     mutations.tokenListsCreate = args => tokenListsCreateList(deps.tokenListsMutationsDeps, args);
     mutations.tokenListsUpdate = args => tokenListsUpdateList(deps.tokenListsMutationsDeps, args);
     mutations.tokenListsArchive = args => tokenListsArchiveList(deps.tokenListsMutationsDeps, args);
+    mutations.tokenListsDelete = args => tokenListsDeleteList(deps.tokenListsMutationsDeps, args);
     mutations.tokenListsUpsertMember = args => tokenListsUpsertMember(deps.tokenListsMutationsDeps, args);
     mutations.tokenListsRemoveMember = args => tokenListsRemoveMember(deps.tokenListsMutationsDeps, args);
     mutations.tokenListsAddMembersBatch = args => tokenListsAddMembersBatch(deps.tokenListsMutationsDeps, args);

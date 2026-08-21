@@ -43,9 +43,7 @@ export function tokenListsList(args: {
     return cloudRunQuery<TokenListSummary[]>('assets', 'tokenListsList', { ...args }, { maxRetries: 1 });
 }
 
-export function tokenListsGetBySlug(args: {
-    slug: string;
-}): Effect.Effect<TokenListDetail | null, CloudRunError> {
+export function tokenListsGetBySlug(args: { slug: string }): Effect.Effect<TokenListDetail | null, CloudRunError> {
     return cloudRunQuery<TokenListDetail | null>('assets', 'tokenListsGetBySlug', { ...args }, { maxRetries: 1 });
 }
 
@@ -73,9 +71,7 @@ export type TokenListMutationErrorCode =
     | 'unknown_mint'
     | 'batch_too_large';
 
-export type TokenListMutationOutcome<T> =
-    | { ok: true; value: T }
-    | { ok: false; error: TokenListMutationErrorCode };
+export type TokenListMutationOutcome<T> = { ok: true; value: T } | { ok: false; error: TokenListMutationErrorCode };
 
 export type TokenListMutationResult = {
     id: string;
@@ -107,6 +103,8 @@ export function tokenListsCreate(args: {
 export function tokenListsUpdate(args: {
     ownerProjectId: string;
     slug: string;
+    /** Rename: the old slug stops resolving and returns to the pool. */
+    newSlug?: string;
     name?: string;
     description?: string | null;
     status?: string;
@@ -114,11 +112,20 @@ export function tokenListsUpdate(args: {
     return cloudRunMutation('assets', 'tokenListsUpdate', { ...args });
 }
 
+/** Soft archive: keeps the row and the slug, hides the list from reads. */
 export function tokenListsArchive(args: {
     ownerProjectId: string;
     slug: string;
 }): Effect.Effect<TokenListMutationOutcome<TokenListMutationResult>, CloudRunError> {
     return cloudRunMutation('assets', 'tokenListsArchive', { ...args });
+}
+
+/** Hard delete: drops the list and its members, freeing the slug for reuse. */
+export function tokenListsDelete(args: {
+    ownerProjectId: string;
+    slug: string;
+}): Effect.Effect<TokenListMutationOutcome<TokenListMutationResult>, CloudRunError> {
+    return cloudRunMutation('assets', 'tokenListsDelete', { ...args });
 }
 
 export function tokenListsUpsertMember(args: {

@@ -3405,15 +3405,27 @@ export function makePostgresTokenListsMutationsRepo(sql: Sql): TokenListsMutatio
             // write path and already verified ownership, so no lost-update risk
             // worth a FOR UPDATE here.
             const current = await getRowById(listId);
-            await sql`
-                UPDATE token_lists SET
-                    name = ${patch.name !== undefined ? patch.name : current.name},
-                    description = ${patch.description !== undefined ? patch.description : current.description},
-                    status = ${patch.status !== undefined ? patch.status : current.status},
-                    updated_at = ${new Date(nowMs)}
-                WHERE id = ${listId}
-            `;
+            try {
+                await sql`
+                    UPDATE token_lists SET
+                        slug = ${patch.slug !== undefined ? patch.slug : current.slug},
+                        name = ${patch.name !== undefined ? patch.name : current.name},
+                        description = ${patch.description !== undefined ? patch.description : current.description},
+                        status = ${patch.status !== undefined ? patch.status : current.status},
+                        updated_at = ${new Date(nowMs)}
+                    WHERE id = ${listId}
+                `;
+            } catch (err) {
+                if ((err as { code?: string }).code === UNIQUE_VIOLATION) {
+                    throw new SlugConflictError(patch.slug ?? current.slug);
+                }
+                throw err;
+            }
             return getRowById(listId);
+        },
+        async deleteList(listId) {
+            // token_list_members.list_id is ON DELETE CASCADE, so members go with it.
+            await sql`DELETE FROM token_lists WHERE id = ${listId}`;
         },
         async upsertMember(args) {
             const rank = args.rank;

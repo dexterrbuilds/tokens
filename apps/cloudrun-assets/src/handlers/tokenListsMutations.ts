@@ -18,7 +18,7 @@ import type { BirdeyeOverview } from './crons';
 export const TOKEN_LIST_SLUG_REGEX = /^[a-z][a-z0-9-]{2,62}$/;
 
 /** Route segments + derived ids that must never become community list slugs. */
-const STATIC_RESERVED_SLUGS = new Set(['all', 'lists', 'curated', 'tokens', 'search-tokens']);
+const STATIC_RESERVED_SLUGS = new Set(['all', 'lists', 'curated', 'tokens', 'search-tokens', 'check-slug']);
 
 export function isReservedTokenListSlug(slug: string): boolean {
     if (STATIC_RESERVED_SLUGS.has(slug)) return true;
@@ -64,11 +64,14 @@ export interface TokenListsMutationsRepo {
         status: TokenListStatus;
         nowMs: number;
     }): Promise<TokenListMutationRow>;
+    /** Throws SlugConflictError when a slug change collides with a live list. */
     updateList(
         listId: string,
-        patch: { name?: string; description?: string | null; status?: TokenListStatus },
+        patch: { slug?: string; name?: string; description?: string | null; status?: TokenListStatus },
         nowMs: number,
     ): Promise<TokenListMutationRow>;
+    /** Hard delete — members cascade, and the slug goes back to the pool. */
+    deleteList(listId: string): Promise<void>;
     /** Upsert on (list_id, mint); missing rank appends after the current max. Touches the parent list. */
     upsertMember(args: {
         listId: string;
@@ -215,6 +218,11 @@ export async function createList(
     }
 }
 
+/**
+ * Metadata update, including renaming the slug via `newSlug`. A rename is a
+ * clean cut: the old slug stops resolving immediately and returns to the pool,
+ * so consumers pinned to the old path 404. Callers are expected to warn.
+ */
 export async function updateList(
     deps: TokenListsMutationsDeps,
     args: unknown,
@@ -222,24 +230,42 @@ export async function updateList(
     const a = asObject(args);
     const ownerProjectId = requireString(a, 'ownerProjectId');
     const slug = requireString(a, 'slug');
+    const newSlug = optionalString(a, 'newSlug')?.trim().toLowerCase();
     const name = optionalString(a, 'name');
     const description = optionalString(a, 'description');
     const status = optionalStatus(a);
     const clearDescription = a.description === null;
 
+    if (newSlug !== undefined && newSlug.length > 0) {
+        if (!TOKEN_LIST_SLUG_REGEX.test(newSlug)) return { ok: false, error: 'invalid_slug' };
+        if (isReservedTokenListSlug(newSlug)) return { ok: false, error: 'reserved_slug' };
+    }
+
     const owned = await requireOwnedList(deps, slug, ownerProjectId);
     if (!owned.ok) return owned;
 
-    const patch: { name?: string; description?: string | null; status?: TokenListStatus } = {};
+    const patch: { slug?: string; name?: string; description?: string | null; status?: TokenListStatus } = {};
+    // A no-op rename must not reach the unique index and self-conflict.
+    if (newSlug !== undefined && newSlug.length > 0 && newSlug !== owned.value.slug) patch.slug = newSlug;
     if (name !== undefined) patch.name = name;
     if (description !== undefined) patch.description = description;
     else if (clearDescription) patch.description = null;
     if (status !== undefined) patch.status = status;
 
-    const row = await deps.repo.updateList(owned.value.id, patch, deps.now());
-    return { ok: true, value: listResult(row) };
+    try {
+        const row = await deps.repo.updateList(owned.value.id, patch, deps.now());
+        return { ok: true, value: listResult(row) };
+    } catch (err) {
+        if (err instanceof SlugConflictError) return { ok: false, error: 'slug_conflict' };
+        throw err;
+    }
 }
 
+/**
+ * Soft archive: the list keeps its row and its slug, and drops out of
+ * discovery and public reads. Equivalent to `updateList({ status: 'archived' })`
+ * — kept as its own RPC for the API surface that predates slug reuse.
+ */
 export async function archiveList(
     deps: TokenListsMutationsDeps,
     args: unknown,
@@ -256,14 +282,31 @@ export async function archiveList(
 }
 
 /**
+ * Hard delete: drops the row and (by FK cascade) its members, releasing the
+ * slug for anyone to claim again. Irreversible — the API route is the only
+ * caller and it gates on ownership plus an explicit client confirmation.
+ */
+export async function deleteList(
+    deps: TokenListsMutationsDeps,
+    args: unknown,
+): Promise<MutationOutcome<TokenListResult>> {
+    const a = asObject(args);
+    const ownerProjectId = requireString(a, 'ownerProjectId');
+    const slug = requireString(a, 'slug');
+
+    const owned = await requireOwnedList(deps, slug, ownerProjectId);
+    if (!owned.ok) return owned;
+
+    await deps.repo.deleteList(owned.value.id);
+    return { ok: true, value: listResult(owned.value) };
+}
+
+/**
  * D4 resolution chain: registry variant → tokens table → Birdeye overview.
  * Registry/tokens-table mints hydrate at read time, so no snapshot is stored;
  * Birdeye-only mints snapshot metadata into the member row (the row is the cache).
  */
-async function resolveMint(
-    deps: TokenListsMutationsDeps,
-    mint: string,
-): Promise<MutationOutcome<MemberResult>> {
+async function resolveMint(deps: TokenListsMutationsDeps, mint: string): Promise<MutationOutcome<MemberResult>> {
     if (!SOLANA_MINT_REGEX.test(mint)) return { ok: false, error: 'invalid_mint' };
 
     if (await deps.repo.hasActiveVariantForMint(mint)) {

@@ -3468,6 +3468,9 @@ function emptyTokenListsMutationsDeps(): TokenListsMutationsDeps {
             async updateList() {
                 throw new Error('not implemented');
             },
+            async deleteList() {
+                throw new Error('not implemented');
+            },
             async upsertMember() {},
             async removeMember() {
                 return false;

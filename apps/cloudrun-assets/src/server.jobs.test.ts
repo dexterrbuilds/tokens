@@ -110,6 +110,7 @@ const noopTokenListsMutationsDeps: TokenListsMutationsDeps = {
         async getListBySlug() { return null; },
         async insertList() { throw new Error('not implemented'); },
         async updateList() { throw new Error('not implemented'); },
+        async deleteList() { throw new Error('not implemented'); },
         async upsertMember() {},
         async removeMember() { return false; },
         async hasActiveVariantForMint() { return false; },

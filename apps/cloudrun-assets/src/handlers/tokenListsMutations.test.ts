@@ -7,6 +7,7 @@ import {
     addMembersBatch,
     archiveList,
     createList,
+    deleteList,
     isReservedTokenListSlug,
     removeMember,
     updateList,
@@ -47,6 +48,7 @@ function makeDeps(
                 status: args.status,
             }),
             updateList: async (_listId, patch) => ({ ...LIST_ROW, ...patch }),
+            deleteList: async () => {},
             upsertMember: async () => {},
             removeMember: async () => true,
             hasActiveVariantForMint: async () => true,
@@ -61,7 +63,7 @@ function makeDeps(
 
 describe('isReservedTokenListSlug', () => {
     it('reserves curated ids, their aliases, and route segments', () => {
-        for (const slug of ['majors', 'stables', 'xstocks', 'all', 'lists', 'tokens', 'search-tokens']) {
+        for (const slug of ['majors', 'stables', 'xstocks', 'all', 'lists', 'tokens', 'search-tokens', 'check-slug']) {
             expect(isReservedTokenListSlug(slug)).toBe(true);
         }
         expect(isReservedTokenListSlug('ownership-core')).toBe(false);
@@ -111,9 +113,16 @@ describe('createList', () => {
 describe('ownership enforcement', () => {
     it('rejects a non-owner on every list-scoped mutation', async () => {
         const deps = makeDeps();
-        const args = { ownerProjectId: 'intruder', slug: 'ownership-core', mint: USDC_MINT, mints: [USDC_MINT], name: 'x' };
+        const args = {
+            ownerProjectId: 'intruder',
+            slug: 'ownership-core',
+            mint: USDC_MINT,
+            mints: [USDC_MINT],
+            name: 'x',
+        };
         expect(await updateList(deps, args)).toEqual({ ok: false, error: 'forbidden' });
         expect(await archiveList(deps, args)).toEqual({ ok: false, error: 'forbidden' });
+        expect(await deleteList(deps, args)).toEqual({ ok: false, error: 'forbidden' });
         expect(await upsertMember(deps, args)).toEqual({ ok: false, error: 'forbidden' });
         expect(await removeMember(deps, args)).toEqual({ ok: false, error: 'forbidden' });
         expect(await addMembersBatch(deps, args)).toEqual({ ok: false, error: 'forbidden' });
@@ -122,6 +131,70 @@ describe('ownership enforcement', () => {
     it('reports not_found for unknown lists', async () => {
         const deps = makeDeps({ getListBySlug: async () => null });
         expect(await archiveList(deps, { ownerProjectId: 'p', slug: 'nope' })).toEqual({
+            ok: false,
+            error: 'not_found',
+        });
+    });
+});
+
+describe('updateList slug rename', () => {
+    it('renames via newSlug, lowercasing the target', async () => {
+        const result = await updateList(makeDeps(), {
+            ownerProjectId: 'proj_1',
+            slug: 'ownership-core',
+            newSlug: 'Ownership-Majors',
+        });
+        expect(result).toMatchObject({ ok: true, value: { slug: 'ownership-majors' } });
+    });
+
+    it('rejects malformed and reserved targets', async () => {
+        const base = { ownerProjectId: 'proj_1', slug: 'ownership-core' };
+        expect(await updateList(makeDeps(), { ...base, newSlug: '-nope' })).toEqual({
+            ok: false,
+            error: 'invalid_slug',
+        });
+        expect(await updateList(makeDeps(), { ...base, newSlug: 'stables' })).toEqual({
+            ok: false,
+            error: 'reserved_slug',
+        });
+    });
+
+    it('maps a colliding rename to slug_conflict', async () => {
+        const deps = makeDeps({
+            updateList: async () => {
+                throw new SlugConflictError('taken-slug');
+            },
+        });
+        expect(
+            await updateList(deps, { ownerProjectId: 'proj_1', slug: 'ownership-core', newSlug: 'taken-slug' }),
+        ).toEqual({ ok: false, error: 'slug_conflict' });
+    });
+
+    it('does not send a self-rename to the unique index', async () => {
+        let patched: unknown = null;
+        const deps = makeDeps({
+            updateList: async (_listId, patch) => {
+                patched = patch;
+                return { ...LIST_ROW, ...patch };
+            },
+        });
+        await updateList(deps, { ownerProjectId: 'proj_1', slug: 'ownership-core', newSlug: 'ownership-core' });
+        expect(patched).toEqual({});
+    });
+});
+
+describe('deleteList', () => {
+    it('hard-deletes the owned list and returns its final shape', async () => {
+        const deleted: string[] = [];
+        const deps = makeDeps({ deleteList: async listId => void deleted.push(listId) });
+        const result = await deleteList(deps, { ownerProjectId: 'proj_1', slug: 'ownership-core' });
+        expect(deleted).toEqual(['tl_1']);
+        expect(result).toMatchObject({ ok: true, value: { slug: 'ownership-core' } });
+    });
+
+    it('reports not_found for unknown lists', async () => {
+        const deps = makeDeps({ getListBySlug: async () => null });
+        expect(await deleteList(deps, { ownerProjectId: 'p', slug: 'nope' })).toEqual({
             ok: false,
             error: 'not_found',
         });
@@ -183,9 +256,9 @@ describe('upsertMember mint resolution', () => {
             hasActiveVariantForMint: async () => false,
             hasTokenForAddress: async () => false,
         });
-        expect(
-            await upsertMember(deps, { ownerProjectId: 'proj_1', slug: 'ownership-core', mint: MEME_MINT }),
-        ).toEqual({ ok: false, error: 'unknown_mint' });
+        expect(await upsertMember(deps, { ownerProjectId: 'proj_1', slug: 'ownership-core', mint: MEME_MINT })).toEqual(
+            { ok: false, error: 'unknown_mint' },
+        );
         expect(
             await upsertMember(deps, { ownerProjectId: 'proj_1', slug: 'ownership-core', mint: 'not-a-mint!' }),
         ).toEqual({ ok: false, error: 'invalid_mint' });
@@ -194,13 +267,13 @@ describe('upsertMember mint resolution', () => {
 
 describe('addMembersBatch', () => {
     it('caps the batch size', async () => {
-        const mints = Array.from(
-            { length: MEMBER_BATCH_CAP + 1 },
-            (_, i) => `M${String(i).padStart(3, 'x')}`.padEnd(40, 'z'),
+        const mints = Array.from({ length: MEMBER_BATCH_CAP + 1 }, (_, i) =>
+            `M${String(i).padStart(3, 'x')}`.padEnd(40, 'z'),
         );
-        expect(
-            await addMembersBatch(makeDeps(), { ownerProjectId: 'proj_1', slug: 'ownership-core', mints }),
-        ).toEqual({ ok: false, error: 'batch_too_large' });
+        expect(await addMembersBatch(makeDeps(), { ownerProjectId: 'proj_1', slug: 'ownership-core', mints })).toEqual({
+            ok: false,
+            error: 'batch_too_large',
+        });
     });
 
     it('partitions per-mint successes and failures', async () => {
@@ -229,8 +302,8 @@ describe('addMembersBatch', () => {
 describe('removeMember', () => {
     it('reports not_found when the mint was not a member', async () => {
         const deps = makeDeps({ removeMember: async () => false });
-        expect(
-            await removeMember(deps, { ownerProjectId: 'proj_1', slug: 'ownership-core', mint: USDC_MINT }),
-        ).toEqual({ ok: false, error: 'not_found' });
+        expect(await removeMember(deps, { ownerProjectId: 'proj_1', slug: 'ownership-core', mint: USDC_MINT })).toEqual(
+            { ok: false, error: 'not_found' },
+        );
     });
 });

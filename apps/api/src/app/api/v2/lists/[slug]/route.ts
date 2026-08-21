@@ -2,13 +2,8 @@ import { Effect, Schema } from 'effect';
 
 import { route, type PlatformAuthContext } from '@/effect/next-route';
 import { withStaleFallback } from '@/effect/stale-response-cache';
-import {
-    NotFoundError,
-    decodeLimit,
-    decodeOffset,
-    decodeUnknownOrBadRequest,
-} from '@tokens/effect';
-import { tokenListsArchive, tokenListsGetBySlug, tokenListsGetMembers, tokenListsUpdate } from '@/lib/cloudrun';
+import { NotFoundError, decodeLimit, decodeOffset, decodeUnknownOrBadRequest } from '@tokens/effect';
+import { tokenListsDelete, tokenListsGetBySlug, tokenListsGetMembers, tokenListsUpdate } from '@/lib/cloudrun';
 import { getCuratedTokenList } from '@tokens/asset-registry/compat';
 
 import { getEffectiveCuratedAddresses } from '../../../_curated-addresses';
@@ -91,12 +86,18 @@ export const GET = route(
 );
 
 const patchBodySchema = Schema.Struct({
+    /** Rename. The old path stops resolving immediately and frees the slug. */
+    slug: Schema.optional(Schema.String),
     name: Schema.optional(Schema.String),
     description: Schema.optional(Schema.NullOr(Schema.String)),
     status: Schema.optional(Schema.Literals(['draft', 'published', 'archived'])),
 });
 
-/** PATCH /api/v2/lists/{slug} — update metadata/status of an owned community list. */
+/**
+ * PATCH /api/v2/lists/{slug} — update metadata, status, or slug of an owned
+ * community list. Renaming is a clean cut: consumers pinned to the old path
+ * get a 404 once it lands, and the old slug is immediately claimable again.
+ */
 export const PATCH = route(
     (request: Request, ctx: RouteCtx) =>
         Effect.gen(function* () {
@@ -107,6 +108,7 @@ export const PATCH = route(
             const outcome = yield* tokenListsUpdate({
                 ownerProjectId: ctx.platformAuth.projectId,
                 slug: slug.trim().toLowerCase(),
+                ...(body.slug !== undefined ? { newSlug: body.slug.trim().toLowerCase() } : {}),
                 ...(body.name !== undefined ? { name: body.name } : {}),
                 ...(body.description !== undefined ? { description: body.description } : {}),
                 ...(body.status !== undefined ? { status: body.status } : {}),
@@ -117,12 +119,16 @@ export const PATCH = route(
     { platform: { requiredScopes: ['lists:write'] } },
 );
 
-/** DELETE /api/v2/lists/{slug} — archive (no hard delete): drops out of discovery and reads. */
+/**
+ * DELETE /api/v2/lists/{slug} — permanently deletes an owned community list
+ * and its members, releasing the slug for anyone to claim again. Irreversible;
+ * `PATCH { status: 'archived' }` is the reversible hide-it option.
+ */
 export const DELETE = route(
     (_request: Request, ctx: RouteCtx) =>
         Effect.gen(function* () {
             const { slug } = yield* Effect.tryPromise(() => ctx.params);
-            const outcome = yield* tokenListsArchive({
+            const outcome = yield* tokenListsDelete({
                 ownerProjectId: ctx.platformAuth.projectId,
                 slug: slug.trim().toLowerCase(),
             });

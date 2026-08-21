@@ -45,15 +45,23 @@ curl -s -X POST "$API/api/v2/lists" \
 ```
 
 Expected: `200` with the list body. A read-only key gets `403`. Slug rules:
-`^[a-z][a-z0-9-]{2,62}$`, globally unique, curated ids + `all`/`lists`/`curated`/`tokens`/
-`search-tokens` reserved. Ask partners to prefix slugs with their community name.
+`^[a-z][a-z0-9-]{2,62}$`, unique among existing lists, curated ids +
+`all`/`lists`/`curated`/`tokens`/`search-tokens` reserved. Ask partners to prefix slugs
+with their community name.
+
+Slugs are not permanent: `PATCH /v2/lists/{slug}` accepts a new `slug`, and a deleted
+list's slug returns to the pool for anyone to claim. Renaming is a clean cut — the old
+path 404s the moment it lands, so warn partners before they move a live list.
 
 ## Notes
 
 - Ownership is by **project**: any key on the same project (with the scope) can manage the
   project's lists. Revoking a key does not orphan lists.
-- `DELETE /v2/lists/{slug}` archives; there is no hard delete in the MVP. Emergency
-  takedown = archive via the admin app's Lists page (or SQL `UPDATE token_lists SET
-  status='archived'`).
+- `DELETE /v2/lists/{slug}` hard-deletes: the row and its members go, and the slug is
+  immediately claimable by any project. Irreversible.
+- `PATCH /v2/lists/{slug}` with `{"status":"archived"}` is the reversible option — the list
+  drops out of discovery and reads but keeps its row and its slug. Emergency takedown =
+  archive via the admin app's Lists page (or SQL `UPDATE token_lists SET
+  status='archived'`), which leaves the evidence in place.
 - Lists may contain mints outside the registry; they appear with `verified: false` in all
   read responses.

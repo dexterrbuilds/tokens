@@ -3,9 +3,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import { toast } from 'sonner';
-import { IconCircleFill, IconCircleGridCrossFill, IconTrashFill } from 'symbols-react';
+import {
+    IconCheckmark,
+    IconCircleGridCrossFill,
+    IconCommand,
+    IconK,
+    IconKeySlashFill,
+    IconMagnifyingglass,
+    IconPencil,
+    IconTrashFill,
+    IconXmark,
+} from 'symbols-react';
 
-import { Avatar, AvatarFallback, AvatarImage } from '@tokens/ui/avatar';
 import { Badge } from '@tokens/ui/badge';
 import { Button } from '@tokens/ui/button';
 import { Input } from '@tokens/ui/input';
@@ -22,7 +31,24 @@ import {
     DialogTitle,
 } from '@/components/app-ui/dialog';
 import { EmptyState } from '@/components/global/empty-state';
+import { ListSettingsDialog } from './list-settings-dialog';
+import {
+    SectionHeading,
+    SummaryField,
+    TokenIdentity,
+    VerifiedBadge,
+    WarningChips,
+    formatUsd,
+    formatValue,
+    humanize,
+    shortMint,
+    type SearchResult,
+    type V2ListToken,
+} from './token-bits';
+import { TokenSearchCommand } from './token-search-command';
+import { slugAvailabilityMessage, useSlugAvailability } from './use-slug-availability';
 import { useProjectApiKeys } from '@/contexts/project-api-keys';
+import { useDashboardTab } from '@/hooks/use-dashboard-tab';
 
 /**
  * Community lists management: a first-party client of the public /api/v2/lists
@@ -42,70 +68,7 @@ interface V2ListSummary {
     updatedAt: number | null;
 }
 
-interface V2ListToken {
-    mint: string;
-    symbol: string | null;
-    name: string | null;
-    logoURI: string | null;
-    decimals: number | null;
-    verified: boolean;
-    rank: number;
-    note?: string;
-    addedAt?: number;
-}
-
-interface SearchResult {
-    mint: string;
-    claims: {
-        symbol: string | null;
-        name: string | null;
-        attestations: Array<{ code: string; detail: string }>;
-    };
-    market: {
-        price: number | null;
-        liquidityUsd: number | null;
-        volume24hUsd: number | null;
-        marketCapUsd: number | null;
-        priceChange24hPercent: number | null;
-        holderCount: number | null;
-        decimals: number | null;
-        logoURI: string | null;
-        dataAsOf: number | null;
-    };
-    score: { total: number; components: Record<string, number> };
-    reasons: string[];
-    warnings: string[];
-    badges: string[];
-    verified: boolean;
-    inLists: string[];
-}
-
-interface SuppressedResult {
-    mint: string;
-    symbol: string | null;
-    name: string | null;
-    suppressedBy: string[];
-    warnings: string[];
-}
-
 type WriteAccess = 'checking' | 'granted' | 'denied';
-
-function shortMint(mint: string): string {
-    return `${mint.slice(0, 4)}…${mint.slice(-4)}`;
-}
-
-function formatUsd(value: number | null): string {
-    if (value === null || !Number.isFinite(value)) return '—';
-    if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
-    if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
-    return `$${value.toFixed(2)}`;
-}
-
-/** Admin app's formatValue: '—' for null/non-finite, locale string otherwise. */
-function formatValue(value: number | null | undefined): string {
-    if (value === null || value === undefined || !Number.isFinite(value)) return '—';
-    return value.toLocaleString(undefined, { maximumFractionDigits: value >= 1 ? 2 : 8 });
-}
 
 function formatDate(ms: number | undefined | null): string {
     if (!ms) return '—';
@@ -118,87 +81,6 @@ function slugify(value: string): string {
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '')
         .slice(0, 63);
-}
-
-function humanize(code: string): string {
-    return code.replaceAll('_', ' ');
-}
-
-function VerifiedBadge({ verified }: { verified: boolean }) {
-    return (
-        <Badge variant={verified ? 'success' : 'secondary'} className="flex items-center gap-1.5 px-1.5">
-            <IconCircleFill className={`w-1.5 h-1.5 rounded-full ${verified ? 'fill-emerald-500' : 'fill-zinc-400'}`} />
-            {verified ? 'Verified' : 'Unverified'}
-        </Badge>
-    );
-}
-
-function WarningChips({ warnings }: { warnings: string[] }) {
-    if (warnings.length === 0) return null;
-    return (
-        <span className="flex flex-wrap gap-1">
-            {warnings.map(warning => (
-                <Badge key={warning} variant="warning" className="px-1.5 text-[10px]">
-                    {humanize(warning)}
-                </Badge>
-            ))}
-        </span>
-    );
-}
-
-/** Admin curation table's identity cell: logo avatar with initials fallback + symbol/name stack. */
-function TokenIdentity({
-    mint,
-    symbol,
-    name,
-    logoURI,
-    verified,
-    size = 'row',
-    children,
-}: {
-    mint: string;
-    symbol: string | null;
-    name: string | null;
-    logoURI: string | null;
-    verified?: boolean;
-    size?: 'row' | 'dialog';
-    children?: React.ReactNode;
-}) {
-    const avatarSize = size === 'dialog' ? 'h-12 w-12' : 'h-8 w-8';
-    return (
-        <div className="flex items-center gap-3 min-w-0">
-            <Avatar className={`${avatarSize} shrink-0`}>
-                {logoURI ? <AvatarImage src={logoURI} alt={symbol ?? mint} /> : null}
-                <AvatarFallback className="text-[10px]">{(symbol ?? mint).slice(0, 2)}</AvatarFallback>
-            </Avatar>
-            <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                    <span className="truncate font-inter-medium">{symbol ?? shortMint(mint)}</span>
-                    {verified !== undefined && <VerifiedBadge verified={verified} />}
-                </div>
-                <div className="truncate text-sm text-muted-foreground">{name ?? '—'}</div>
-                {children}
-            </div>
-        </div>
-    );
-}
-
-/** Admin add-variant-dialog's SummaryField: eyebrow label + value card. */
-function SummaryField({ label, value }: { label: string; value: string }) {
-    return (
-        <div className="min-w-0 rounded-md border border-border-extra-light bg-white dark:bg-zinc-950/30 px-3 py-2">
-            <div className="text-[11px] font-inter-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                {label}
-            </div>
-            <div className="mt-1 truncate text-sm font-inter-medium text-foreground">{value}</div>
-        </div>
-    );
-}
-
-function SectionHeading({ children }: { children: React.ReactNode }) {
-    return (
-        <div className="text-xs font-inter-semibold uppercase tracking-[0.08em] text-muted-foreground">{children}</div>
-    );
 }
 
 /** Dashboard table chrome (shared with the API-keys tables): gray gutter, uppercase header, white card. */
@@ -229,7 +111,130 @@ function TableSection({
     );
 }
 
-const SEARCH_COLUMNS = 'grid-cols-[minmax(0,1.6fr)_minmax(0,0.4fr)_minmax(0,0.55fr)_minmax(0,0.7fr)_72px]';
+/**
+ * One row of the list rail. Selection is the whole-row target; settings and
+ * delete ride on hover-revealed icon buttons at the trailing edge so the
+ * resting state stays name + count. Delete is two-step — arming swaps the
+ * actions for an explicit confirm, since it is a hard delete with no undo.
+ */
+function ListRailRow({
+    list,
+    selected,
+    onSelect,
+    onEdit,
+    confirmingDelete,
+    deleting,
+    onDeleteArm,
+    onDeleteCancel,
+    onDeleteConfirm,
+}: {
+    list: V2ListSummary;
+    selected: boolean;
+    onSelect: () => void;
+    onEdit: () => void;
+    confirmingDelete: boolean;
+    deleting: boolean;
+    onDeleteArm: () => void;
+    onDeleteCancel: () => void;
+    onDeleteConfirm: () => void;
+}) {
+    return (
+        <div
+            role="button"
+            tabIndex={0}
+            onClick={onSelect}
+            onKeyDown={event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onSelect();
+                }
+            }}
+            className={`group flex items-center gap-2 border-b px-3 py-2.5 text-left last:border-b-0 transition-colors ${
+                selected ? 'bg-gray-100/80 dark:bg-zinc-900/60' : 'hover:bg-gray-50/50 dark:hover:bg-zinc-900/30'
+            }`}
+        >
+            <span className="truncate text-sm font-inter-medium">{list.name}</span>
+            <Badge variant="secondary" className="shrink-0 px-1.5 font-berkeley-mono text-[10px]">
+                {list.tokenCount}
+            </Badge>
+
+            {confirmingDelete ? (
+                <div className="ml-auto flex shrink-0 items-center gap-1">
+                    <Button
+                        variant="destructive"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        disabled={deleting}
+                        onClick={event => {
+                            event.stopPropagation();
+                            onDeleteConfirm();
+                        }}
+                    >
+                        {deleting ? <Spinner size="sm" /> : 'Delete'}
+                    </Button>
+                    <IconButton
+                        label="Cancel delete"
+                        disabled={deleting}
+                        onClick={event => {
+                            event.stopPropagation();
+                            onDeleteCancel();
+                        }}
+                    >
+                        <IconXmark className="size-3 fill-muted-foreground" />
+                    </IconButton>
+                </div>
+            ) : (
+                <div className="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                    <IconButton
+                        label={`Edit ${list.name}`}
+                        onClick={event => {
+                            event.stopPropagation();
+                            onEdit();
+                        }}
+                    >
+                        <IconPencil className="size-3 fill-muted-foreground" />
+                    </IconButton>
+                    <IconButton
+                        label={`Delete ${list.name}`}
+                        onClick={event => {
+                            event.stopPropagation();
+                            onDeleteArm();
+                        }}
+                    >
+                        <IconTrashFill className="size-3 fill-muted-foreground" />
+                    </IconButton>
+                </div>
+            )}
+        </div>
+    );
+}
+
+/** Square hover affordance used by the list rail — icon-only, accessible name via aria-label. */
+function IconButton({
+    label,
+    disabled,
+    onClick,
+    children,
+}: {
+    label: string;
+    disabled?: boolean;
+    onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
+    children: React.ReactNode;
+}) {
+    return (
+        <button
+            type="button"
+            aria-label={label}
+            title={label}
+            disabled={disabled}
+            onClick={onClick}
+            className="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-black/[0.06] dark:hover:bg-white/10 disabled:opacity-50"
+        >
+            {children}
+        </button>
+    );
+}
+
 const MEMBER_COLUMNS = 'grid-cols-[minmax(0,1.5fr)_minmax(0,0.9fr)_minmax(0,0.7fr)_minmax(0,0.55fr)_72px]';
 
 /**
@@ -264,9 +269,7 @@ function TokenMetadataDialog({
             <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
                 <DialogHeader>
                     <DialogTitle>Token metadata</DialogTitle>
-                    <DialogDescription>
-                        Live market data and the judgment breakdown for this mint.
-                    </DialogDescription>
+                    <DialogDescription>Live market data and the judgment breakdown for this mint.</DialogDescription>
                 </DialogHeader>
 
                 <div className="space-y-5 py-2">
@@ -393,7 +396,8 @@ function TokenMetadataDialog({
 }
 
 export function ListsTab(): React.JSX.Element {
-    const { projectId, currentApiKeyId, hasActiveApiKey } = useProjectApiKeys();
+    const { projectId, currentApiKeyId, hasActiveApiKey, apiKeysCount } = useProjectApiKeys();
+    const { setTab } = useDashboardTab();
 
     const playgroundFetch = useCallback(
         (path: string, init?: { method?: string; body?: unknown }) => {
@@ -481,6 +485,13 @@ export function ListsTab(): React.JSX.Element {
     const [createError, setCreateError] = useState<string | null>(null);
     const [creating, setCreating] = useState(false);
 
+    const createSlugAvailability = useSlugAvailability(createSlug, {
+        enabled: createOpen,
+        fetcher: playgroundFetch,
+    });
+    const createSlugMessage = slugAvailabilityMessage(createSlugAvailability);
+    const createSlugBlocked = createSlugAvailability.state === 'unavailable';
+
     const handleCreate = useCallback(async () => {
         setCreateError(null);
         setCreating(true);
@@ -510,65 +521,70 @@ export function ListsTab(): React.JSX.Element {
         }
     }, [playgroundFetch, createSlug, createName, createDescription, refreshLists]);
 
-    // ---- archive (two-step confirm) ----
-    const [confirmArchive, setConfirmArchive] = useState(false);
-    const [archiving, setArchiving] = useState(false);
+    // ---- row actions: quick delete (two-step confirm) + settings dialog ----
+    const [deleteSlug, setDeleteSlug] = useState<string | null>(null);
+    const [deleting, setDeleting] = useState(false);
+    const [settingsSlug, setSettingsSlug] = useState<string | null>(null);
 
-    useEffect(() => setConfirmArchive(false), [selectedSlug]);
+    /** DELETE is a hard delete: the list is gone and its slug is claimable again. */
+    const handleDelete = useCallback(
+        async (slug: string) => {
+            setDeleting(true);
+            try {
+                const res = await playgroundFetch(`/api/v2/lists/${slug}`, { method: 'DELETE' });
+                if (!res.ok) {
+                    const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+                    throw new Error(body?.error?.message ?? `Delete failed (HTTP ${res.status})`);
+                }
+                toast.success(`List "${slug}" deleted`);
+                setSelectedSlug(current => (current === slug ? null : current));
+                await refreshLists();
+            } catch (error) {
+                toast.error(error instanceof Error ? error.message : String(error));
+            } finally {
+                setDeleting(false);
+                setDeleteSlug(null);
+            }
+        },
+        [playgroundFetch, refreshLists],
+    );
 
-    const handleArchive = useCallback(async () => {
-        if (!selectedSlug) return;
-        setArchiving(true);
-        try {
-            const res = await playgroundFetch(`/api/v2/lists/${selectedSlug}`, { method: 'DELETE' });
+    /** A slug change here renames the list; the previous path stops resolving. */
+    const handleUpdateList = useCallback(
+        async (slug: string, patch: { slug: string; name: string; description: string | null }) => {
+            const res = await playgroundFetch(`/api/v2/lists/${slug}`, { method: 'PATCH', body: patch });
             if (!res.ok) {
                 const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-                throw new Error(body?.error?.message ?? `Archive failed (HTTP ${res.status})`);
+                throw new Error(body?.error?.message ?? `Update failed (HTTP ${res.status})`);
             }
-            toast.success(`List "${selectedSlug}" archived`);
-            setSelectedSlug(null);
             await refreshLists();
-        } catch (error) {
-            toast.error(error instanceof Error ? error.message : String(error));
-        } finally {
-            setArchiving(false);
-            setConfirmArchive(false);
-        }
-    }, [selectedSlug, playgroundFetch, refreshLists]);
+            // Keep the rail/detail pointed at the list after a rename.
+            if (patch.slug !== slug) {
+                setSelectedSlug(current => (current === slug ? patch.slug : current));
+                setSettingsSlug(current => (current === slug ? patch.slug : current));
+            }
+        },
+        [playgroundFetch, refreshLists],
+    );
 
-    // ---- curator search ----
-    const [search, setSearch] = useState('');
-    const [searching, setSearching] = useState(false);
-    const [results, setResults] = useState<SearchResult[] | null>(null);
-    const [suppressed, setSuppressed] = useState<SuppressedResult[]>([]);
+    // ---- curator search (⌘K palette) ----
+    const [searchOpen, setSearchOpen] = useState(false);
     const [addingMint, setAddingMint] = useState<string | null>(null);
 
-    useEffect(() => {
-        const query = search.trim();
-        if (!query || !selectedSlug) {
-            setResults(null);
-            setSuppressed([]);
-            return;
-        }
-        const handle = setTimeout(() => {
-            setSearching(true);
-            void playgroundFetch(`/api/v2/lists/search-tokens?q=${encodeURIComponent(query)}&limit=8`)
-                .then(async res => {
-                    if (!res.ok) throw new Error(`search failed (HTTP ${res.status})`);
-                    const body = (await res.json()) as { results: SearchResult[]; suppressed: SuppressedResult[] };
-                    setResults(body.results);
-                    setSuppressed(body.suppressed);
-                })
-                .catch(() => {
-                    setResults([]);
-                    setSuppressed([]);
-                })
-                .finally(() => setSearching(false));
-        }, 350);
-        return () => clearTimeout(handle);
-    }, [search, selectedSlug, playgroundFetch]);
-
     const memberMints = useMemo(() => new Set((tokens ?? []).map(t => t.mint)), [tokens]);
+
+    // ⌘K / Ctrl+K opens the palette whenever a list is selected.
+    useEffect(() => {
+        if (!selectedSlug) return;
+        function onKeyDown(event: KeyboardEvent) {
+            if (event.key === 'k' && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                setSearchOpen(previous => !previous);
+            }
+        }
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [selectedSlug]);
 
     const handleAddMint = useCallback(
         async (result: SearchResult) => {
@@ -622,20 +638,6 @@ export function ListsTab(): React.JSX.Element {
     const [metadataJudged, setMetadataJudged] = useState<SearchResult | null>(null);
     const [metadataLoading, setMetadataLoading] = useState(false);
 
-    /** Search rows have the full judged result in hand — open directly. */
-    const openMetadataForResult = useCallback((result: SearchResult) => {
-        setMetadataMint(result.mint);
-        setMetadataFallback({
-            symbol: result.claims.symbol,
-            name: result.claims.name,
-            logoURI: result.market.logoURI,
-            verified: result.verified,
-        });
-        setMetadataJudged(result);
-        setMetadataLoading(false);
-        setMetadataOpen(true);
-    }, []);
-
     /** Member rows fetch the judged result on open (mint query, degen so gates never hide it). */
     const openMetadataForMember = useCallback(
         (token: V2ListToken) => {
@@ -666,6 +668,36 @@ export function ListsTab(): React.JSX.Element {
         () => myLists?.find(list => list.slug === selectedSlug) ?? null,
         [myLists, selectedSlug],
     );
+    const settingsList = useMemo(
+        () => myLists?.find(list => list.slug === settingsSlug) ?? null,
+        [myLists, settingsSlug],
+    );
+
+    if (apiKeysCount === 0) {
+        return (
+            <div className="space-y-6 container max-w-7xl mx-auto py-16 px-6">
+                <div className="mb-6">
+                    <h1 className="text-3xl font-bold text-foreground">Token Lists</h1>
+                    <p className="text-muted-foreground">
+                        Curate lists of tokens for your community — any app can consume them via the v2 API.
+                    </p>
+                </div>
+                <div className="relative z-10 rounded-2xl border border-dashed border-black/20 bg-background/80 py-12 backdrop-blur-sm">
+                    <EmptyState
+                        icon={<IconKeySlashFill className="size-[60px] mb-2 fill-muted-foreground" />}
+                        title="No API keys found"
+                        subtitle="Create an API key to start managing token lists."
+                        className="p-12 w-full sm:w-[420px] mx-auto"
+                    />
+                    <div className="flex justify-center">
+                        <Button variant="outline" size="sm" onClick={() => setTab('api-manager')}>
+                            Create API key
+                        </Button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     if (!ready || writeAccess === 'checking') {
         return (
@@ -748,25 +780,21 @@ export function ListsTab(): React.JSX.Element {
                             </div>
                         ) : (
                             myLists.map(list => (
-                                <button
+                                <ListRailRow
                                     key={list.slug}
-                                    type="button"
-                                    onClick={() => setSelectedSlug(list.slug)}
-                                    className={`w-full px-4 py-3 text-left border-b last:border-b-0 transition-colors ${
-                                        list.slug === selectedSlug
-                                            ? 'bg-gray-100/80 dark:bg-zinc-900/60'
-                                            : 'hover:bg-gray-50/50'
-                                    }`}
-                                >
-                                    <div className="text-sm font-inter-medium">{list.name}</div>
-                                    <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                                        <span className="font-berkeley-mono">{list.slug}</span>
-                                        <span>·</span>
-                                        <span>
-                                            {list.tokenCount} token{list.tokenCount === 1 ? '' : 's'}
-                                        </span>
-                                    </div>
-                                </button>
+                                    list={list}
+                                    selected={list.slug === selectedSlug}
+                                    onSelect={() => setSelectedSlug(list.slug)}
+                                    onEdit={() => {
+                                        setDeleteSlug(null);
+                                        setSettingsSlug(list.slug);
+                                    }}
+                                    confirmingDelete={deleteSlug === list.slug}
+                                    deleting={deleting}
+                                    onDeleteArm={() => setDeleteSlug(list.slug)}
+                                    onDeleteCancel={() => setDeleteSlug(null)}
+                                    onDeleteConfirm={() => void handleDelete(list.slug)}
+                                />
                             ))
                         )}
                     </TableSection>
@@ -802,148 +830,35 @@ export function ListsTab(): React.JSX.Element {
                                         {selectedList.description ?? 'No description'}
                                     </p>
                                 </div>
-                                {confirmArchive ? (
-                                    <div className="flex items-center gap-2">
-                                        <Button
-                                            variant="destructive"
-                                            size="sm"
-                                            disabled={archiving}
-                                            onClick={() => void handleArchive()}
-                                        >
-                                            {archiving ? <Spinner size="sm" /> : 'Confirm archive'}
-                                        </Button>
-                                        <Button variant="ghost" size="sm" onClick={() => setConfirmArchive(false)}>
-                                            Cancel
-                                        </Button>
-                                    </div>
-                                ) : (
-                                    <Button variant="outline" size="sm" onClick={() => setConfirmArchive(true)}>
-                                        Archive list
-                                    </Button>
-                                )}
                             </div>
 
-                            {/* Curator-assist search */}
+                            {/* Curator-assist search (⌘K palette) */}
                             <div className="space-y-4">
                                 <div>
                                     <h4 className="font-inter-medium">Add tokens</h4>
                                     <p className="text-sm text-muted-foreground">
-                                        Search by symbol, name, or mint address — results are judged for
-                                        impersonation, liquidity, and provenance. Click a row for full metadata.
+                                        Search by symbol, name, or mint address — results are judged for impersonation,
+                                        liquidity, and provenance before you pick.
                                     </p>
                                 </div>
-                                <Input
-                                    value={search}
-                                    onChange={event => setSearch(event.target.value)}
-                                    placeholder="Search a token to add…"
-                                    className="max-w-lg"
-                                />
-                                {searching && (
-                                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                                        <Spinner size="sm" /> Judging candidates…
+                                <button
+                                    type="button"
+                                    onClick={() => setSearchOpen(true)}
+                                    className="group flex w-full max-w-lg items-center justify-between gap-2 rounded-lg border border-border-medium bg-white dark:bg-zinc-950/30 px-3 py-2 text-sm text-muted-foreground shadow-sm transition-colors hover:border-black/25 hover:text-foreground cursor-pointer active:scale-[0.99]"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <IconMagnifyingglass className="size-4 fill-muted-foreground transition-colors group-hover:fill-foreground" />
+                                        <span>Search tokens to add…</span>
                                     </div>
-                                )}
-                                {results !== null && !searching && results.length === 0 && (
-                                    <p className="text-sm text-muted-foreground">No candidates.</p>
-                                )}
-                                {results !== null && !searching && results.length > 0 && (
-                                    <TableSection
-                                        columns={SEARCH_COLUMNS}
-                                        header={
-                                            <>
-                                                <div>Token</div>
-                                                <div className="text-right">Score</div>
-                                                <div className="text-right">Liquidity</div>
-                                                <div>Already in</div>
-                                                <div className="text-right">Action</div>
-                                            </>
-                                        }
-                                    >
-                                        {results.map(result => {
-                                            const isMember = memberMints.has(result.mint);
-                                            return (
-                                                <div
-                                                    key={result.mint}
-                                                    role="button"
-                                                    tabIndex={0}
-                                                    onClick={() => openMetadataForResult(result)}
-                                                    onKeyDown={event => {
-                                                        if (event.key === 'Enter') openMetadataForResult(result);
-                                                    }}
-                                                    className={`grid ${SEARCH_COLUMNS} gap-4 px-4 py-3 border-b last:border-b-0 cursor-pointer hover:bg-gray-50/50 transition-colors`}
-                                                >
-                                                    <TokenIdentity
-                                                        mint={result.mint}
-                                                        symbol={result.claims.symbol}
-                                                        name={result.claims.name}
-                                                        logoURI={result.market.logoURI}
-                                                        verified={result.verified}
-                                                    >
-                                                        {result.warnings.length > 0 && (
-                                                            <div className="mt-1">
-                                                                <WarningChips warnings={result.warnings} />
-                                                            </div>
-                                                        )}
-                                                    </TokenIdentity>
-                                                    <div className="flex items-center justify-end font-mono text-sm tabular-nums">
-                                                        {result.score.total}
-                                                    </div>
-                                                    <div className="flex items-center justify-end text-sm text-muted-foreground tabular-nums">
-                                                        {formatUsd(result.market.liquidityUsd)}
-                                                    </div>
-                                                    <div className="flex items-center truncate text-xs text-muted-foreground">
-                                                        {result.inLists.length > 0 ? result.inLists.join(', ') : '—'}
-                                                    </div>
-                                                    <div className="flex items-center justify-end">
-                                                        <Button
-                                                            size="sm"
-                                                            variant="outline"
-                                                            disabled={isMember || addingMint === result.mint}
-                                                            onClick={event => {
-                                                                event.stopPropagation();
-                                                                void handleAddMint(result);
-                                                            }}
-                                                        >
-                                                            {addingMint === result.mint ? (
-                                                                <Spinner size="sm" />
-                                                            ) : isMember ? (
-                                                                'Added'
-                                                            ) : (
-                                                                'Add'
-                                                            )}
-                                                        </Button>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
-                                    </TableSection>
-                                )}
-                                {results !== null && !searching && suppressed.length > 0 && (
-                                    <details className="group">
-                                        <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground transition-colors">
-                                            {suppressed.length} candidate{suppressed.length === 1 ? '' : 's'} filtered
-                                            by policy
-                                        </summary>
-                                        <div className="mt-3">
-                                            <TableSection columns="grid-cols-1">
-                                            {suppressed.map(item => (
-                                                <div
-                                                    key={item.mint}
-                                                    className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b last:border-b-0"
-                                                >
-                                                    <span className="text-sm font-inter-medium">
-                                                        {item.symbol ?? shortMint(item.mint)}
-                                                    </span>
-                                                    <span className="text-xs text-muted-foreground">
-                                                        suppressed by {item.suppressedBy.map(humanize).join(', ')}
-                                                    </span>
-                                                    <WarningChips warnings={item.warnings} />
-                                                </div>
-                                            ))}
-                                            </TableSection>
-                                        </div>
-                                    </details>
-                                )}
+                                    <div className="flex items-center gap-1">
+                                        <kbd className="rounded-sm bg-gray-100 dark:bg-zinc-800 p-1.5">
+                                            <IconCommand className="size-2 fill-muted-foreground" />
+                                        </kbd>
+                                        <kbd className="rounded-sm bg-gray-100 dark:bg-zinc-800 p-1.5">
+                                            <IconK className="size-2 fill-muted-foreground" />
+                                        </kbd>
+                                    </div>
+                                </button>
                             </div>
 
                             {/* Members */}
@@ -987,7 +902,7 @@ export function ListsTab(): React.JSX.Element {
                                     </TableSection>
                                 ) : tokens.length === 0 ? (
                                     <div className="bg-background/80 rounded-2xl border border-dashed border-black/20 px-6 py-8 text-center text-sm text-muted-foreground">
-                                        Empty list — search above to add the first token.
+                                        Empty list — press ⌘K (or use the search above) to add the first token.
                                     </div>
                                 ) : (
                                     <TableSection
@@ -1066,6 +981,18 @@ export function ListsTab(): React.JSX.Element {
                 </div>
             </div>
 
+            {selectedSlug && (
+                <TokenSearchCommand
+                    open={searchOpen}
+                    onOpenChange={setSearchOpen}
+                    listSlug={selectedSlug}
+                    memberMints={memberMints}
+                    playgroundFetch={playgroundFetch}
+                    addingMint={addingMint}
+                    onAdd={result => void handleAddMint(result)}
+                />
+            )}
+
             <TokenMetadataDialog
                 open={metadataOpen}
                 onOpenChange={setMetadataOpen}
@@ -1075,13 +1002,22 @@ export function ListsTab(): React.JSX.Element {
                 loading={metadataLoading}
             />
 
+            <ListSettingsDialog
+                list={settingsList}
+                isOpen={settingsList !== null}
+                onClose={() => setSettingsSlug(null)}
+                fetcher={playgroundFetch}
+                onSave={patch => handleUpdateList(settingsList?.slug ?? '', patch)}
+                onDelete={() => handleDelete(settingsList?.slug ?? '')}
+            />
+
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle>Create a token list</DialogTitle>
                         <DialogDescription>
-                            Consumers pull it from <code className="text-xs">/api/v2/lists/&#123;slug&#125;</code>. The
-                            slug is permanent and globally unique — prefix it with your community name.
+                            Everything here stays editable later, including the slug — renaming just breaks consumers
+                            pinned to the old path.
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-2">
@@ -1107,9 +1043,34 @@ export function ListsTab(): React.JSX.Element {
                                     setCreateSlug(event.target.value);
                                 }}
                                 placeholder="ownership-core"
-                                className="font-berkeley-mono"
+                                aria-invalid={createSlugBlocked}
+                                className={`font-berkeley-mono ${
+                                    createSlugBlocked
+                                        ? 'border-destructive text-destructive focus-visible:border-destructive focus-visible:ring-destructive/20'
+                                        : ''
+                                }`}
                             />
-                            <p className="text-xs text-muted-foreground">Lowercase letters, numbers, and hyphens.</p>
+                            {createSlugMessage ? (
+                                <p
+                                    className={`text-xs ${
+                                        createSlugBlocked ? 'text-destructive' : 'text-muted-foreground'
+                                    }`}
+                                >
+                                    {createSlugMessage}
+                                </p>
+                            ) : (
+                                <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                    {createSlugAvailability.state === 'checking' && <Spinner size="sm" />}
+                                    {createSlugAvailability.state === 'available' && (
+                                        <IconCheckmark className="size-3 fill-emerald-600" />
+                                    )}
+                                    Becomes the public read path{' '}
+                                    <code className="font-berkeley-mono">
+                                        /api/v2/lists/{createSlug.trim() || '{slug}'}
+                                    </code>
+                                    {createSlugAvailability.state === 'available' && ' — available'}
+                                </p>
+                            )}
                         </div>
                         <div className="space-y-1.5">
                             <Label htmlFor="list-description">Description (optional)</Label>
@@ -1133,7 +1094,13 @@ export function ListsTab(): React.JSX.Element {
                         <Button
                             variant="outline"
                             onClick={() => void handleCreate()}
-                            disabled={creating || !createSlug.trim() || !createName.trim()}
+                            disabled={
+                                creating ||
+                                !createSlug.trim() ||
+                                !createName.trim() ||
+                                createSlugBlocked ||
+                                createSlugAvailability.state === 'checking'
+                            }
                         >
                             {creating ? <Spinner size="sm" /> : 'Create list'}
                         </Button>

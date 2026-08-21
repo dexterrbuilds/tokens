@@ -179,6 +179,7 @@ export {
     tokenListsCreate,
     tokenListsUpdate,
     tokenListsArchive,
+    tokenListsDelete,
     tokenListsUpsertMember,
     tokenListsRemoveMember,
     tokenListsAddMembersBatch,
