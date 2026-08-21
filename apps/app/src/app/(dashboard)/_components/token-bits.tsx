@@ -1,7 +1,5 @@
 'use client';
 
-import { IconCircleFill } from 'symbols-react';
-
 import { Avatar, AvatarFallback, AvatarImage } from '@tokens/ui/avatar';
 import { Badge } from '@tokens/ui/badge';
 
@@ -98,15 +96,6 @@ export function formatDate(ms: number | undefined | null): string {
     return new Date(ms).toLocaleDateString();
 }
 
-export function VerifiedBadge({ verified }: { verified: boolean }) {
-    return (
-        <Badge variant={verified ? 'success' : 'secondary'} className="flex items-center gap-1.5 px-1.5">
-            <IconCircleFill className={`w-1.5 h-1.5 rounded-full ${verified ? 'fill-emerald-500' : 'fill-zinc-400'}`} />
-            {verified ? 'Verified' : 'Unverified'}
-        </Badge>
-    );
-}
-
 export function WarningChips({ warnings }: { warnings: string[] }) {
     if (warnings.length === 0) return null;
     return (
@@ -146,25 +135,36 @@ export function TokenIdentity({
     children?: React.ReactNode;
 }) {
     const avatarSize = size === 'dialog' ? 'h-12 w-12' : layout === 'inline' ? 'h-5 w-5' : 'h-8 w-8';
+    const indicatorSize = size === 'dialog' ? 'size-3' : 'size-2';
     const symbolText = symbol ?? shortMint(mint);
     return (
         <div className="flex items-center gap-3 min-w-0">
-            <Avatar className={`${avatarSize} shrink-0`}>
-                {logoURI ? <AvatarImage src={logoURI} alt={symbol ?? mint} /> : null}
-                <AvatarFallback className="text-[10px]">{(symbol ?? mint).slice(0, 2)}</AvatarFallback>
-            </Avatar>
+            <div className="relative shrink-0">
+                <Avatar className={`${avatarSize} ring-2 ring-border/70`}>
+                    {logoURI ? (
+                        <AvatarImage src={logoURI} alt={symbol ?? mint} loading="lazy" decoding="async" />
+                    ) : null}
+                    <AvatarFallback className="text-[10px]">{(symbol ?? mint).slice(0, 2)}</AvatarFallback>
+                </Avatar>
+                {verified !== undefined && (
+                    <span
+                        role="img"
+                        aria-label={verified ? 'Verified token' : 'Unverified token'}
+                        title={verified ? 'Verified token' : 'Unverified token'}
+                        className={`absolute -bottom-0.5 -right-0.5 rounded-full ring-2 ring-background ${indicatorSize} ${verified ? 'bg-emerald-500' : 'bg-zinc-400'}`}
+                    />
+                )}
+            </div>
             {layout === 'inline' ? (
                 <div className="flex min-w-0 items-center gap-2">
                     <span className="shrink-0 text-sm font-inter-medium">{symbolText}</span>
                     <span className="truncate text-xs text-muted-foreground">{name ?? '—'}</span>
-                    {verified !== undefined && <VerifiedBadge verified={verified} />}
                     {children}
                 </div>
             ) : (
                 <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                         <span className="truncate font-inter-medium">{symbolText}</span>
-                        {verified !== undefined && <VerifiedBadge verified={verified} />}
                     </div>
                     <div className="truncate text-sm text-muted-foreground">{name ?? '—'}</div>
                     {children}

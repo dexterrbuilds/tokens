@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { toast } from 'sonner';
 import {
@@ -74,6 +74,44 @@ interface V2ListSummary {
 
 type WriteAccess = 'checking' | 'granted' | 'denied';
 
+const LIST_TOKEN_CACHE_TTL_MS = 5 * 60_000;
+const TOKEN_METADATA_CACHE_TTL_MS = 5 * 60_000;
+const CLIENT_CACHE_MAX_ENTRIES = 50;
+
+interface CachedListTokens {
+    tokens: V2ListToken[];
+    cachedAt: number;
+}
+
+interface CachedTokenMetadata {
+    result: SearchResult | null;
+    cachedAt: number;
+}
+
+// Module-scoped so switching dashboard tabs does not discard already-loaded
+// rows or their image URLs. Keys include project id to avoid cross-project data.
+const listTokenCache = new Map<string, CachedListTokens>();
+const tokenMetadataCache = new Map<string, CachedTokenMetadata>();
+
+function readCacheEntry<T>(cache: Map<string, T>, key: string): T | undefined {
+    const entry = cache.get(key);
+    if (!entry) return undefined;
+    // Refresh insertion order for bounded LRU eviction.
+    cache.delete(key);
+    cache.set(key, entry);
+    return entry;
+}
+
+function writeCacheEntry<T>(cache: Map<string, T>, key: string, value: T): void {
+    cache.delete(key);
+    cache.set(key, value);
+    while (cache.size > CLIENT_CACHE_MAX_ENTRIES) {
+        const oldestKey = cache.keys().next().value;
+        if (oldestKey === undefined) break;
+        cache.delete(oldestKey);
+    }
+}
+
 function slugify(value: string): string {
     return value
         .toLowerCase()
@@ -136,7 +174,7 @@ function ListRailRow({
                     <Button
                         variant="destructive"
                         size="sm"
-                        className="h-6 px-2 text-xs"
+                        className="h-6 px-2 text-xs text-white hover:text-white"
                         disabled={deleting}
                         onClick={event => {
                             event.stopPropagation();
@@ -287,7 +325,6 @@ function IconButton({
         </button>
     );
 }
-
 
 /**
  * Metadata viewer modeled on the admin app's mint preview: identity header,
@@ -473,6 +510,7 @@ export function ListsTab(): React.JSX.Element {
     const [railTab, setRailTab] = useState<'mine' | 'community'>('mine');
     const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
     const [tokens, setTokens] = useState<V2ListToken[] | null>(null);
+    const activeDetailCacheKeyRef = useRef<string | null>(null);
 
     const ready = Boolean(projectId && currentApiKeyId && hasActiveApiKey);
 
@@ -553,24 +591,48 @@ export function ListsTab(): React.JSX.Element {
         [allLists, projectId],
     );
 
+    const detailCacheKey = projectId && selectedSlug ? `${projectId}:${selectedSlug}` : null;
+
     const refreshDetail = useCallback(async () => {
-        if (!selectedSlug) {
+        if (!selectedSlug || !detailCacheKey) {
             setTokens(null);
             return;
         }
         const res = await playgroundFetch(`/api/v2/lists/${selectedSlug}?limit=2000`);
         if (!res.ok) {
-            setTokens([]);
+            // Never replace a usable stale entry with a transient failure.
+            if (!listTokenCache.has(detailCacheKey) && activeDetailCacheKeyRef.current === detailCacheKey) {
+                setTokens([]);
+            }
             return;
         }
         const body = (await res.json()) as { tokens: V2ListToken[] };
-        setTokens(body.tokens);
-    }, [selectedSlug, playgroundFetch]);
+        const nextTokens = body.tokens;
+        writeCacheEntry(listTokenCache, detailCacheKey, { tokens: nextTokens, cachedAt: Date.now() });
+        // A slower response for a list we already left may populate its cache,
+        // but must never replace the currently visible list.
+        if (activeDetailCacheKeyRef.current === detailCacheKey) setTokens(nextTokens);
+    }, [selectedSlug, detailCacheKey, playgroundFetch]);
 
     useEffect(() => {
+        activeDetailCacheKeyRef.current = detailCacheKey;
+        if (!detailCacheKey) {
+            setTokens(null);
+            return;
+        }
+
+        const cached = readCacheEntry(listTokenCache, detailCacheKey);
+        if (cached) {
+            // Stale-while-revalidate keeps the table and images visible even
+            // when the entry is old enough to refresh in the background.
+            setTokens(cached.tokens);
+            if (Date.now() - cached.cachedAt >= LIST_TOKEN_CACHE_TTL_MS) void refreshDetail();
+            return;
+        }
+
         setTokens(null);
         void refreshDetail();
-    }, [refreshDetail]);
+    }, [detailCacheKey, refreshDetail]);
 
     // ---- create dialog ----
     const [createOpen, setCreateOpen] = useState(false);
@@ -628,6 +690,7 @@ export function ListsTab(): React.JSX.Element {
                     throw new Error(body?.error?.message ?? `Delete failed (HTTP ${res.status})`);
                 }
                 toast.success(`List "${slug}" deleted`);
+                if (projectId) listTokenCache.delete(`${projectId}:${slug}`);
                 setSelectedSlug(current => (current === slug ? null : current));
                 await refreshLists();
             } catch (error) {
@@ -637,7 +700,7 @@ export function ListsTab(): React.JSX.Element {
                 setDeleteSlug(null);
             }
         },
-        [playgroundFetch, refreshLists],
+        [projectId, playgroundFetch, refreshLists],
     );
 
     /** A slug change here renames the list; the previous path stops resolving. */
@@ -651,11 +714,17 @@ export function ListsTab(): React.JSX.Element {
             await refreshLists();
             // Keep the rail/detail pointed at the list after a rename.
             if (patch.slug !== slug) {
+                if (projectId) {
+                    const oldKey = `${projectId}:${slug}`;
+                    const cached = listTokenCache.get(oldKey);
+                    listTokenCache.delete(oldKey);
+                    if (cached) writeCacheEntry(listTokenCache, `${projectId}:${patch.slug}`, cached);
+                }
                 setSelectedSlug(current => (current === slug ? patch.slug : current));
                 setSettingsSlug(current => (current === slug ? patch.slug : current));
             }
         },
-        [playgroundFetch, refreshLists],
+        [projectId, playgroundFetch, refreshLists],
     );
 
     // ---- curator search (⌘K palette) ----
@@ -741,6 +810,7 @@ export function ListsTab(): React.JSX.Element {
     } | null>(null);
     const [metadataJudged, setMetadataJudged] = useState<SearchResult | null>(null);
     const [metadataLoading, setMetadataLoading] = useState(false);
+    const activeMetadataCacheKeyRef = useRef<string | null>(null);
 
     /** Member rows fetch the judged result on open (mint query, degen so gates never hide it). */
     const openMetadataForMember = useCallback(
@@ -752,20 +822,47 @@ export function ListsTab(): React.JSX.Element {
                 logoURI: token.logoURI,
                 verified: token.verified,
             });
+            setMetadataOpen(true);
+
+            const metadataCacheKey = `${projectId ?? 'unknown'}:${token.mint}`;
+            activeMetadataCacheKeyRef.current = metadataCacheKey;
+            const cached = readCacheEntry(tokenMetadataCache, metadataCacheKey);
+            if (cached && Date.now() - cached.cachedAt < TOKEN_METADATA_CACHE_TTL_MS) {
+                setMetadataJudged(cached.result);
+                setMetadataLoading(false);
+                return;
+            }
+
             setMetadataJudged(null);
             setMetadataLoading(true);
-            setMetadataOpen(true);
             void playgroundFetch(`/api/v2/lists/search-tokens?q=${encodeURIComponent(token.mint)}&policy=degen&limit=1`)
                 .then(async res => {
                     if (!res.ok) return;
                     const body = (await res.json()) as { results: SearchResult[] };
                     const match = body.results.find(result => result.mint === token.mint) ?? null;
-                    setMetadataJudged(match);
+                    writeCacheEntry(tokenMetadataCache, metadataCacheKey, { result: match, cachedAt: Date.now() });
+                    if (activeMetadataCacheKeyRef.current === metadataCacheKey) setMetadataJudged(match);
+
+                    // If live metadata supplied an image the list response did
+                    // not have, update both the visible row and its list cache.
+                    const logoURI = match?.market.logoURI;
+                    if (logoURI && detailCacheKey) {
+                        setTokens(current => {
+                            if (!current) return current;
+                            const next = current.map(row =>
+                                row.mint === token.mint && !row.logoURI ? { ...row, logoURI } : row,
+                            );
+                            writeCacheEntry(listTokenCache, detailCacheKey, { tokens: next, cachedAt: Date.now() });
+                            return next;
+                        });
+                    }
                 })
                 .catch(() => {})
-                .finally(() => setMetadataLoading(false));
+                .finally(() => {
+                    if (activeMetadataCacheKeyRef.current === metadataCacheKey) setMetadataLoading(false);
+                });
         },
-        [playgroundFetch],
+        [projectId, detailCacheKey, playgroundFetch],
     );
 
     const settingsList = useMemo(
@@ -999,22 +1096,22 @@ export function ListsTab(): React.JSX.Element {
                                         />
                                     </div>
                                     {selectedIsOwned && (
-                                    <button
-                                        type="button"
-                                        onClick={() => setSearchOpen(true)}
-                                        className="group flex shrink-0 cursor-pointer items-center gap-2 rounded-lg border border-border-medium bg-white px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm transition-colors hover:border-black/25 hover:text-foreground active:scale-[0.99] dark:bg-zinc-950/30"
-                                    >
-                                        <IconMagnifyingglass className="size-3 fill-muted-foreground transition-colors group-hover:fill-foreground" />
-                                        <span>Add tokens</span>
-                                        <span className="flex items-center gap-0.5">
-                                            <kbd className="rounded-sm bg-gray-100 p-1 dark:bg-zinc-800">
-                                                <IconCommand className="size-2 fill-muted-foreground" />
-                                            </kbd>
-                                            <kbd className="rounded-sm bg-gray-100 p-1 dark:bg-zinc-800">
-                                                <IconK className="size-2 fill-muted-foreground" />
-                                            </kbd>
-                                        </span>
-                                    </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setSearchOpen(true)}
+                                            className="group flex shrink-0 cursor-pointer items-center gap-2 rounded-lg border border-border-medium bg-white px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm transition-colors hover:border-black/25 hover:text-foreground active:scale-[0.99] dark:bg-zinc-950/30"
+                                        >
+                                            <IconMagnifyingglass className="size-3 fill-muted-foreground transition-colors group-hover:fill-foreground" />
+                                            <span>Add tokens</span>
+                                            <span className="flex items-center gap-0.5">
+                                                <kbd className="rounded-sm bg-gray-100 p-1 dark:bg-zinc-800">
+                                                    <IconCommand className="size-2 fill-muted-foreground" />
+                                                </kbd>
+                                                <kbd className="rounded-sm bg-gray-100 p-1 dark:bg-zinc-800">
+                                                    <IconK className="size-2 fill-muted-foreground" />
+                                                </kbd>
+                                            </span>
+                                        </button>
                                     )}
                                 </div>
                                 {tokens === null ? (
@@ -1032,9 +1129,6 @@ export function ListsTab(): React.JSX.Element {
                                                     </div>
                                                     <div className="flex items-center">
                                                         <Skeleton className="h-4 w-24" />
-                                                    </div>
-                                                    <div className="flex items-center">
-                                                        <Skeleton className="h-5 w-20 rounded-full" />
                                                     </div>
                                                     <div className="flex items-center">
                                                         <Skeleton className="h-4 w-16" />

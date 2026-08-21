@@ -24,7 +24,7 @@ import {
     useSelectRevealTransition,
     type ListSelection,
 } from './use-list-selection';
-import { TokenIdentity, VerifiedBadge, formatDate, shortMint, type V2ListToken } from './token-bits';
+import { TokenIdentity, formatDate, shortMint, type V2ListToken } from './token-bits';
 
 /**
  * Member table structured after the svela screener table (MIT,
@@ -35,7 +35,7 @@ import { TokenIdentity, VerifiedBadge, formatDate, shortMint, type V2ListToken }
  */
 
 export const MEMBER_GRID_TEMPLATE_COLUMNS =
-    'minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 0.8fr)';
+    'minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 0.8fr)';
 
 declare module '@tanstack/react-table' {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -60,6 +60,7 @@ function createMemberColumns(): ColumnDef<V2ListToken>[] {
                     symbol={row.original.symbol}
                     name={row.original.name}
                     logoURI={row.original.logoURI}
+                    verified={row.original.verified}
                     layout="inline"
                 />
             ),
@@ -86,13 +87,6 @@ function createMemberColumns(): ColumnDef<V2ListToken>[] {
                     />
                 </div>
             ),
-        },
-        {
-            id: 'status',
-            accessorKey: 'verified',
-            meta: { align: 'left' },
-            header: 'Status',
-            cell: ({ row }) => <VerifiedBadge verified={row.original.verified} />,
         },
         {
             id: 'added',

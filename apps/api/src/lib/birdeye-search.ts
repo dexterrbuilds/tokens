@@ -100,6 +100,74 @@ export interface SearchProviderTokensOptions {
     limit?: number;
 }
 
+export interface ProviderTokenMetadata {
+    address: string;
+    symbol: string | null;
+    name: string | null;
+    decimals: number | null;
+    logoURI: string | null;
+}
+
+interface BirdeyeMetadataItem {
+    address?: string;
+    symbol?: string;
+    name?: string;
+    decimals?: number;
+    logo_uri?: string;
+    logoURI?: string;
+}
+
+interface BirdeyeMetadataResponse {
+    success: boolean;
+    data?: Record<string, BirdeyeMetadataItem | null>;
+}
+
+/** Exact-mint metadata lookup. Birdeye caps this endpoint at 50 addresses. */
+export function getProviderTokenMetadataByMints(
+    mints: readonly string[],
+): Effect.Effect<ProviderTokenMetadata[], unknown> {
+    const apiKey = (process.env.BIRDEYE_API_KEY ?? '').trim();
+    if (!apiKey) {
+        return Effect.fail(new MissingEnvError({ message: 'BIRDEYE_API_KEY is not set', name: 'BIRDEYE_API_KEY' }));
+    }
+
+    const addresses = [...new Set(mints.map(mint => mint.trim()).filter(Boolean))].slice(0, 50);
+    if (addresses.length === 0) return Effect.succeed([]);
+
+    const params = new URLSearchParams({ list_address: addresses.join(',') });
+    return fetchJsonWithRetry<BirdeyeMetadataResponse>({
+        url: `${BIRDEYE_API_URL}/defi/v3/token/meta-data/multiple?${params}`,
+        service: 'birdeye',
+        init: {
+            headers: {
+                'X-API-KEY': apiKey,
+                'x-chain': 'solana',
+                Accept: 'application/json',
+            },
+            next: { revalidate: 60 * 60 },
+        },
+        signal: AbortSignal.timeout(5_000),
+        maxRetries: 2,
+    }).pipe(
+        Effect.map(result => {
+            if (!result.success || !result.data) return [];
+            const metadata: ProviderTokenMetadata[] = [];
+            for (const [mint, item] of Object.entries(result.data)) {
+                if (!item) continue;
+                const address = toText(item.address) ?? mint;
+                metadata.push({
+                    address,
+                    symbol: toText(item.symbol),
+                    name: toText(item.name),
+                    decimals: toFinite(item.decimals),
+                    logoURI: toText(item.logo_uri) ?? toText(item.logoURI),
+                });
+            }
+            return metadata;
+        }),
+    );
+}
+
 /**
  * Live token search via Birdeye `/defi/v3/search` (Solana, tokens only).
  * Fails with tagged errors — callers are expected to degrade gracefully
