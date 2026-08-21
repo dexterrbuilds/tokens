@@ -31,6 +31,7 @@ import {
     DialogTitle,
 } from '@/components/app-ui/dialog';
 import { EmptyState } from '@/components/global/empty-state';
+import { TabNavigation } from '@/components/global/tab-navigation';
 import { ComposeEndpointDialog, type ComposableList } from './compose-endpoint-dialog';
 import { ListSettingsDialog } from './list-settings-dialog';
 import { PencilIcon, TrashCanFillIcon } from './icons';
@@ -499,6 +500,18 @@ export function ListsTab(): React.JSX.Element {
         () => Boolean(selectedList && !selectedList.curated && selectedList.owner.projectId === projectId),
         [selectedList, projectId],
     );
+    const railTabs = useMemo(
+        () =>
+            [
+                { id: 'mine', label: 'My lists' },
+                {
+                    id: 'community',
+                    label: communityLists ? `Community (${communityLists.length})` : 'Community',
+                },
+            ] as const satisfies ReadonlyArray<{ id: 'mine' | 'community'; label: string }>,
+        [communityLists],
+    );
+
     const composableLists = useMemo<ComposableList[]>(
         () =>
             (allLists ?? []).map(list => ({
@@ -817,34 +830,14 @@ export function ListsTab(): React.JSX.Element {
             <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-8 items-start">
                 {/* Rail — mine/community tabs left, create + compose actions opposite */}
                 <div className="space-y-4">
-                    <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center rounded-lg bg-gray-100/60 p-0.5 dark:bg-zinc-900/60">
-                            {(
-                                [
-                                    { id: 'mine', label: 'My lists' },
-                                    { id: 'community', label: 'Community' },
-                                ] as const
-                            ).map(tab => (
-                                <button
-                                    key={tab.id}
-                                    type="button"
-                                    onClick={() => setRailTab(tab.id)}
-                                    className={`rounded-md px-2.5 py-1 text-xs font-inter-medium transition-colors ${
-                                        railTab === tab.id
-                                            ? 'bg-white text-foreground shadow-sm dark:bg-zinc-800'
-                                            : 'text-muted-foreground hover:text-foreground'
-                                    }`}
-                                >
-                                    {tab.label}
-                                    {tab.id === 'community' && communityLists && (
-                                        <span className="ml-1 font-berkeley-mono text-[10px] text-muted-foreground">
-                                            {communityLists.length}
-                                        </span>
-                                    )}
-                                </button>
-                            ))}
-                        </div>
-                        <div className="flex items-center gap-1.5">
+                    <div className="flex items-end justify-between gap-2 border-b border-border">
+                        <TabNavigation
+                            tabs={railTabs}
+                            activeIndex={railTab === 'mine' ? 0 : 1}
+                            onTabClick={id => setRailTab(id)}
+                            containerClassName="flex justify-start px-0"
+                        />
+                        <div className="flex items-center gap-1.5 pb-1.5">
                             <Button
                                 size="sm"
                                 variant="outline"
