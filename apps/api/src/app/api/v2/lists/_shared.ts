@@ -9,6 +9,7 @@ import {
     type TokenListMutationErrorCode,
     type TokenListMutationOutcome,
 } from '@/lib/cloudrun';
+import { getVariantByMint } from '@tokens/asset-registry';
 import {
     CURATED_LIST_ORDER,
     getCuratedTokenAddresses,
@@ -16,6 +17,7 @@ import {
     normalizeCuratedTokenListId,
     type CuratedTokenListId,
 } from '@tokens/asset-registry/compat';
+import { registryClaimedSymbol } from '@/lib/judgment/protected-symbols';
 
 /**
  * Shared shapes + helpers for the /api/v2/lists surface. Curated lists and
@@ -79,9 +81,21 @@ export function curatedListSummaries(): Effect.Effect<V2ListSummary[], never> {
     });
 }
 
+/** Compiled-registry metadata fallback — zero-RPC, covers registry-known mints
+ * when the tokens index has no row (fresh environments, degraded reads). */
+function registryMeta(mint: string): { symbol: string | null; name: string | null } {
+    const match = getVariantByMint(mint);
+    if (!match) return { symbol: null, name: null };
+    return {
+        symbol: registryClaimedSymbol(match.variant, match.asset),
+        name: match.variant.name ?? match.asset.name ?? null,
+    };
+}
+
 /**
  * Batch-hydrate mints from the tokens table, falling back to per-member
- * snapshot columns (Birdeye-only mints snapshot metadata at add time).
+ * snapshot columns (Birdeye-only mints snapshot metadata at add time), then
+ * to the compiled registry for registry-known mints.
  */
 export function hydrateCommunityMembers(members: TokenListMember[]): Effect.Effect<V2ListToken[], never> {
     return Effect.gen(function* () {
@@ -94,10 +108,11 @@ export function hydrateCommunityMembers(members: TokenListMember[]): Effect.Effe
         const byMint = new Map(entries.map(entry => [entry.address, entry.token] as const));
         return members.map(member => {
             const token = byMint.get(member.mint) ?? null;
+            const registry = registryMeta(member.mint);
             return {
                 mint: member.mint,
-                symbol: token?.symbol ?? member.symbol,
-                name: token?.name ?? member.name,
+                symbol: token?.symbol ?? member.symbol ?? registry.symbol,
+                name: token?.name ?? member.name ?? registry.name,
                 decimals: token?.decimals ?? member.decimals,
                 logoURI: token?.logoURI ?? member.logoUri,
                 verified: member.verified,
@@ -121,10 +136,11 @@ export function hydrateCuratedMints(mints: string[], rankOffset: number): Effect
         const byMint = new Map(entries.map(entry => [entry.address, entry.token] as const));
         return mints.map((mint, index) => {
             const token = byMint.get(mint) ?? null;
+            const registry = registryMeta(mint);
             return {
                 mint,
-                symbol: token?.symbol ?? null,
-                name: token?.name ?? null,
+                symbol: token?.symbol ?? registry.symbol,
+                name: token?.name ?? registry.name,
                 decimals: token?.decimals ?? null,
                 logoURI: token?.logoURI ?? null,
                 verified: true,
