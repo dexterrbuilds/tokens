@@ -16,6 +16,8 @@ export type HomeHighlightCards = readonly [HomeHighlightCard, HomeHighlightCard,
  * Global home highlights, computed across every curated asset (all lists combined) —
  * intentionally independent of whichever tab/table is selected.
  */
+const MIN_GAINER_ACTIVITY_USD = 1_000;
+
 export function createHomeHighlights(tokens: Token[], lastAddedAssetId: string | null): HomeHighlightCards {
     const fallback = createFallbackToken();
 
@@ -44,9 +46,19 @@ export function createHomeHighlights(tokens: Token[], lastAddedAssetId: string |
         (best, token) => (token.volume24hUSD > best.volume24hUSD ? token : best),
         highestVolumeSource[0],
     );
-    const biggestGainer = tokens.reduce(
+    // A dust market (a lone tiny trade on an empty pool) can print an arbitrary
+    // 24h change, so require real activity before a token can win the gainer
+    // card. Falls back to the full pool if the filter empties it.
+    const hasGainerActivity = (token: Token) =>
+        Number.isFinite(token.liquidity) &&
+        token.liquidity >= MIN_GAINER_ACTIVITY_USD &&
+        hasVolume(token) &&
+        token.volume24hUSD >= MIN_GAINER_ACTIVITY_USD;
+    const gainerCandidates = tokens.filter(hasGainerActivity);
+    const gainerSource = gainerCandidates.length > 0 ? gainerCandidates : tokens;
+    const biggestGainer = gainerSource.reduce(
         (best, token) => (token.priceChange24hPercent > best.priceChange24hPercent ? token : best),
-        tokens[0],
+        gainerSource[0],
     );
     return [
         { id: 'latest-added', title: 'Latest Added', token: latestAdded ?? fallback, metric: 'price' },
