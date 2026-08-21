@@ -5,12 +5,23 @@ import { motion } from 'motion/react';
 import { toast } from 'sonner';
 import { IconCircleFill, IconCircleGridCrossFill, IconTrashFill } from 'symbols-react';
 
+import {
+    Table,
+    TableBody,
+    TableCell,
+    TableCellCopyable,
+    TableHead,
+    TableHeader,
+    TableRow,
+} from '@solana/design-system/table';
+import { Avatar, AvatarFallback, AvatarImage } from '@tokens/ui/avatar';
 import { Badge } from '@tokens/ui/badge';
 import { Button } from '@tokens/ui/button';
 import { Input } from '@tokens/ui/input';
 import { Label } from '@tokens/ui/label';
 import { Skeleton } from '@tokens/ui/skeleton';
 import { Spinner } from '@tokens/ui/spinner';
+import { CopyButton } from '@/components/app-ui/copy-button';
 import {
     Dialog,
     DialogContent,
@@ -44,18 +55,36 @@ interface V2ListToken {
     mint: string;
     symbol: string | null;
     name: string | null;
+    logoURI: string | null;
+    decimals: number | null;
     verified: boolean;
     rank: number;
     note?: string;
+    addedAt?: number;
 }
 
 interface SearchResult {
     mint: string;
-    claims: { symbol: string | null; name: string | null };
-    market: { liquidityUsd: number | null; volume24hUsd: number | null; price: number | null };
-    score: { total: number };
+    claims: {
+        symbol: string | null;
+        name: string | null;
+        attestations: Array<{ code: string; detail: string }>;
+    };
+    market: {
+        price: number | null;
+        liquidityUsd: number | null;
+        volume24hUsd: number | null;
+        marketCapUsd: number | null;
+        priceChange24hPercent: number | null;
+        holderCount: number | null;
+        decimals: number | null;
+        logoURI: string | null;
+        dataAsOf: number | null;
+    };
+    score: { total: number; components: Record<string, number> };
     reasons: string[];
     warnings: string[];
+    badges: string[];
     verified: boolean;
     inLists: string[];
 }
@@ -81,12 +110,27 @@ function formatUsd(value: number | null): string {
     return `$${value.toFixed(2)}`;
 }
 
+/** Admin app's formatValue: '—' for null/non-finite, locale string otherwise. */
+function formatValue(value: number | null | undefined): string {
+    if (value === null || value === undefined || !Number.isFinite(value)) return '—';
+    return value.toLocaleString(undefined, { maximumFractionDigits: value >= 1 ? 2 : 8 });
+}
+
+function formatDate(ms: number | undefined | null): string {
+    if (!ms) return '—';
+    return new Date(ms).toLocaleDateString();
+}
+
 function slugify(value: string): string {
     return value
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '')
         .slice(0, 63);
+}
+
+function humanize(code: string): string {
+    return code.replaceAll('_', ' ');
 }
 
 function VerifiedBadge({ verified }: { verified: boolean }) {
@@ -104,38 +148,225 @@ function WarningChips({ warnings }: { warnings: string[] }) {
         <span className="flex flex-wrap gap-1">
             {warnings.map(warning => (
                 <Badge key={warning} variant="warning" className="px-1.5 text-[10px]">
-                    {warning.replaceAll('_', ' ')}
+                    {humanize(warning)}
                 </Badge>
             ))}
         </span>
     );
 }
 
-/** Section chrome shared with the API-keys tables: gray gutter, uppercase header, white card. */
-function TableSection({
-    header,
-    columns,
+/** Admin curation table's identity cell: logo avatar with initials fallback + symbol/name stack. */
+function TokenIdentity({
+    mint,
+    symbol,
+    name,
+    logoURI,
+    verified,
+    size = 'row',
     children,
 }: {
-    header?: React.ReactNode;
-    columns: string;
-    children: React.ReactNode;
+    mint: string;
+    symbol: string | null;
+    name: string | null;
+    logoURI: string | null;
+    verified?: boolean;
+    size?: 'row' | 'dialog';
+    children?: React.ReactNode;
 }) {
+    const avatarSize = size === 'dialog' ? 'h-12 w-12' : 'h-8 w-8';
     return (
-        <div className="rounded-[12px] bg-gray-100/60 overflow-hidden p-0.5">
-            {header && (
-                <div className="px-3 py-2">
-                    <div
-                        className={`grid ${columns} gap-4 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide`}
-                    >
-                        {header}
-                    </div>
+        <div className="flex items-center gap-3 min-w-0">
+            <Avatar className={`${avatarSize} shrink-0`}>
+                {logoURI ? <AvatarImage src={logoURI} alt={symbol ?? mint} /> : null}
+                <AvatarFallback className="text-[10px]">{(symbol ?? mint).slice(0, 2)}</AvatarFallback>
+            </Avatar>
+            <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                    <span className="truncate font-inter-medium">{symbol ?? shortMint(mint)}</span>
+                    {verified !== undefined && <VerifiedBadge verified={verified} />}
                 </div>
-            )}
-            <div className="bg-white dark:bg-zinc-950/30 border border-black/[0.15] rounded-lg shadow-sm overflow-hidden">
+                <div className="truncate text-sm text-muted-foreground">{name ?? '—'}</div>
                 {children}
             </div>
         </div>
+    );
+}
+
+/** Admin add-variant-dialog's SummaryField: eyebrow label + value card. */
+function SummaryField({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="min-w-0 rounded-md border border-border-extra-light bg-white dark:bg-zinc-950/30 px-3 py-2">
+            <div className="text-[11px] font-inter-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                {label}
+            </div>
+            <div className="mt-1 truncate text-sm font-inter-medium text-foreground">{value}</div>
+        </div>
+    );
+}
+
+function SectionHeading({ children }: { children: React.ReactNode }) {
+    return (
+        <div className="text-xs font-inter-semibold uppercase tracking-[0.08em] text-muted-foreground">{children}</div>
+    );
+}
+
+/**
+ * Metadata viewer modeled on the admin app's mint preview: identity header,
+ * copyable mint, market field grid, and the judgment breakdown (score
+ * components, reasons, warnings, attestations).
+ */
+function TokenMetadataDialog({
+    open,
+    onOpenChange,
+    mint,
+    fallback,
+    judged,
+    loading,
+}: {
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+    mint: string | null;
+    /** Identity from the row, shown while (or if) judgment data is unavailable. */
+    fallback: { symbol: string | null; name: string | null; logoURI: string | null; verified?: boolean } | null;
+    judged: SearchResult | null;
+    loading: boolean;
+}) {
+    if (!mint) return null;
+    const symbol = judged?.claims.symbol ?? fallback?.symbol ?? null;
+    const name = judged?.claims.name ?? fallback?.name ?? null;
+    const logoURI = judged?.market.logoURI ?? fallback?.logoURI ?? null;
+    const verified = judged?.verified ?? fallback?.verified;
+
+    return (
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+                <DialogHeader>
+                    <DialogTitle>Token metadata</DialogTitle>
+                    <DialogDescription>
+                        Live market data and the judgment breakdown for this mint.
+                    </DialogDescription>
+                </DialogHeader>
+
+                <div className="space-y-5 py-2">
+                    {/* Identity */}
+                    <div className="rounded-md border border-border-medium bg-white dark:bg-zinc-950/30 p-3">
+                        <TokenIdentity
+                            mint={mint}
+                            symbol={symbol}
+                            name={name}
+                            logoURI={logoURI}
+                            {...(verified !== undefined ? { verified } : {})}
+                            size="dialog"
+                        >
+                            {judged && judged.badges.length > 0 && (
+                                <div className="mt-1.5 flex flex-wrap gap-1">
+                                    {judged.badges.map(badge => (
+                                        <Badge key={badge} variant="outline" className="px-1.5 text-[10px]">
+                                            {badge}
+                                        </Badge>
+                                    ))}
+                                </div>
+                            )}
+                        </TokenIdentity>
+                        <div className="mt-3 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                            <span className="min-w-0 truncate font-berkeley-mono">{mint}</span>
+                            <CopyButton
+                                textToCopy={mint}
+                                showText={false}
+                                ariaLabel="Copy mint address"
+                                className="h-7 w-7 shrink-0 rounded-sm hover:bg-gray-50/60 transition-colors duration-150"
+                                iconClassName="h-3.5 w-3.5 text-muted-foreground"
+                                iconClassNameCheck="h-3.5 w-3.5"
+                                onCopied={() => toast.success('Mint address copied')}
+                            />
+                        </div>
+                    </div>
+
+                    {loading && (
+                        <div className="flex items-center justify-center py-10">
+                            <Button variant="outline" size="sm" disabled>
+                                <span className="inline-flex items-center gap-2">
+                                    <Spinner size="sm" />
+                                    Loading metadata…
+                                </span>
+                            </Button>
+                        </div>
+                    )}
+
+                    {!loading && !judged && (
+                        <p className="text-sm text-muted-foreground">
+                            No live market or judgment data is available for this mint right now.
+                        </p>
+                    )}
+
+                    {!loading && judged && (
+                        <>
+                            {/* Market */}
+                            <div className="space-y-2">
+                                <SectionHeading>Market</SectionHeading>
+                                <div className="grid gap-2 sm:grid-cols-3">
+                                    <SummaryField label="Price" value={formatValue(judged.market.price)} />
+                                    <SummaryField label="Liquidity" value={formatUsd(judged.market.liquidityUsd)} />
+                                    <SummaryField label="Volume 24h" value={formatUsd(judged.market.volume24hUsd)} />
+                                    <SummaryField label="Market cap" value={formatUsd(judged.market.marketCapUsd)} />
+                                    <SummaryField label="Holders" value={formatValue(judged.market.holderCount)} />
+                                    <SummaryField label="Decimals" value={formatValue(judged.market.decimals)} />
+                                </div>
+                            </div>
+
+                            {/* Judgment */}
+                            <div className="space-y-2">
+                                <SectionHeading>Judgment · score {judged.score.total}</SectionHeading>
+                                <div className="grid gap-2 sm:grid-cols-3">
+                                    {Object.entries(judged.score.components).map(([key, value]) => (
+                                        <SummaryField key={key} label={humanize(key)} value={String(value)} />
+                                    ))}
+                                </div>
+                                {judged.reasons.length > 0 && (
+                                    <div className="flex flex-wrap gap-1 pt-1">
+                                        {judged.reasons.map(reason => (
+                                            <Badge key={reason} variant="secondary" className="px-1.5 text-[10px]">
+                                                {humanize(reason)}
+                                            </Badge>
+                                        ))}
+                                    </div>
+                                )}
+                                <WarningChips warnings={judged.warnings} />
+                            </div>
+
+                            {/* Attestations */}
+                            {judged.claims.attestations.length > 0 && (
+                                <div className="space-y-2">
+                                    <SectionHeading>Attestations</SectionHeading>
+                                    <div className="grid gap-2 sm:grid-cols-2">
+                                        {judged.claims.attestations.map(attestation => (
+                                            <SummaryField
+                                                key={`${attestation.code}:${attestation.detail}`}
+                                                label={humanize(attestation.code)}
+                                                value={attestation.detail}
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {judged.inLists.length > 0 && (
+                                <div className="space-y-2">
+                                    <SectionHeading>Already in lists</SectionHeading>
+                                    <div className="flex flex-wrap gap-1">
+                                        {judged.inLists.map(slug => (
+                                            <Badge key={slug} variant="outline" className="px-1.5 text-[10px]">
+                                                {slug}
+                                            </Badge>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </>
+                    )}
+                </div>
+            </DialogContent>
+        </Dialog>
     );
 }
 
@@ -357,6 +588,58 @@ export function ListsTab(): React.JSX.Element {
         [selectedSlug, playgroundFetch, refreshDetail, refreshLists],
     );
 
+    // ---- metadata dialog ----
+    const [metadataOpen, setMetadataOpen] = useState(false);
+    const [metadataMint, setMetadataMint] = useState<string | null>(null);
+    const [metadataFallback, setMetadataFallback] = useState<{
+        symbol: string | null;
+        name: string | null;
+        logoURI: string | null;
+        verified?: boolean;
+    } | null>(null);
+    const [metadataJudged, setMetadataJudged] = useState<SearchResult | null>(null);
+    const [metadataLoading, setMetadataLoading] = useState(false);
+
+    /** Search rows have the full judged result in hand — open directly. */
+    const openMetadataForResult = useCallback((result: SearchResult) => {
+        setMetadataMint(result.mint);
+        setMetadataFallback({
+            symbol: result.claims.symbol,
+            name: result.claims.name,
+            logoURI: result.market.logoURI,
+            verified: result.verified,
+        });
+        setMetadataJudged(result);
+        setMetadataLoading(false);
+        setMetadataOpen(true);
+    }, []);
+
+    /** Member rows fetch the judged result on open (mint query, degen so gates never hide it). */
+    const openMetadataForMember = useCallback(
+        (token: V2ListToken) => {
+            setMetadataMint(token.mint);
+            setMetadataFallback({
+                symbol: token.symbol,
+                name: token.name,
+                logoURI: token.logoURI,
+                verified: token.verified,
+            });
+            setMetadataJudged(null);
+            setMetadataLoading(true);
+            setMetadataOpen(true);
+            void playgroundFetch(`/api/v2/lists/search-tokens?q=${encodeURIComponent(token.mint)}&policy=degen&limit=1`)
+                .then(async res => {
+                    if (!res.ok) return;
+                    const body = (await res.json()) as { results: SearchResult[] };
+                    const match = body.results.find(result => result.mint === token.mint) ?? null;
+                    setMetadataJudged(match);
+                })
+                .catch(() => {})
+                .finally(() => setMetadataLoading(false));
+        },
+        [playgroundFetch],
+    );
+
     const selectedList = useMemo(
         () => myLists?.find(list => list.slug === selectedSlug) ?? null,
         [myLists, selectedSlug],
@@ -428,10 +711,10 @@ export function ListsTab(): React.JSX.Element {
                 {/* My lists */}
                 <div className="space-y-4">
                     <div>
-                        <h4 className="font-medium">My lists</h4>
+                        <h4 className="font-inter-medium">My lists</h4>
                         <p className="text-sm text-muted-foreground">Published under your project</p>
                     </div>
-                    <TableSection columns="grid-cols-1">
+                    <div className="rounded-lg border border-border-medium bg-white dark:bg-zinc-950/30 shadow-sm overflow-hidden">
                         {myLists === null ? (
                             <div className="px-4 py-3 space-y-3">
                                 <Skeleton className="h-4 w-40" />
@@ -453,9 +736,9 @@ export function ListsTab(): React.JSX.Element {
                                             : 'hover:bg-gray-50/50'
                                     }`}
                                 >
-                                    <div className="text-sm font-medium">{list.name}</div>
+                                    <div className="text-sm font-inter-medium">{list.name}</div>
                                     <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                                        <span className="font-mono">{list.slug}</span>
+                                        <span className="font-berkeley-mono">{list.slug}</span>
                                         <span>·</span>
                                         <span>
                                             {list.tokenCount} token{list.tokenCount === 1 ? '' : 's'}
@@ -464,7 +747,7 @@ export function ListsTab(): React.JSX.Element {
                                 </button>
                             ))
                         )}
-                    </TableSection>
+                    </div>
                 </div>
 
                 {/* Selected list */}
@@ -488,7 +771,7 @@ export function ListsTab(): React.JSX.Element {
                             <div className="flex items-start justify-between gap-4">
                                 <div className="space-y-1">
                                     <div className="flex items-center gap-3">
-                                        <h2 className="text-xl font-semibold">{selectedList.name}</h2>
+                                        <h2 className="text-xl font-inter-semibold">{selectedList.name}</h2>
                                         <code className="rounded-md bg-gray-100 dark:bg-zinc-900 px-1.5 py-0.5 text-xs text-muted-foreground">
                                             /v2/lists/{selectedList.slug}
                                         </code>
@@ -521,10 +804,10 @@ export function ListsTab(): React.JSX.Element {
                             {/* Curator-assist search */}
                             <div className="space-y-4">
                                 <div>
-                                    <h4 className="font-medium">Add tokens</h4>
+                                    <h4 className="font-inter-medium">Add tokens</h4>
                                     <p className="text-sm text-muted-foreground">
                                         Search by symbol, name, or mint address — results are judged for
-                                        impersonation, liquidity, and provenance before you pick.
+                                        impersonation, liquidity, and provenance. Click a row for full metadata.
                                     </p>
                                 </div>
                                 <Input
@@ -542,71 +825,77 @@ export function ListsTab(): React.JSX.Element {
                                     <p className="text-sm text-muted-foreground">No candidates.</p>
                                 )}
                                 {results !== null && !searching && results.length > 0 && (
-                                    <TableSection
-                                        columns="grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(0,0.6fr))_72px]"
-                                        header={
-                                            <>
-                                                <div>Token</div>
-                                                <div>Score</div>
-                                                <div>Liquidity</div>
-                                                <div>Already in</div>
-                                                <div className="text-right">Action</div>
-                                            </>
-                                        }
-                                    >
-                                        {results.map(result => {
-                                            const isMember = memberMints.has(result.mint);
-                                            return (
-                                                <div
-                                                    key={result.mint}
-                                                    className="grid grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(0,0.6fr))_72px] gap-4 px-4 py-3 border-b last:border-b-0 hover:bg-gray-50/50 transition-colors"
-                                                >
-                                                    <div className="min-w-0 space-y-1">
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="text-sm font-semibold">
-                                                                {result.claims.symbol ?? shortMint(result.mint)}
-                                                            </span>
-                                                            <span className="truncate text-sm text-muted-foreground">
-                                                                {result.claims.name}
-                                                            </span>
-                                                            <VerifiedBadge verified={result.verified} />
-                                                        </div>
-                                                        <div className="flex flex-wrap items-center gap-2">
-                                                            <span className="font-mono text-[11px] text-muted-foreground">
-                                                                {shortMint(result.mint)}
-                                                            </span>
-                                                            <WarningChips warnings={result.warnings} />
-                                                        </div>
-                                                    </div>
-                                                    <div className="flex items-center font-mono text-sm">
-                                                        {result.score.total}
-                                                    </div>
-                                                    <div className="flex items-center text-sm text-muted-foreground">
-                                                        {formatUsd(result.market.liquidityUsd)}
-                                                    </div>
-                                                    <div className="flex items-center truncate text-xs text-muted-foreground">
-                                                        {result.inLists.length > 0 ? result.inLists.join(', ') : '—'}
-                                                    </div>
-                                                    <div className="flex items-center justify-end">
-                                                        <Button
-                                                            size="sm"
-                                                            variant="outline"
-                                                            disabled={isMember || addingMint === result.mint}
-                                                            onClick={() => void handleAddMint(result)}
-                                                        >
-                                                            {addingMint === result.mint ? (
-                                                                <Spinner size="sm" />
-                                                            ) : isMember ? (
-                                                                'Added'
-                                                            ) : (
-                                                                'Add'
-                                                            )}
-                                                        </Button>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
-                                    </TableSection>
+                                    <Table>
+                                        <TableHeader>
+                                            <TableRow>
+                                                <TableHead>Token</TableHead>
+                                                <TableHead align="right">Score</TableHead>
+                                                <TableHead align="right">Liquidity</TableHead>
+                                                <TableHead>Already in</TableHead>
+                                                <TableHead align="right" pinned="right">
+                                                    Action
+                                                </TableHead>
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            {results.map(result => {
+                                                const isMember = memberMints.has(result.mint);
+                                                return (
+                                                    <TableRow
+                                                        key={result.mint}
+                                                        className="cursor-pointer"
+                                                        onClick={() => openMetadataForResult(result)}
+                                                    >
+                                                        <TableCell>
+                                                            <TokenIdentity
+                                                                mint={result.mint}
+                                                                symbol={result.claims.symbol}
+                                                                name={result.claims.name}
+                                                                logoURI={result.market.logoURI}
+                                                                verified={result.verified}
+                                                            >
+                                                                {result.warnings.length > 0 && (
+                                                                    <div className="mt-1">
+                                                                        <WarningChips warnings={result.warnings} />
+                                                                    </div>
+                                                                )}
+                                                            </TokenIdentity>
+                                                        </TableCell>
+                                                        <TableCell align="right" numeric>
+                                                            {result.score.total}
+                                                        </TableCell>
+                                                        <TableCell align="right" numeric>
+                                                            {formatUsd(result.market.liquidityUsd)}
+                                                        </TableCell>
+                                                        <TableCell className="text-xs text-muted-foreground">
+                                                            {result.inLists.length > 0
+                                                                ? result.inLists.join(', ')
+                                                                : '—'}
+                                                        </TableCell>
+                                                        <TableCell align="right" pinned="right">
+                                                            <Button
+                                                                size="sm"
+                                                                variant="outline"
+                                                                disabled={isMember || addingMint === result.mint}
+                                                                onClick={event => {
+                                                                    event.stopPropagation();
+                                                                    void handleAddMint(result);
+                                                                }}
+                                                            >
+                                                                {addingMint === result.mint ? (
+                                                                    <Spinner size="sm" />
+                                                                ) : isMember ? (
+                                                                    'Added'
+                                                                ) : (
+                                                                    'Add'
+                                                                )}
+                                                            </Button>
+                                                        </TableCell>
+                                                    </TableRow>
+                                                );
+                                            })}
+                                        </TableBody>
+                                    </Table>
                                 )}
                                 {results !== null && !searching && suppressed.length > 0 && (
                                     <details className="group">
@@ -614,23 +903,21 @@ export function ListsTab(): React.JSX.Element {
                                             {suppressed.length} candidate{suppressed.length === 1 ? '' : 's'} filtered
                                             by policy
                                         </summary>
-                                        <div className="mt-3">
-                                            <TableSection columns="grid-cols-1">
-                                                {suppressed.map(item => (
-                                                    <div
-                                                        key={item.mint}
-                                                        className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b last:border-b-0"
-                                                    >
-                                                        <span className="text-sm font-medium">
-                                                            {item.symbol ?? shortMint(item.mint)}
-                                                        </span>
-                                                        <span className="text-xs text-muted-foreground">
-                                                            suppressed by {item.suppressedBy.join(', ')}
-                                                        </span>
-                                                        <WarningChips warnings={item.warnings} />
-                                                    </div>
-                                                ))}
-                                            </TableSection>
+                                        <div className="mt-3 rounded-lg border border-border-medium bg-white dark:bg-zinc-950/30 shadow-sm overflow-hidden">
+                                            {suppressed.map(item => (
+                                                <div
+                                                    key={item.mint}
+                                                    className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b last:border-b-0"
+                                                >
+                                                    <span className="text-sm font-inter-medium">
+                                                        {item.symbol ?? shortMint(item.mint)}
+                                                    </span>
+                                                    <span className="text-xs text-muted-foreground">
+                                                        suppressed by {item.suppressedBy.map(humanize).join(', ')}
+                                                    </span>
+                                                    <WarningChips warnings={item.warnings} />
+                                                </div>
+                                            ))}
                                         </div>
                                     </details>
                                 )}
@@ -639,78 +926,133 @@ export function ListsTab(): React.JSX.Element {
                             {/* Members */}
                             <div className="space-y-4">
                                 <div>
-                                    <h4 className="font-medium">
+                                    <h4 className="font-inter-medium">
                                         Tokens{' '}
-                                        <span className="text-muted-foreground font-normal">
+                                        <span className="text-muted-foreground font-inter">
                                             ({tokens?.length ?? selectedList.tokenCount})
                                         </span>
                                     </h4>
                                     <p className="text-sm text-muted-foreground">
-                                        What consumers of this list receive, in rank order
+                                        What consumers of this list receive, in rank order — click a row for metadata
                                     </p>
                                 </div>
                                 {tokens === null ? (
-                                    <TableSection columns="grid-cols-1">
-                                        <div className="px-4 py-3 space-y-3">
-                                            <Skeleton className="h-4 w-full" />
-                                            <Skeleton className="h-4 w-full" />
-                                        </div>
-                                    </TableSection>
+                                    <Table>
+                                        <TableHeader>
+                                            <TableRow>
+                                                <TableHead>Token</TableHead>
+                                                <TableHead>Mint</TableHead>
+                                                <TableHead>Status</TableHead>
+                                                <TableHead>Added</TableHead>
+                                                <TableHead align="right" pinned="right">
+                                                    Actions
+                                                </TableHead>
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            {Array.from({ length: 3 }).map((_, index) => (
+                                                <TableRow key={index}>
+                                                    <TableCell>
+                                                        <div className="flex items-center gap-3">
+                                                            <Skeleton className="h-8 w-8 rounded-full" />
+                                                            <Skeleton className="h-4 w-28" />
+                                                        </div>
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        <Skeleton className="h-4 w-40" />
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        <Skeleton className="h-5 w-20 rounded-full" />
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        <Skeleton className="h-4 w-20" />
+                                                    </TableCell>
+                                                    <TableCell align="right" pinned="right">
+                                                        <Skeleton className="ml-auto h-8 w-8" />
+                                                    </TableCell>
+                                                </TableRow>
+                                            ))}
+                                        </TableBody>
+                                    </Table>
                                 ) : tokens.length === 0 ? (
                                     <div className="bg-background/80 rounded-2xl border border-dashed border-black/20 px-6 py-8 text-center text-sm text-muted-foreground">
                                         Empty list — search above to add the first token.
                                     </div>
                                 ) : (
-                                    <TableSection
-                                        columns="grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,0.7fr)_72px]"
-                                        header={
-                                            <>
-                                                <div>Token</div>
-                                                <div>Mint</div>
-                                                <div>Status</div>
-                                                <div className="text-right">Actions</div>
-                                            </>
-                                        }
-                                    >
-                                        {tokens.map(token => (
-                                            <div
-                                                key={token.mint}
-                                                className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,0.7fr)_72px] gap-4 px-4 py-3 border-b last:border-b-0 hover:bg-gray-50/50 transition-colors"
-                                            >
-                                                <div className="flex min-w-0 items-center gap-2">
-                                                    <span className="text-sm font-semibold">
-                                                        {token.symbol ?? shortMint(token.mint)}
-                                                    </span>
-                                                    <span className="truncate text-sm text-muted-foreground">
-                                                        {token.name}
-                                                    </span>
-                                                </div>
-                                                <div className="flex items-center font-mono text-xs text-muted-foreground">
-                                                    {shortMint(token.mint)}
-                                                </div>
-                                                <div className="flex items-center">
-                                                    <VerifiedBadge verified={token.verified} />
-                                                </div>
-                                                <div className="flex items-center justify-end">
-                                                    <Button
-                                                        size="sm"
-                                                        variant="ghost"
-                                                        aria-label={`Remove ${token.symbol ?? token.mint}`}
-                                                        className="h-8 w-8 rounded-sm p-0"
-                                                        onClick={() => void handleRemoveMint(token)}
+                                    <Table>
+                                        <TableHeader>
+                                            <TableRow>
+                                                <TableHead>Token</TableHead>
+                                                <TableHead>Mint</TableHead>
+                                                <TableHead>Status</TableHead>
+                                                <TableHead>Added</TableHead>
+                                                <TableHead align="right" pinned="right">
+                                                    Actions
+                                                </TableHead>
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            {tokens.map(token => (
+                                                <TableRow
+                                                    key={token.mint}
+                                                    className="cursor-pointer"
+                                                    onClick={() => openMetadataForMember(token)}
+                                                >
+                                                    <TableCell>
+                                                        <TokenIdentity
+                                                            mint={token.mint}
+                                                            symbol={token.symbol}
+                                                            name={token.name}
+                                                            logoURI={token.logoURI}
+                                                        />
+                                                    </TableCell>
+                                                    <TableCellCopyable
+                                                        mono
+                                                        truncate={180}
+                                                        value={token.mint}
+                                                        onClick={event => event.stopPropagation()}
                                                     >
-                                                        <IconTrashFill className="h-3.5 w-3.5 fill-muted-foreground" />
-                                                    </Button>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </TableSection>
+                                                        {token.mint}
+                                                    </TableCellCopyable>
+                                                    <TableCell>
+                                                        <VerifiedBadge verified={token.verified} />
+                                                    </TableCell>
+                                                    <TableCell className="text-sm text-muted-foreground">
+                                                        {formatDate(token.addedAt)}
+                                                    </TableCell>
+                                                    <TableCell align="right" pinned="right">
+                                                        <Button
+                                                            size="sm"
+                                                            variant="ghost"
+                                                            aria-label={`Remove ${token.symbol ?? token.mint}`}
+                                                            className="h-8 w-8 rounded-sm p-0"
+                                                            onClick={event => {
+                                                                event.stopPropagation();
+                                                                void handleRemoveMint(token);
+                                                            }}
+                                                        >
+                                                            <IconTrashFill className="h-3.5 w-3.5 fill-muted-foreground" />
+                                                        </Button>
+                                                    </TableCell>
+                                                </TableRow>
+                                            ))}
+                                        </TableBody>
+                                    </Table>
                                 )}
                             </div>
                         </>
                     )}
                 </div>
             </div>
+
+            <TokenMetadataDialog
+                open={metadataOpen}
+                onOpenChange={setMetadataOpen}
+                mint={metadataMint}
+                fallback={metadataFallback}
+                judged={metadataJudged}
+                loading={metadataLoading}
+            />
 
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
                 <DialogContent>
@@ -744,7 +1086,7 @@ export function ListsTab(): React.JSX.Element {
                                     setCreateSlug(event.target.value);
                                 }}
                                 placeholder="ownership-core"
-                                className="font-mono"
+                                className="font-berkeley-mono"
                             />
                             <p className="text-xs text-muted-foreground">Lowercase letters, numbers, and hyphens.</p>
                         </div>
