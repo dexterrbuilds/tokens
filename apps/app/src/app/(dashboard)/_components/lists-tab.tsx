@@ -866,8 +866,10 @@ export function ListsTab(): React.JSX.Element {
                             tabs={railTabs}
                             activeIndex={railTab === 'mine' ? 0 : 1}
                             onTabClick={id => setRailTab(id)}
-                            containerClassName="flex justify-start px-0"
-                            tabClassName="!px-0"
+                            // Zeroing the DS padding var keeps the active-tab underline
+                            // aligned with the label: the indicator insets itself by the
+                            // same var the tab pads with.
+                            containerClassName="flex justify-start px-0 [--tab-padding-x-md:0px]"
                             listClassName="w-max gap-4"
                         />
                         <div className="flex items-center gap-0.5 pb-1.5">

@@ -15,8 +15,6 @@ interface TabNavigationProps<T = string> {
     onHover?: (index: number | null) => void;
     containerClassName?: string;
     wrapperClassName?: string;
-    /** Extra classes per Tab. DS Tab pads via inline styles, so use `!px-0` to strip it. */
-    tabClassName?: string;
     /** Extra classes on the TabList (e.g. `gap-4` once tab padding is removed). */
     listClassName?: string;
 }
@@ -32,7 +30,6 @@ export function TabNavigation<T = string>({
     onHover: _onHover,
     containerClassName = 'w-full flex justify-start px-0 border-b border-border',
     wrapperClassName = 'p-0',
-    tabClassName,
     listClassName = 'w-max',
 }: TabNavigationProps<T>) {
     const activeValue = useMemo(() => {
@@ -59,11 +56,7 @@ export function TabNavigation<T = string>({
                 <Tabs size="md" bordered={false} fullWidth value={activeValue} onValueChange={handleValueChange}>
                     <TabList className={listClassName}>
                         {tabs.map(tab => (
-                            <Tab
-                                key={getTabValue(tab.id)}
-                                value={getTabValue(tab.id)}
-                                className={`whitespace-nowrap${tabClassName ? ` ${tabClassName}` : ''}`}
-                            >
+                            <Tab key={getTabValue(tab.id)} value={getTabValue(tab.id)} className="whitespace-nowrap">
                                 {tab.label}
                             </Tab>
                         ))}
