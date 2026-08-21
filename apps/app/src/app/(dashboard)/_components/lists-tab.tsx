@@ -600,30 +600,6 @@ export function ListsTab(): React.JSX.Element {
         [selectedSlug, playgroundFetch, refreshDetail, refreshLists],
     );
 
-    const handleRemoveMint = useCallback(
-        async (token: V2ListToken) => {
-            if (!selectedSlug) return;
-            const res = await playgroundFetch(`/api/v2/lists/${selectedSlug}/members/${token.mint}`, {
-                method: 'DELETE',
-            });
-            if (!res.ok) {
-                const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-                toast.error(body?.error?.message ?? `Remove failed (HTTP ${res.status})`);
-                return;
-            }
-            toast.success(`${token.symbol ?? shortMint(token.mint)} removed`);
-            await Promise.all([refreshDetail(), refreshLists()]);
-        },
-        [selectedSlug, playgroundFetch, refreshDetail, refreshLists],
-    );
-
-    const removeSingleMint = useCallback(
-        (token: V2ListToken) => {
-            void handleRemoveMint(token);
-        },
-        [handleRemoveMint],
-    );
-
     // ---- multi-select + bulk removal (svela-style selection dock) ----
     const removeSelectedMints = useCallback(
         async (mints: string[]) => {
@@ -907,12 +883,12 @@ export function ListsTab(): React.JSX.Element {
                                             {Array.from({ length: 3 }).map((_, index) => (
                                                 <div
                                                     key={index}
-                                                    className="grid gap-4 px-4 py-3 border-b last:border-b-0"
+                                                    className="grid gap-4 px-4 py-2 border-b last:border-b-0"
                                                     style={{ gridTemplateColumns: MEMBER_GRID_TEMPLATE_COLUMNS }}
                                                 >
                                                     <div className="flex items-center gap-3">
-                                                        <Skeleton className="h-8 w-8 rounded-full" />
-                                                        <Skeleton className="h-4 w-28" />
+                                                        <Skeleton className="h-5 w-5 rounded-full" />
+                                                        <Skeleton className="h-4 w-40" />
                                                     </div>
                                                     <div className="flex items-center">
                                                         <Skeleton className="h-4 w-24" />
@@ -922,9 +898,6 @@ export function ListsTab(): React.JSX.Element {
                                                     </div>
                                                     <div className="flex items-center">
                                                         <Skeleton className="h-4 w-16" />
-                                                    </div>
-                                                    <div className="flex items-center justify-end">
-                                                        <Skeleton className="h-8 w-8" />
                                                     </div>
                                                 </div>
                                             ))}
@@ -939,7 +912,6 @@ export function ListsTab(): React.JSX.Element {
                                         tokens={tokens}
                                         selection={memberSelection}
                                         onRowClick={openMetadataForMember}
-                                        onRemove={removeSingleMint}
                                     />
                                 )}
                             </div>

@@ -145,7 +145,7 @@ export function TokenIdentity({
     layout?: 'stacked' | 'inline';
     children?: React.ReactNode;
 }) {
-    const avatarSize = size === 'dialog' ? 'h-12 w-12' : layout === 'inline' ? 'h-7 w-7' : 'h-8 w-8';
+    const avatarSize = size === 'dialog' ? 'h-12 w-12' : layout === 'inline' ? 'h-5 w-5' : 'h-8 w-8';
     const symbolText = symbol ?? shortMint(mint);
     return (
         <div className="flex items-center gap-3 min-w-0">
@@ -155,8 +155,8 @@ export function TokenIdentity({
             </Avatar>
             {layout === 'inline' ? (
                 <div className="flex min-w-0 items-center gap-2">
-                    <span className="shrink-0 font-inter-medium">{symbolText}</span>
-                    <span className="truncate text-sm text-muted-foreground">{name ?? '—'}</span>
+                    <span className="shrink-0 text-sm font-inter-medium">{symbolText}</span>
+                    <span className="truncate text-xs text-muted-foreground">{name ?? '—'}</span>
                     {verified !== undefined && <VerifiedBadge verified={verified} />}
                     {children}
                 </div>

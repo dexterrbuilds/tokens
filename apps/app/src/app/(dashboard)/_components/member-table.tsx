@@ -13,9 +13,7 @@ import {
 } from '@tanstack/react-table';
 import { motion } from 'motion/react';
 import { toast } from 'sonner';
-import { IconTrashFill } from 'symbols-react';
 
-import { Button } from '@tokens/ui/button';
 import { Checkbox } from '@tokens/ui/checkbox';
 import { CopyButton } from '@/components/app-ui/copy-button';
 
@@ -37,7 +35,7 @@ import { TokenIdentity, VerifiedBadge, formatDate, shortMint, type V2ListToken }
  */
 
 export const MEMBER_GRID_TEMPLATE_COLUMNS =
-    'minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 72px)';
+    'minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 0.8fr)';
 
 declare module '@tanstack/react-table' {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -49,7 +47,7 @@ declare module '@tanstack/react-table' {
     }
 }
 
-function createMemberColumns(onRemove: (token: V2ListToken) => void): ColumnDef<V2ListToken>[] {
+function createMemberColumns(): ColumnDef<V2ListToken>[] {
     return [
         {
             id: 'token',
@@ -103,23 +101,6 @@ function createMemberColumns(onRemove: (token: V2ListToken) => void): ColumnDef<
             header: 'Added',
             cell: ({ row }) => (
                 <span className="text-sm text-muted-foreground">{formatDate(row.original.addedAt)}</span>
-            ),
-        },
-        {
-            id: 'actions',
-            enableSorting: false,
-            meta: { align: 'right', interactive: true },
-            header: 'Actions',
-            cell: ({ row }) => (
-                <Button
-                    size="sm"
-                    variant="ghost"
-                    aria-label={`Remove ${row.original.symbol ?? row.original.mint}`}
-                    className="h-8 w-8 rounded-sm p-0"
-                    onClick={() => onRemove(row.original)}
-                >
-                    <IconTrashFill className="h-3.5 w-3.5 fill-muted-foreground" />
-                </Button>
             ),
         },
     ];
@@ -323,15 +304,13 @@ export function MemberTable({
     tokens,
     selection,
     onRowClick,
-    onRemove,
 }: {
     tokens: V2ListToken[];
     selection: ListSelection;
     onRowClick: (token: V2ListToken) => void;
-    onRemove: (token: V2ListToken) => void;
 }) {
     const [sorting, setSorting] = useState<SortingState>([]);
-    const columns = useMemo(() => createMemberColumns(onRemove), [onRemove]);
+    const columns = useMemo(() => createMemberColumns(), []);
 
     const table = useReactTable({
         data: tokens,
