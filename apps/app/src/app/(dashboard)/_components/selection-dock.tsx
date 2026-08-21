@@ -50,9 +50,9 @@ export function SelectionDock({
                         animate={{ opacity: 1, scale: 1, y: 0 }}
                         exit={shouldReduceMotion ? undefined : { opacity: 0, scale: 0.95, y: 8 }}
                         transition={{ type: 'tween', duration: 0.2, ease: [0.65, 0, 0.35, 1] }}
-                        className="pointer-events-auto flex h-[56px] w-[400px] max-w-[calc(100vw-2rem)] items-center rounded-full bg-zinc-800 p-1 shadow-[0_3px_8px_rgba(0,0,0,0.2),0_2px_4px_rgba(0,0,0,0.1)]"
+                        className="pointer-events-auto flex h-[56px] w-[440px] max-w-[calc(100vw-2rem)] items-center rounded-full bg-zinc-800 px-2 py-1 shadow-[0_3px_8px_rgba(0,0,0,0.2),0_2px_4px_rgba(0,0,0,0.1)]"
                     >
-                        <div className="flex h-full w-full items-center justify-between px-2">
+                        <div className="flex h-full w-full items-center justify-between px-4">
                             <div className="flex items-center gap-3">
                                 <Checkbox
                                     // Dark pill: the default checked fill (bg-primary) would
