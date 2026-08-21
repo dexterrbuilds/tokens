@@ -97,3 +97,13 @@ export function StackIcon({ className }: { className?: string }) {
         </svg>
     );
 }
+
+/** Plus — the rail's create-list trigger. */
+export function PlusIcon({ className }: { className?: string }) {
+    return (
+        <svg className={className} viewBox="0 0 32 32" fill="none" aria-hidden="true" focusable="false">
+            <path d="M7 16H25" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" />
+            <path d="M16 7L16 25" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" />
+        </svg>
+    );
+}

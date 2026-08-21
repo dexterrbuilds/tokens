@@ -11,7 +11,6 @@ import {
     IconK,
     IconKeySlashFill,
     IconMagnifyingglass,
-    IconPlus,
     IconXmark,
 } from 'symbols-react';
 
@@ -35,7 +34,7 @@ import { EmptyState } from '@/components/global/empty-state';
 import { TabNavigation } from '@/components/global/tab-navigation';
 import { ComposeEndpointDialog, type ComposableList } from './compose-endpoint-dialog';
 import { ListSettingsDialog } from './list-settings-dialog';
-import { PencilIcon, StackIcon, TrashCanFillIcon } from './icons';
+import { PencilIcon, PlusIcon, StackIcon, TrashCanFillIcon } from './icons';
 import { MEMBER_GRID_TEMPLATE_COLUMNS, MemberTable } from './member-table';
 import { SelectionDock } from './selection-dock';
 import { BulkRemoveError, useListSelection } from './use-list-selection';
@@ -876,7 +875,7 @@ export function ListsTab(): React.JSX.Element {
                                 <StackIcon className="size-6 text-muted-foreground" />
                             </RailAction>
                             <RailAction label="New list" onClick={() => setCreateOpen(true)}>
-                                <IconPlus className="size-3.5 fill-muted-foreground" />
+                                <PlusIcon className="size-6 text-muted-foreground" />
                             </RailAction>
                         </div>
                     </div>
