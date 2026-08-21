@@ -11,6 +11,8 @@ import {
     IconK,
     IconKeySlashFill,
     IconMagnifyingglass,
+    IconPlus,
+    IconSquareStack,
     IconXmark,
 } from 'symbols-react';
 
@@ -231,6 +233,35 @@ function CommunityRailRow({
 function shortOwnerId(projectId: string | undefined): string {
     if (!projectId) return '—';
     return projectId.length > 12 ? `${projectId.slice(0, 8)}…` : projectId;
+}
+
+/** Rail header action: icon-only button with a hover tooltip naming what it does. */
+function RailAction({
+    label,
+    onClick,
+    children,
+}: {
+    label: string;
+    onClick: () => void;
+    children: React.ReactNode;
+}) {
+    return (
+        <Tooltip delayDuration={300}>
+            <TooltipTrigger asChild>
+                <button
+                    type="button"
+                    aria-label={label}
+                    onClick={onClick}
+                    className="flex size-7 cursor-pointer items-center justify-center rounded-md transition-colors hover:bg-black/[0.06] dark:hover:bg-white/10"
+                >
+                    {children}
+                </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="rounded-sm bg-zinc-800 px-2 py-1 dark:bg-zinc-900">
+                <p className="text-xs text-white">{label}</p>
+            </TooltipContent>
+        </Tooltip>
+    );
 }
 
 /** Square hover affordance used by the list rail — icon-only, accessible name via aria-label. */
@@ -836,24 +867,16 @@ export function ListsTab(): React.JSX.Element {
                             activeIndex={railTab === 'mine' ? 0 : 1}
                             onTabClick={id => setRailTab(id)}
                             containerClassName="flex justify-start px-0"
+                            tabClassName="!px-0"
+                            listClassName="w-max gap-4"
                         />
-                        <div className="flex items-center gap-1.5 pb-1.5">
-                            <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 px-2.5 text-xs"
-                                onClick={() => setComposeOpen(true)}
-                            >
-                                Compose
-                            </Button>
-                            <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 px-2.5 text-xs"
-                                onClick={() => setCreateOpen(true)}
-                            >
-                                New list
-                            </Button>
+                        <div className="flex items-center gap-0.5 pb-1.5">
+                            <RailAction label="Compose an endpoint" onClick={() => setComposeOpen(true)}>
+                                <IconSquareStack className="size-3.5 fill-muted-foreground" />
+                            </RailAction>
+                            <RailAction label="New list" onClick={() => setCreateOpen(true)}>
+                                <IconPlus className="size-3.5 fill-muted-foreground" />
+                            </RailAction>
                         </div>
                     </div>
                     <div className="space-y-1.5">
