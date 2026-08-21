@@ -5,7 +5,7 @@ import { Badge } from '@tokens/ui/badge';
 
 /**
  * Shared token presentation pieces + v2 lists API response shapes, used by the
- * Lists tab, the ⌘K token search palette, and the metadata dialog.
+ * Lists tab, the ⌘K token search palette, and the metadata sheet.
  */
 
 export interface V2ListToken {
@@ -113,7 +113,7 @@ export function WarningChips({ warnings }: { warnings: string[] }) {
  * Admin curation table's identity cell: logo avatar with initials fallback +
  * symbol/name. `layout="inline"` puts the name beside the symbol on one line
  * (shorter table rows); `"stacked"` keeps the name on its own line, which the
- * search palette and metadata dialog want for their extra child content.
+ * search palette and metadata sheet want for their extra child content.
  */
 export function TokenIdentity({
     mint,

@@ -18,6 +18,7 @@ import { Badge } from '@tokens/ui/badge';
 import { Button } from '@tokens/ui/button';
 import { Input } from '@tokens/ui/input';
 import { Label } from '@tokens/ui/label';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@tokens/ui/sheet';
 import { Skeleton } from '@tokens/ui/skeleton';
 import { Spinner } from '@tokens/ui/spinner';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@tokens/ui/tooltip';
@@ -32,7 +33,7 @@ import {
 } from '@/components/app-ui/dialog';
 import { EmptyState } from '@/components/global/empty-state';
 import { TabNavigation } from '@/components/global/tab-navigation';
-import { ComposeEndpointDialog, type ComposableList } from './compose-endpoint-dialog';
+import { ComposeEndpointSheet, type ComposableList } from './compose-endpoint-dialog';
 import { ListSettingsDialog } from './list-settings-dialog';
 import { PencilIcon, PlusIcon, StackIcon, TrashCanFillIcon } from './icons';
 import { MEMBER_GRID_TEMPLATE_COLUMNS, MemberTable } from './member-table';
@@ -272,15 +273,7 @@ function shortOwnerId(projectId: string | undefined): string {
 }
 
 /** Rail header action: icon-only button with a hover tooltip naming what it does. */
-function RailAction({
-    label,
-    onClick,
-    children,
-}: {
-    label: string;
-    onClick: () => void;
-    children: React.ReactNode;
-}) {
+function RailAction({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
     return (
         <Tooltip delayDuration={300}>
             <TooltipTrigger asChild>
@@ -331,7 +324,7 @@ function IconButton({
  * copyable mint, market field grid, and the judgment breakdown (score
  * components, reasons, warnings, attestations).
  */
-function TokenMetadataDialog({
+function TokenMetadataSheet({
     open,
     onOpenChange,
     mint,
@@ -354,12 +347,12 @@ function TokenMetadataDialog({
     const verified = judged?.verified ?? fallback?.verified;
 
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-                <DialogHeader>
-                    <DialogTitle>Token metadata</DialogTitle>
-                    <DialogDescription>Live market data and the judgment breakdown for this mint.</DialogDescription>
-                </DialogHeader>
+        <Sheet open={open} onOpenChange={onOpenChange}>
+            <SheetContent className="w-full overflow-y-auto border-border-light sm:max-w-2xl">
+                <SheetHeader>
+                    <SheetTitle>Token metadata</SheetTitle>
+                    <SheetDescription>Live market data and the judgment breakdown for this mint.</SheetDescription>
+                </SheetHeader>
 
                 <div className="space-y-5 py-2">
                     {/* Identity */}
@@ -479,8 +472,8 @@ function TokenMetadataDialog({
                         </>
                     )}
                 </div>
-            </DialogContent>
-        </Dialog>
+            </SheetContent>
+        </Sheet>
     );
 }
 
@@ -799,7 +792,7 @@ export function ListsTab(): React.JSX.Element {
         clearMemberSelection();
     }, [selectedSlug, clearMemberSelection]);
 
-    // ---- metadata dialog ----
+    // ---- metadata sheet ----
     const [metadataOpen, setMetadataOpen] = useState(false);
     const [metadataMint, setMetadataMint] = useState<string | null>(null);
     const [metadataFallback, setMetadataFallback] = useState<{
@@ -1077,8 +1070,8 @@ export function ListsTab(): React.JSX.Element {
                                                     className="max-w-[260px] rounded-sm bg-zinc-800 px-2 py-1 dark:bg-zinc-900"
                                                 >
                                                     <p className="text-xs text-white">
-                                                        What consumers of this list receive, in rank order — click a
-                                                        row for metadata.
+                                                        What consumers of this list receive, in rank order — click a row
+                                                        for metadata.
                                                     </p>
                                                 </TooltipContent>
                                             </Tooltip>
@@ -1176,14 +1169,14 @@ export function ListsTab(): React.JSX.Element {
                 />
             )}
 
-            <ComposeEndpointDialog
+            <ComposeEndpointSheet
                 open={composeOpen}
                 onOpenChange={setComposeOpen}
                 lists={composableLists}
                 playgroundFetch={playgroundFetch}
             />
 
-            <TokenMetadataDialog
+            <TokenMetadataSheet
                 open={metadataOpen}
                 onOpenChange={setMetadataOpen}
                 mint={metadataMint}

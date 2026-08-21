@@ -34,8 +34,7 @@ import { TokenIdentity, formatDate, shortMint, type V2ListToken } from './token-
  * hover-revealed and locked open while anything is selected.
  */
 
-export const MEMBER_GRID_TEMPLATE_COLUMNS =
-    'minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 0.8fr)';
+export const MEMBER_GRID_TEMPLATE_COLUMNS = 'minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 0.8fr)';
 
 declare module '@tanstack/react-table' {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -175,14 +174,13 @@ function MemberTableRowInner({
     const cells = row.getVisibleCells().map((cell, cellIndex) => {
         const meta = cell.column.columnDef.meta;
         const align = meta?.align ?? 'left';
-        const cellClassName = [
-            'flex min-w-0 items-center',
-            align === 'left' ? 'justify-start' : 'justify-end',
-        ].join(' ');
+        const cellClassName = ['flex min-w-0 items-center', align === 'left' ? 'justify-start' : 'justify-end'].join(
+            ' ',
+        );
 
         // First cell — merged select + token: hover reveals the checkbox, but
         // only the checkbox itself toggles selection. Clicks anywhere else in
-        // the cell fall through to the row (metadata dialog / selection toggle).
+        // the cell fall through to the row (metadata sheet / selection toggle).
         if (cellIndex === 0 && selectable) {
             return (
                 <div key={cell.id} className={cellClassName}>

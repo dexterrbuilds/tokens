@@ -6,16 +6,9 @@ import { toast } from 'sonner';
 import { Badge } from '@tokens/ui/badge';
 import { Button } from '@tokens/ui/button';
 import { Checkbox } from '@tokens/ui/checkbox';
+import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@tokens/ui/sheet';
 import { Spinner } from '@tokens/ui/spinner';
 import { CopyButton } from '@/components/app-ui/copy-button';
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from '@/components/app-ui/dialog';
 
 import { SectionHeading, type PlaygroundFetcher } from './token-bits';
 
@@ -37,7 +30,7 @@ export interface ComposableList {
  * curated, anyone's — and walk away with the composed URL. Nothing is
  * persisted; the URL is the product.
  */
-export function ComposeEndpointDialog({
+export function ComposeEndpointSheet({
     open,
     onOpenChange,
     lists,
@@ -59,11 +52,12 @@ export function ComposeEndpointDialog({
         }
     }, [open]);
 
-    const slugs = useMemo(
+    const selectedLists = useMemo(
         // Catalog order keeps the query readable (curated first).
-        () => lists.filter(list => selected.has(list.slug)).map(list => list.slug),
+        () => lists.filter(list => selected.has(list.slug)),
         [lists, selected],
     );
+    const slugs = useMemo(() => selectedLists.map(list => list.slug), [selectedLists]);
     const atCap = slugs.length >= MAX_COMPOSED_LISTS;
 
     const composePath = slugs.length > 0 ? `/api/v2/lists/tokens?lists=${slugs.join(',')}` : null;
@@ -113,15 +107,15 @@ export function ComposeEndpointDialog({
     ];
 
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
-                <DialogHeader>
-                    <DialogTitle>Compose an endpoint</DialogTitle>
-                    <DialogDescription>
-                        Pick up to {MAX_COMPOSED_LISTS} lists — the composed URL returns their union, deduped by
-                        mint, with each token tagged by the lists that contain it.
-                    </DialogDescription>
-                </DialogHeader>
+        <Sheet open={open} onOpenChange={onOpenChange}>
+            <SheetContent className="w-full overflow-y-auto border-border-light sm:max-w-lg">
+                <SheetHeader>
+                    <SheetTitle>Compose an endpoint</SheetTitle>
+                    <SheetDescription>
+                        Pick up to {MAX_COMPOSED_LISTS} lists — the composed URL returns their union, deduped by mint,
+                        with each token tagged by the lists that contain it.
+                    </SheetDescription>
+                </SheetHeader>
 
                 <div className="space-y-4 py-2">
                     {groups.map(group =>
@@ -168,26 +162,70 @@ export function ComposeEndpointDialog({
                         </p>
                     )}
 
-                    {/* The product: a copyable endpoint */}
-                    <div className="rounded-lg border border-border-medium bg-gray-50/80 dark:bg-zinc-900/40 p-3">
+                    {/* The product: a live, copyable endpoint. */}
+                    <div className="space-y-2">
                         <SectionHeading>Your endpoint</SectionHeading>
-                        {composeUrl && composePath ? (
-                            <>
-                                <div className="mt-2 flex items-center justify-between gap-2">
-                                    <code className="min-w-0 flex-1 break-all font-berkeley-mono text-xs text-foreground">
-                                        {composePath}
-                                    </code>
+                        <div className="overflow-hidden rounded-lg border border-white/10 bg-zinc-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_8px_24px_rgba(0,0,0,0.12)]">
+                            <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
+                                <span className="font-berkeley-mono text-[10px] uppercase tracking-[0.12em] text-zinc-500">
+                                    Request preview
+                                </span>
+                                {composeUrl && (
                                     <CopyButton
                                         textToCopy={composeUrl}
                                         showText={false}
                                         ariaLabel="Copy composed endpoint URL"
-                                        className="h-7 w-7 shrink-0 rounded-sm hover:bg-black/[0.06] transition-colors duration-150"
-                                        iconClassName="h-3.5 w-3.5 text-muted-foreground"
-                                        iconClassNameCheck="h-3.5 w-3.5"
+                                        className="h-7 w-7 shrink-0 rounded-sm transition-colors duration-150 hover:bg-white/10 active:scale-[0.97]"
+                                        iconClassName="h-3.5 w-3.5 text-zinc-400"
+                                        iconClassNameCheck="h-3.5 w-3.5 text-emerald-400"
                                         onCopied={() => toast.success('Endpoint URL copied')}
                                     />
-                                </div>
-                                <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                                )}
+                            </div>
+
+                            <div className="px-3 py-3">
+                                <code className="block break-all font-berkeley-mono text-xs leading-5">
+                                    <span className="font-semibold text-emerald-400">GET</span>{' '}
+                                    <span className="text-zinc-400">{PUBLIC_API_ORIGIN}</span>
+                                    <span className="text-sky-400">/api/v2/lists/tokens</span>
+                                    <span className="text-fuchsia-300">?lists</span>
+                                    <span className="text-zinc-500">=</span>
+                                    {selectedLists.length > 0 ? (
+                                        selectedLists.map((list, index) => (
+                                            <span key={list.slug}>
+                                                {index > 0 && <span className="text-zinc-500">,</span>}
+                                                <span className="text-amber-300">{list.slug}</span>
+                                            </span>
+                                        ))
+                                    ) : (
+                                        <span className="italic text-zinc-600">select-a-list</span>
+                                    )}
+                                </code>
+
+                                {selectedLists.length > 0 ? (
+                                    <div className="mt-3 border-t border-white/10 pt-3">
+                                        <p className="font-berkeley-mono text-[10px] uppercase tracking-[0.12em] text-zinc-600">
+                                            Selected lists
+                                        </p>
+                                        <div className="mt-2 space-y-1.5">
+                                            {selectedLists.map(list => (
+                                                <div
+                                                    key={list.slug}
+                                                    className="flex min-w-0 items-baseline justify-between gap-3 font-berkeley-mono text-xs"
+                                                >
+                                                    <span className="truncate text-zinc-200">{list.name}</span>
+                                                    <span className="shrink-0 text-amber-300">{list.slug}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <p className="mt-3 border-t border-white/10 pt-3 text-xs text-zinc-500">
+                                        Select a list above to build the request.
+                                    </p>
+                                )}
+
+                                <div className="mt-3 flex min-h-4 items-center gap-1.5 text-xs text-zinc-500">
                                     {previewing ? (
                                         <>
                                             <Spinner size="sm" /> Sizing the union…
@@ -199,21 +237,17 @@ export function ComposeEndpointDialog({
                                         </>
                                     ) : null}
                                 </div>
-                            </>
-                        ) : (
-                            <p className="mt-2 text-sm text-muted-foreground">
-                                Check at least one list to build the URL.
-                            </p>
-                        )}
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <DialogFooter>
+                <SheetFooter>
                     <Button variant="outline" onClick={() => onOpenChange(false)}>
                         Done
                     </Button>
-                </DialogFooter>
-            </DialogContent>
-        </Dialog>
+                </SheetFooter>
+            </SheetContent>
+        </Sheet>
     );
 }
