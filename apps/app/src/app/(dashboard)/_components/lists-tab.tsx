@@ -12,7 +12,6 @@ import {
     IconKeySlashFill,
     IconMagnifyingglass,
     IconPlus,
-    IconSquareStack,
     IconXmark,
 } from 'symbols-react';
 
@@ -36,7 +35,7 @@ import { EmptyState } from '@/components/global/empty-state';
 import { TabNavigation } from '@/components/global/tab-navigation';
 import { ComposeEndpointDialog, type ComposableList } from './compose-endpoint-dialog';
 import { ListSettingsDialog } from './list-settings-dialog';
-import { PencilIcon, TrashCanFillIcon } from './icons';
+import { PencilIcon, StackIcon, TrashCanFillIcon } from './icons';
 import { MEMBER_GRID_TEMPLATE_COLUMNS, MemberTable } from './member-table';
 import { SelectionDock } from './selection-dock';
 import { BulkRemoveError, useListSelection } from './use-list-selection';
@@ -874,7 +873,7 @@ export function ListsTab(): React.JSX.Element {
                         />
                         <div className="flex items-center gap-0.5 pb-1.5">
                             <RailAction label="Compose an endpoint" onClick={() => setComposeOpen(true)}>
-                                <IconSquareStack className="size-3.5 fill-muted-foreground" />
+                                <StackIcon className="size-3.5 text-muted-foreground" />
                             </RailAction>
                             <RailAction label="New list" onClick={() => setCreateOpen(true)}>
                                 <IconPlus className="size-3.5 fill-muted-foreground" />
