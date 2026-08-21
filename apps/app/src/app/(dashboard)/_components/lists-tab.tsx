@@ -12,7 +12,6 @@ import {
     IconKeySlashFill,
     IconMagnifyingglass,
     IconPencil,
-    IconTrashFill,
     IconXmark,
 } from 'symbols-react';
 
@@ -34,6 +33,7 @@ import {
 } from '@/components/app-ui/dialog';
 import { EmptyState } from '@/components/global/empty-state';
 import { ListSettingsDialog } from './list-settings-dialog';
+import { TrashCanIcon } from './trash-can-icon';
 import { MEMBER_GRID_TEMPLATE_COLUMNS, MemberTable } from './member-table';
 import { SelectionDock } from './selection-dock';
 import { BulkRemoveError, useListSelection } from './use-list-selection';
@@ -81,34 +81,6 @@ function slugify(value: string): string {
         .slice(0, 63);
 }
 
-/** Dashboard table chrome (shared with the API-keys tables): gray gutter, uppercase header, white card. */
-function TableSection({
-    header,
-    columns,
-    children,
-}: {
-    header?: React.ReactNode;
-    columns: string;
-    children: React.ReactNode;
-}) {
-    return (
-        <div className="rounded-[12px] bg-gray-100/60 overflow-hidden p-0.5">
-            {header && (
-                <div className="px-3 py-2">
-                    <div
-                        className={`grid ${columns} gap-4 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide`}
-                    >
-                        {header}
-                    </div>
-                </div>
-            )}
-            <div className="bg-white dark:bg-zinc-950/30 border border-black/[0.15] rounded-lg shadow-sm overflow-hidden">
-                {children}
-            </div>
-        </div>
-    );
-}
-
 /**
  * One row of the list rail. Selection is the whole-row target; settings and
  * delete ride on hover-revealed icon buttons at the trailing edge so the
@@ -147,8 +119,10 @@ function ListRailRow({
                     onSelect();
                 }
             }}
-            className={`group flex items-center gap-2 border-b px-3 py-2.5 text-left last:border-b-0 transition-colors ${
-                selected ? 'bg-gray-100/80 dark:bg-zinc-900/60' : 'hover:bg-gray-50/50 dark:hover:bg-zinc-900/30'
+            className={`group flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2.5 text-left shadow-sm transition-colors ${
+                selected
+                    ? 'border-black/25 bg-gray-100/80 dark:border-white/25 dark:bg-zinc-900/60'
+                    : 'border-black/[0.12] bg-white hover:border-black/20 hover:bg-gray-50/60 dark:border-white/10 dark:bg-zinc-950/30 dark:hover:bg-zinc-900/40'
             }`}
         >
             <span className="truncate text-sm font-inter-medium">{list.name}</span>
@@ -199,7 +173,7 @@ function ListRailRow({
                             onDeleteArm();
                         }}
                     >
-                        <IconTrashFill className="size-3 fill-muted-foreground" />
+                        <TrashCanIcon className="size-3.5 text-muted-foreground" />
                     </IconButton>
                 </div>
             )}
@@ -774,14 +748,18 @@ export function ListsTab(): React.JSX.Element {
                             New list
                         </Button>
                     </div>
-                    <TableSection columns="grid-cols-1">
+                    <div className="space-y-1.5">
                         {myLists === null ? (
-                            <div className="px-4 py-3 space-y-3">
-                                <Skeleton className="h-4 w-40" />
-                                <Skeleton className="h-4 w-32" />
-                            </div>
+                            Array.from({ length: 3 }).map((_, index) => (
+                                <div
+                                    key={index}
+                                    className="rounded-lg border border-black/[0.12] bg-white px-3 py-2.5 shadow-sm dark:border-white/10 dark:bg-zinc-950/30"
+                                >
+                                    <Skeleton className="h-4 w-32" />
+                                </div>
+                            ))
                         ) : myLists.length === 0 ? (
-                            <div className="px-4 py-6 text-sm text-muted-foreground text-center">
+                            <div className="rounded-lg border border-dashed border-black/20 px-4 py-6 text-center text-sm text-muted-foreground">
                                 No lists yet — create one to get started.
                             </div>
                         ) : (
@@ -803,7 +781,7 @@ export function ListsTab(): React.JSX.Element {
                                 />
                             ))
                         )}
-                    </TableSection>
+                    </div>
                 </div>
 
                 {/* Selected list */}
