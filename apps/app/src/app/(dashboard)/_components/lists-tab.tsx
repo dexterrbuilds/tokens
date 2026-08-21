@@ -251,7 +251,7 @@ function RailAction({
                     type="button"
                     aria-label={label}
                     onClick={onClick}
-                    className="flex size-8 cursor-pointer items-center justify-center rounded-md transition-colors hover:bg-black/[0.06] dark:hover:bg-white/10"
+                    className="flex cursor-pointer items-center justify-center rounded-md p-0 transition-colors hover:bg-black/[0.06] dark:hover:bg-white/10"
                 >
                     {children}
                 </button>
@@ -871,12 +871,12 @@ export function ListsTab(): React.JSX.Element {
                             containerClassName="flex justify-start px-0 [--tab-padding-x-md:0px]"
                             listClassName="w-max gap-4"
                         />
-                        <div className="flex items-center gap-0.5 pb-1.5">
+                        <div className="flex items-center gap-2 pb-1.5">
                             <RailAction label="Compose an endpoint" onClick={() => setComposeOpen(true)}>
-                                <StackIcon className="size-5 text-muted-foreground" />
+                                <StackIcon className="size-6 text-muted-foreground" />
                             </RailAction>
                             <RailAction label="New list" onClick={() => setCreateOpen(true)}>
-                                <IconPlus className="size-4 fill-muted-foreground" />
+                                <IconPlus className="size-3.5 fill-muted-foreground" />
                             </RailAction>
                         </div>
                     </div>
