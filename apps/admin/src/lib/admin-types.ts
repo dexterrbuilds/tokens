@@ -261,3 +261,16 @@ export type AdminSeedAssetResult = {
     rank?: number;
     seededAt: number;
 };
+
+/** Mirrors `TokenListAdminRow` in cloudrun-admin handlers/tokenListsAdmin.ts. */
+export type TokenListAdminRow = {
+    id: string;
+    slug: string;
+    ownerProjectId: string;
+    name: string;
+    description: string | null;
+    status: string;
+    memberCount: number;
+    createdAt: number;
+    updatedAt: number;
+};
