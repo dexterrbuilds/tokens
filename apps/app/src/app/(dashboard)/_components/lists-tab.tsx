@@ -991,9 +991,11 @@ export function ListsTab(): React.JSX.Element {
                                             textToCopy={`https://api.tokens.xyz/api/v2/lists/${selectedList.slug}`}
                                             ariaLabel="Copy list endpoint URL"
                                             displayText={`/v2/lists/${selectedList.slug}`}
-                                            className="rounded-md bg-gray-100 dark:bg-zinc-900 px-1.5 py-0.5"
-                                            iconClassName="h-3 w-3 text-muted-foreground"
-                                            iconClassNameCheck="h-3 w-3"
+                                            // CopyButton hardcodes text-sm on its label; the child
+                                            // selector trims it for this inline chip.
+                                            className="rounded-md bg-gray-100 px-1.5 py-0.5 dark:bg-zinc-900 [&>span]:text-xs"
+                                            iconClassName="h-2.5 w-2.5 text-muted-foreground"
+                                            iconClassNameCheck="h-2.5 w-2.5"
                                             onCopied={() => toast.success('Endpoint URL copied')}
                                         />
                                     </div>
