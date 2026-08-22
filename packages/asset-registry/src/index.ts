@@ -17,6 +17,8 @@ export {
     normalizeLegacyTier,
 } from './liquidity-tier';
 export type {
+    DepthLadderRung,
+    InterpolatedImpact,
     PrimaryVariantRankingOptions,
     PrimaryVariantSelectionReason,
     PrimaryVariantSelectionResult,
@@ -28,7 +30,12 @@ export type {
 } from './primary-variant-ranking';
 export {
     FILL_QUALITY_SCORING_VERSION,
+    SIZE_AWARE_IMPACT_FLOOR_BPS,
+    SIZE_AWARE_OVERRIDE_DELTA,
+    SIZE_AWARE_SCORING_VERSION,
+    computeSizeAwareScore,
     computeVariantExecutionScore,
+    interpolateImpactBps,
     isFillQualityEligibleForPrimary,
     isSpotLikeVariantKind,
     pickPrimaryVariantWithRanking,

@@ -158,6 +158,12 @@ export {
 } from './fillQualityReads';
 
 export {
+    variantDepthCurvesGetLatestByMints,
+    type VariantDepthCurvesGetLatestByMintsArgs,
+    type VariantDepthCurvesGetLatestByMintsResult,
+} from './depthCurveReads';
+
+export {
     assetCollectionsGetMembers,
     type AssetCollectionsGetMembersArgs,
     type AssetCollectionsGetMembersResult,

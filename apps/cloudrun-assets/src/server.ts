@@ -125,6 +125,10 @@ import {
 import { seedJobs, type SeedCronDeps, type SeedJobHandler } from './handlers/crons.seed';
 import { prestocksJobs, type PrestocksCronDeps, type PrestocksJobHandler } from './handlers/crons.prestocks';
 import { depthJobs, type DepthCronDeps, type DepthJobHandler } from './handlers/crons.depth';
+import {
+    getLatestByMints as variantDepthCurvesGetLatestByMints,
+    type DepthCurveReadsRepo,
+} from './handlers/depthCurveReads';
 import { trendingJobs, type TrendingCronDeps, type TrendingJobHandler } from './handlers/crons.trending';
 import {
     clickhouseExtrasJobs,
@@ -169,6 +173,7 @@ export interface ServerDeps {
     tokensReadsRepo: TokensReadsRepo;
     trendingReadsRepo: TrendingReadsRepo;
     fillQualityReadsRepo: FillQualityReadsRepo;
+    depthCurveReadsRepo: DepthCurveReadsRepo;
     assetCollectionsReadsRepo: AssetCollectionsReadsRepo;
     tokenListsReadsRepo: TokenListsReadsRepo;
     tokenListsMutationsDeps: TokenListsMutationsDeps;
@@ -246,6 +251,7 @@ const ATOMIC_RETRY_QUERY_NAMES = new Set([
     'trendingMarketsList',
     'freshTrendingMarketsList',
     'variantFillQualityGetLatestByMints',
+    'variantDepthCurvesGetLatestByMints',
     'assetCollectionsGetMembers',
     'assetCollectionsGetMemberMints',
     'assetCollectionsGetSummaries',
@@ -424,6 +430,8 @@ export function createApp(deps: ServerDeps) {
     queries.freshTrendingMarketsList = args => freshTrendingMarketsList(deps.trendingReadsRepo, args);
     queries.variantFillQualityGetLatestByMints = args =>
         variantFillQualityGetLatestByMints(deps.fillQualityReadsRepo, args);
+    queries.variantDepthCurvesGetLatestByMints = args =>
+        variantDepthCurvesGetLatestByMints(deps.depthCurveReadsRepo, args);
     queries.assetCollectionsGetMembers = args => assetCollectionsGetMembers(deps.assetCollectionsReadsRepo, args);
     queries.assetCollectionsGetMemberMints = args =>
         assetCollectionsGetMemberMints(deps.assetCollectionsReadsRepo, args);

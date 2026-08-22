@@ -4,14 +4,22 @@ import { route } from '@/effect/next-route';
 import { withStaleFallback } from '@/effect/stale-response-cache';
 import { BadRequestError } from '@tokens/effect';
 import {
+    computeSizeAwareScore,
     FILL_QUALITY_SCORING_VERSION,
     getAsset,
+    interpolateImpactBps,
     isFillQualityEligibleForPrimary,
     rankVariantsWithReasons,
     type VariantFillQualityRankingSnapshot,
     type VariantMarketRankingSnapshot,
 } from '@tokens/asset-registry';
-import { variantFillQualityGetLatestByMints, variantMarketsGetLatestByMints } from '@/lib/cloudrun';
+import {
+    variantDepthCurvesGetLatestByMints,
+    variantFillQualityGetLatestByMints,
+    variantMarketsGetLatestByMints,
+    type VariantDepthCurvesGetLatestByMintsResult,
+} from '@/lib/cloudrun';
+import { tapErrorAndDefault } from '@tokens/effect';
 
 import { buildCuratedMintRank, executionQualitySnapshotFromConvexFillQuality } from '../../../v1/assets/_asset-helpers';
 import { resolveAssetRefContext } from '../../../v1/assets/_resolve-asset-ref';
@@ -20,6 +28,8 @@ const STALE_TTL_SECONDS = 10 * 60;
 const MIN_AMOUNT_USD = 1;
 const MAX_AMOUNT_USD = 50_000_000;
 const MAX_VARIANT_MINTS = 250;
+/** Curves older than this are treated as absent (depth_unavailable). */
+const MAX_DEPTH_AGE_SECONDS = 6 * 60 * 60;
 
 // Registry data is static per deploy; the curated rank never changes at runtime.
 const CURATED_MINT_RANK = buildCuratedMintRank();
@@ -79,16 +89,27 @@ export const GET = route(
                 const variants = asset?.variants ?? [];
                 const mints = variants.map(variant => variant.mint).slice(0, MAX_VARIANT_MINTS);
 
-                const [marketRows, fillQualityRows] =
+                const wantsDepth = amountUsd !== null && mints.length > 0;
+                const [marketRows, fillQualityRows, depthRows] =
                     mints.length > 0
                         ? yield* Effect.all(
                               [
                                   variantMarketsGetLatestByMints({ mints }),
                                   variantFillQualityGetLatestByMints({ mints }),
+                                  // Depth is additive: a read failure degrades to
+                                  // depth_unavailable instead of failing the request.
+                                  wantsDepth
+                                      ? variantDepthCurvesGetLatestByMints({ mints, side }).pipe(
+                                            tapErrorAndDefault(
+                                                'v2.execution.route.depthCurves',
+                                                [] as VariantDepthCurvesGetLatestByMintsResult,
+                                            ),
+                                        )
+                                      : Effect.succeed([] as VariantDepthCurvesGetLatestByMintsResult),
                               ],
                               { concurrency: 'unbounded' },
                           )
-                        : [[], []];
+                        : [[], [], [] as VariantDepthCurvesGetLatestByMintsResult];
 
                 const marketByMint = new Map<string, VariantMarketRankingSnapshot | null>();
                 const marketDocByMint = new Map<string, (typeof marketRows)[number]['market']>();
@@ -109,6 +130,22 @@ export const GET = route(
                 for (const row of fillQualityRows) {
                     fillQualityByMint.set(row.mint, executionQualitySnapshotFromConvexFillQuality(row.fillQuality));
                 }
+
+                const nowSeconds = Math.floor(Date.now() / 1000);
+                const freshCurveByMint = new Map<string, (typeof depthRows)[number]['depthCurve']>();
+                for (const row of depthRows) {
+                    const curve = row.depthCurve;
+                    if (!curve || curve.ladder.length === 0) continue;
+                    if (nowSeconds - curve.asOf > MAX_DEPTH_AGE_SECONDS) continue;
+                    freshCurveByMint.set(row.mint, curve);
+                }
+                const depthSource = freshCurveByMint.values().next().value?.source ?? null;
+                const sizeLadderUsd =
+                    freshCurveByMint.size > 0
+                        ? [...freshCurveByMint.values().next().value!.ladder]
+                              .map(point => point.sizeUsd)
+                              .sort((a, b) => a - b)
+                        : null;
 
                 const ranked = asset
                     ? rankVariantsWithReasons({
@@ -138,6 +175,14 @@ export const GET = route(
                     variants: ranked.map(entry => {
                         const market = marketDocByMint.get(entry.variant.mint) ?? null;
                         const fillQuality = fillQualityByMint.get(entry.variant.mint) ?? null;
+
+                        const curve = amountUsd !== null ? (freshCurveByMint.get(entry.variant.mint) ?? null) : null;
+                        const impact =
+                            curve && amountUsd !== null ? interpolateImpactBps(curve.ladder, amountUsd) : null;
+                        const reasons: string[] = [entry.reason];
+                        if (amountUsd !== null && impact === null) reasons.push('depth_unavailable');
+                        if (impact?.extrapolated) reasons.push('beyond_sampled_depth');
+
                         return {
                             rank: entry.rank,
                             mint: entry.variant.mint,
@@ -152,22 +197,40 @@ export const GET = route(
                             executionScore: fillQuality?.executionScore ?? null,
                             feeBps: fillQuality?.feeBps ?? null,
                             isFillQualityEligible: isFillQualityEligibleForPrimary(fillQuality),
-                            // Size-aware fields populate when the depth pipeline lands.
-                            estimatedImpactBps: null as number | null,
-                            estimatedOutUsd: null as number | null,
-                            sizeAwareScore: null as number | null,
-                            depthAsOf: null as number | null,
-                            reasons: [entry.reason, ...(amountUsd !== null ? ['depth_unavailable'] : [])],
+                            // Informational until size-aware reordering activates:
+                            // these never affect ordering today.
+                            estimatedImpactBps: impact ? impact.impactBps : null,
+                            estimatedOutUsd:
+                                impact && amountUsd !== null
+                                    ? Math.round(amountUsd * (1 - impact.impactBps / 10_000) * 100) / 100
+                                    : null,
+                            sizeAwareScore: impact
+                                ? computeSizeAwareScore({
+                                      executionScore: fillQuality?.executionScore ?? 0,
+                                      impactBps: impact.impactBps,
+                                  })
+                                : null,
+                            depthAsOf: curve?.asOf ?? null,
+                            reasons,
                         };
                     }),
                     meta: {
-                        asOf: Math.floor(Date.now() / 1000),
+                        asOf: nowSeconds,
                         scoringVersion: FILL_QUALITY_SCORING_VERSION,
+                        // Reported once size-aware reordering activates; the
+                        // informational fields never influence ordering today.
                         sizeAwareScoringVersion: null as string | null,
                         strategy: 'execution_quality' as const,
-                        sizeLadderUsd: null as number[] | null,
-                        depthSource: null as string | null,
-                        depthCoverage: amountUsd !== null ? { withCurves: 0, total: ranked.length } : null,
+                        sizeLadderUsd: amountUsd !== null ? sizeLadderUsd : null,
+                        depthSource: amountUsd !== null ? depthSource : null,
+                        depthCoverage:
+                            amountUsd !== null
+                                ? {
+                                      withCurves: ranked.filter(entry => freshCurveByMint.has(entry.variant.mint))
+                                          .length,
+                                      total: ranked.length,
+                                  }
+                                : null,
                     },
                 };
             });

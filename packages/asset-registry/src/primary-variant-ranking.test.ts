@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 import {
+    computeSizeAwareScore,
+    interpolateImpactBps,
     isSpotLikeVariantKind,
     pickPrimaryVariantWithRanking,
     rankVariantsWithReasons,
+    SIZE_AWARE_IMPACT_FLOOR_BPS,
     type PrimaryVariantStrategy,
     type VariantFillQualityRankingSnapshot,
     type VariantMarketRankingSnapshot,
@@ -486,5 +489,74 @@ describe('rankVariantsWithReasons', () => {
 
     it('returns an empty list for an asset with no variants', () => {
         expect(rank({ variants: [] })).toEqual([]);
+    });
+});
+
+describe('interpolateImpactBps', () => {
+    const LADDER = [
+        { sizeUsd: 10_000, priceImpactBps: 0 },
+        { sizeUsd: 100_000, priceImpactBps: 10 },
+        { sizeUsd: 1_000_000, priceImpactBps: 40 },
+        { sizeUsd: 5_000_000, priceImpactBps: 120 },
+    ];
+
+    it('returns exact rung values', () => {
+        expect(interpolateImpactBps(LADDER, 100_000)).toEqual({ impactBps: 10, extrapolated: false });
+        expect(interpolateImpactBps(LADDER, 5_000_000)).toEqual({ impactBps: 120, extrapolated: false });
+    });
+
+    it('interpolates log-linearly between rungs', () => {
+        // Halfway between 100k and 1M in log space is ~316k.
+        const mid = interpolateImpactBps(LADDER, Math.sqrt(100_000 * 1_000_000));
+        expect(mid?.extrapolated).toBe(false);
+        expect(mid?.impactBps).toBe(25);
+    });
+
+    it('clamps below the smallest rung without flagging extrapolation', () => {
+        expect(interpolateImpactBps(LADDER, 1_000)).toEqual({ impactBps: 0, extrapolated: false });
+    });
+
+    it('clamps above the largest rung and flags extrapolation', () => {
+        expect(interpolateImpactBps(LADDER, 20_000_000)).toEqual({ impactBps: 120, extrapolated: true });
+    });
+
+    it('ignores rungs without usable impact and handles unsorted input', () => {
+        const sparse = [
+            { sizeUsd: 1_000_000, priceImpactBps: 40 },
+            { sizeUsd: 10_000, priceImpactBps: null },
+            { sizeUsd: 100_000, priceImpactBps: 10 },
+        ];
+        expect(interpolateImpactBps(sparse, 1_000_000)).toEqual({ impactBps: 40, extrapolated: false });
+        expect(interpolateImpactBps(sparse, 50_000)).toEqual({ impactBps: 10, extrapolated: false });
+    });
+
+    it('returns null for unusable ladders and invalid amounts', () => {
+        expect(interpolateImpactBps([], 1_000_000)).toBeNull();
+        expect(interpolateImpactBps([{ sizeUsd: 10_000, priceImpactBps: null }], 1_000_000)).toBeNull();
+        expect(interpolateImpactBps(LADDER, 0)).toBeNull();
+        expect(interpolateImpactBps(LADDER, Number.NaN)).toBeNull();
+    });
+});
+
+describe('computeSizeAwareScore', () => {
+    it('is monotone: higher impact never raises the score', () => {
+        let previous = Number.POSITIVE_INFINITY;
+        for (const impactBps of [0, 10, 50, 100, 250, 500, 1_000]) {
+            const score = computeSizeAwareScore({ executionScore: 80, impactBps });
+            expect(score).toBeLessThanOrEqual(previous);
+            previous = score;
+        }
+    });
+
+    it('blends 60/40 with the impact floor', () => {
+        expect(computeSizeAwareScore({ executionScore: 100, impactBps: 0 })).toBe(100);
+        expect(computeSizeAwareScore({ executionScore: 100, impactBps: SIZE_AWARE_IMPACT_FLOOR_BPS })).toBe(60);
+        expect(computeSizeAwareScore({ executionScore: 0, impactBps: 0 })).toBe(40);
+        expect(computeSizeAwareScore({ executionScore: 50, impactBps: 250 })).toBe(50);
+    });
+
+    it('clamps out-of-range inputs', () => {
+        expect(computeSizeAwareScore({ executionScore: 150, impactBps: -10 })).toBe(100);
+        expect(computeSizeAwareScore({ executionScore: -5, impactBps: 10_000 })).toBe(0);
     });
 });

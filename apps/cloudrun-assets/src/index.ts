@@ -40,6 +40,7 @@ import {
     makePostgresTrendingReadsRepo,
     makePostgresTrendingRepo,
     makePostgresClickhouseExtrasRepo,
+    makePostgresDepthCurveReadsRepo,
     makePostgresDepthCurvesRepo,
     makePostgresPrestocksReadsRepo,
     makePostgresPrestocksRepo,
@@ -311,6 +312,7 @@ const app = createApp({
     tokensReadsRepo: makePostgresTokensReadsRepo(sql),
     trendingReadsRepo: makePostgresTrendingReadsRepo(sql),
     fillQualityReadsRepo: makePostgresFillQualityReadsRepo(sql),
+    depthCurveReadsRepo: makePostgresDepthCurveReadsRepo(sql),
     assetCollectionsReadsRepo: makePostgresAssetCollectionsReadsRepo(sql),
     tokenListsReadsRepo: makePostgresTokenListsReadsRepo(sql),
     tokenListsMutationsDeps: {

@@ -62,11 +62,40 @@ function fillQualityRow(mint: string, executionScore: number) {
     };
 }
 
+function depthCurveRow(mint: string, asOfSecondsAgo: number) {
+    const asOf = Math.floor(Date.now() / 1000) - asOfSecondsAgo;
+    return {
+        mint,
+        depthCurve: {
+            mint,
+            quoteMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+            side: 'buy',
+            source: 'titan',
+            ladder: [
+                { sizeUsd: 10_000, inAmount: 1, outAmount: 1, priceImpactBps: 0, effectivePrice: 1, routeVenues: [] },
+                { sizeUsd: 100_000, inAmount: 1, outAmount: 1, priceImpactBps: 10, effectivePrice: 1, routeVenues: [] },
+                { sizeUsd: 1_000_000, inAmount: 1, outAmount: 1, priceImpactBps: 40, effectivePrice: 1, routeVenues: [] },
+                { sizeUsd: 5_000_000, inAmount: 1, outAmount: 1, priceImpactBps: 120, effectivePrice: 1, routeVenues: [] },
+            ],
+            points: 4,
+            failedPoints: 0,
+            asOf,
+            lastComputedAt: asOf * 1000,
+        },
+    };
+}
+
+let depthResponder: (() => unknown) | null = null;
+
 function stubCloudRun(): void {
     globalThis.fetch = (async (input: string | URL | Request) => {
         const url = String(input);
         if (url.includes('/query/listDeletedRefs')) {
             return new Response(JSON.stringify([]), { status: 200 });
+        }
+        if (url.includes('/query/variantDepthCurvesGetLatestByMints')) {
+            if (!depthResponder) throw new Error('depth query not stubbed');
+            return new Response(JSON.stringify(depthResponder()), { status: 200 });
         }
         if (url.includes('/query/variantMarketsGetLatestByMints')) {
             return new Response(
@@ -105,6 +134,7 @@ beforeEach(() => {
     process.env.TOKENS_USAGE_LOG_MODE = 'off';
     resetEnvForTests();
     __resetCloudRunClientForTesting();
+    depthResponder = null;
     stubCloudRun();
 
     console.log = () => undefined;
@@ -176,6 +206,61 @@ describe('GET /api/v2/execution/route', () => {
         expect(body.variants.map((entry: { rank: number }) => entry.rank)).toEqual(
             body.variants.map((_: unknown, index: number) => index + 1),
         );
+    });
+
+    it('populates informational depth fields from a fresh curve without reordering', async () => {
+        depthResponder = () => [depthCurveRow(CBBTC_MINT, 60)];
+        const response = await request('/api/v2/execution/route?asset=bitcoin&amountUsd=1000000');
+        expect(response.status).toBe(200);
+        const body = await response.json();
+
+        const top = body.variants[0];
+        expect(top.mint).toBe(CBBTC_MINT); // ordering unchanged (informational-only)
+        expect(top.estimatedImpactBps).toBe(40);
+        expect(top.estimatedOutUsd).toBe(996_000);
+        expect(top.sizeAwareScore).not.toBeNull();
+        expect(top.depthAsOf).toBeGreaterThan(0);
+        expect(top.reasons).not.toContain('depth_unavailable');
+
+        const second = body.variants[1];
+        expect(second.estimatedImpactBps).toBeNull();
+        expect(second.reasons).toContain('depth_unavailable');
+
+        expect(body.meta.depthSource).toBe('titan');
+        expect(body.meta.sizeLadderUsd).toEqual([10_000, 100_000, 1_000_000, 5_000_000]);
+        expect(body.meta.depthCoverage.withCurves).toBe(1);
+        expect(body.meta.sizeAwareScoringVersion).toBeNull(); // informational phase
+        expect(body.meta.strategy).toBe('execution_quality');
+    });
+
+    it('flags extrapolation above the sampled ladder', async () => {
+        depthResponder = () => [depthCurveRow(CBBTC_MINT, 60)];
+        const response = await request('/api/v2/execution/route?asset=bitcoin&amountUsd=20000000');
+        const body = await response.json();
+        const top = body.variants[0];
+        expect(top.estimatedImpactBps).toBe(120);
+        expect(top.reasons).toContain('beyond_sampled_depth');
+    });
+
+    it('treats stale curves as absent', async () => {
+        depthResponder = () => [depthCurveRow(CBBTC_MINT, 7 * 60 * 60)];
+        const response = await request('/api/v2/execution/route?asset=bitcoin&amountUsd=1000000');
+        const body = await response.json();
+        expect(body.variants[0].estimatedImpactBps).toBeNull();
+        expect(body.variants[0].reasons).toContain('depth_unavailable');
+        expect(body.meta.depthCoverage.withCurves).toBe(0);
+        expect(body.meta.depthSource).toBeNull();
+    });
+
+    it('degrades to depth_unavailable when the depth read fails', async () => {
+        depthResponder = () => {
+            throw new Error('depth read down');
+        };
+        const response = await request('/api/v2/execution/route?asset=bitcoin&amountUsd=1000000');
+        expect(response.status).toBe(200);
+        const body = await response.json();
+        expect(body.variants[0].estimatedImpactBps).toBeNull();
+        expect(body.variants[0].reasons).toContain('depth_unavailable');
     });
 
     it('marks every variant depth_unavailable when amountUsd is given (Phase A)', async () => {

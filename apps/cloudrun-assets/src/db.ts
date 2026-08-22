@@ -56,6 +56,7 @@ import type {
 import type { TrendingMarketRow, FreshTrendingMarketRow, TrendingReadsRepo } from './handlers/trendingReads';
 import type { FillQualityRow, FillQualityReadsRepo } from './handlers/fillQualityReads';
 import type { DepthCronRepo } from './handlers/crons.depth';
+import type { DepthCurveReadsRepo, DepthCurveRow } from './handlers/depthCurveReads';
 import type { AssetCollectionMemberRow, AssetCollectionsReadsRepo } from './handlers/assetCollectionsReads';
 import type {
     TokenListMemberRow,
@@ -4660,6 +4661,23 @@ export function makePostgresDepthCurvesRepo(sql: Sql): DepthCronRepo {
                     as_of = EXCLUDED.as_of,
                     last_computed_at = EXCLUDED.last_computed_at
             `;
+        },
+    };
+}
+
+export function makePostgresDepthCurveReadsRepo(sql: Sql): DepthCurveReadsRepo {
+    return {
+        async findLatestByMints(args) {
+            if (args.mints.length === 0) return [];
+            const rows = await sql<DepthCurveRow[]>`
+                SELECT mint, quote_mint, side, source, ladder, points, failed_points, as_of, last_computed_at
+                FROM variant_depth_curves_latest
+                WHERE mint IN ${sql([...args.mints])}
+                  AND quote_mint = ${args.quoteMint}
+                  AND side = ${args.side}
+                  AND source = ${args.source}
+            `;
+            return rows;
         },
     };
 }
