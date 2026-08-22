@@ -16,10 +16,12 @@
  *   bun scripts/test-depth-local.ts read              # stored curves + interpolated impact
  *
  * Add --source=titan to any mode to use Titan instead of Jupiter.
+ * Target mints with --asset=<assetId> or --mints=<mint,mint> (default: bitcoin).
  */
 
 import postgres from 'postgres';
 
+import { getAsset, getVariantByMint } from '../packages/asset-registry/src/index';
 import { BITCOIN_VARIANT_GROUP } from '../packages/asset-registry/src/data/token-variants';
 import { interpolateImpactBps } from '../packages/asset-registry/src/primary-variant-ranking';
 import { makeJupiterQuoteClient, makeTitanQuoteClient } from '../apps/cloudrun-assets/src/clients';
@@ -80,7 +82,32 @@ function makeClient(): DepthQuoteClient {
 }
 
 const sql = postgres(databaseUrl, { max: 4 });
-const BTC_MINTS = BITCOIN_VARIANT_GROUP.addresses.map(a => a.address);
+
+/** Mints to sample: --mints=<csv> wins, then --asset=<assetId>, else bitcoin. */
+function targetMints(): string[] {
+    const explicit = args.find(a => a.startsWith('--mints='))?.split('=')[1];
+    if (explicit) return explicit.split(',').map(m => m.trim()).filter(Boolean);
+
+    const assetId = args.find(a => a.startsWith('--asset='))?.split('=')[1];
+    if (assetId) {
+        const asset = getAsset(assetId);
+        if (!asset) {
+            console.error(`unknown assetId: ${assetId}`);
+            process.exit(1);
+        }
+        return asset.variants.map(v => v.mint);
+    }
+    return BITCOIN_VARIANT_GROUP.addresses.map(a => a.address);
+}
+
+const MINTS = targetMints();
+
+function label(mint: string): string {
+    const match = getVariantByMint(mint);
+    if (!match) return `${mint.slice(0, 6)}… (not in registry)`;
+    const sym = match.variant.symbol ?? match.asset.symbol ?? '?';
+    return `${sym} (${match.asset.assetId}/${match.variant.kind})`;
+}
 
 async function probe() {
     console.log(`source: ${source}${source === 'jupiter_lite' ? (jupiterApiKey ? ' (pro key)' : ' (keyless lite)') : ''}`);
@@ -89,7 +116,7 @@ async function probe() {
         const started = performance.now();
         const quote = await client.fetchQuote({
             inputMint: DEPTH_USDC_QUOTE_MINT,
-            outputMint: BTC_MINTS[1]!, // cbBTC
+            outputMint: MINTS[0]!,
             amount: 10_000 * 1_000_000, // $10k
         });
         const ms = Math.round(performance.now() - started);
@@ -109,7 +136,8 @@ async function run() {
     const delayMs = Number(args.find(a => a.startsWith('--delayMs='))?.split('=')[1] ?? 1200);
     console.log(`source: ${source}, delayMs: ${delayMs}`);
     const universe = listDepthUniverseMints();
-    console.log(`universe: ${universe.length} mints total; sampling ${BTC_MINTS.length} BTC mints`);
+    console.log(`universe: ${universe.length} mints total; sampling ${MINTS.length}:`);
+    for (const m of MINTS) console.log(`  - ${label(m)}  ${m}`);
     console.log(`ladder: ${DEPTH_SIZE_LADDER_USD.map(s => `$${(s / 1000).toLocaleString()}k`).join(', ')}`);
 
     const client = makeClient();
@@ -120,14 +148,14 @@ async function run() {
             now: () => Date.now(),
             env: () => ({ DEPTH_REFRESH_ENABLED: 'true' }) as NodeJS.ProcessEnv,
         },
-        { mints: BTC_MINTS, delayMs, requireRefreshEnabled: false },
+        { mints: MINTS, delayMs, requireRefreshEnabled: false },
     );
     console.log('\ncron result:', JSON.stringify(result, null, 2));
 }
 
 async function read() {
     const entries = await makePostgresDepthCurveReadsRepo(sql).findLatestByMints({
-        mints: BTC_MINTS,
+        mints: MINTS,
         quoteMint: DEPTH_USDC_QUOTE_MINT,
         side: 'buy',
         source,
@@ -140,7 +168,7 @@ async function read() {
     for (const row of entries) {
         const ladder = (row.ladder as Array<{ sizeUsd: number; priceImpactBps: number | null }>) ?? [];
         const ageMin = Math.round((nowSeconds - Number(row.as_of)) / 60);
-        console.log(`\n${row.mint}  (age ${ageMin}m, points=${row.points}, failed=${row.failed_points})`);
+        console.log(`\n${label(row.mint)}  ${row.mint}\n  (age ${ageMin}m, points=${row.points}, failed=${row.failed_points})`);
         for (const rung of ladder) {
             console.log(`  $${(rung.sizeUsd / 1000).toLocaleString()}k -> ${rung.priceImpactBps ?? 'null'} bps`);
         }
