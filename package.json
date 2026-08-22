@@ -23,6 +23,7 @@
         "verify:assets-api-v1": "bun scripts/verify-assets-api-v1-contract.ts",
         "verify:lists-api-v2": "bun scripts/verify-lists-api-v2-contract.ts",
         "verify:execution-api-v2": "bun scripts/verify-execution-api-v2-contract.ts",
+        "test:depth-local": "bun scripts/test-depth-local.ts",
         "verify:asset-registry-hubs": "bun scripts/audit-asset-registry-hubs.ts",
         "format": "prettier --write \"**/*.{ts,tsx,md}\"",
         "postinstall": "node scripts/patch-liveline.mjs && node scripts/setup-git-hooks.mjs",
