@@ -56,3 +56,69 @@ venue can't express them.
 curl -H "x-api-key: $API_KEY" \
   "https://api.tokens.xyz/v2/execution/links?assetId=bitcoin&venues=titan,jupiter,orca"
 ```
+
+## `GET /v2/execution/route`
+
+Ranked "best variant" recommendation for a canonical asset — "I want to buy bitcoin on
+Solana, which mint?". Returns the full ranked variant list (render what you want) with
+our recommendation as `primary`, scored by the same execution-quality ranking that
+powers primary-variant selection across v1 (liquidity, volume, fill quality, trust tier).
+
+Size-aware fields are part of the contract from day one and populate once the
+depth-sampling pipeline is live: with `amountUsd`, variants gain `estimatedImpactBps` /
+`estimatedOutUsd` / `sizeAwareScore` interpolated from sampled price-impact curves.
+Until a variant has a fresh curve, those fields are `null` and its `reasons` include
+`depth_unavailable`.
+
+- **Scope**: `execution:read`
+- **Query params**:
+  - `asset` (required) — canonical asset id, alias, or Solana mint (e.g. `bitcoin`).
+  - `amountUsd` (optional) — intended trade size in USD, clamped to `[1, 50000000]`.
+  - `side` (optional) — `buy` (default) or `sell`.
+
+```ts
+interface ExecutionRouteResponse {
+    asset: { assetId: string; name: string | null; symbol: string | null; category: string | null };
+    side: 'buy' | 'sell';
+    amountUsd: number | null;
+    primary: { mint: string; variantId: string; reason: string } | null;
+    variants: Array<{
+        rank: number; // 1-based
+        mint: string;
+        variantId: string;
+        kind: string; // native | wrapped | bridged | spot | lst | ...
+        issuer: string | null;
+        trustTier: string;
+        symbol: string | null;
+        name: string | null;
+        liquidityUsd: number | null;
+        volume24hUSD: number | null;
+        executionScore: number | null; // 0-100 fill-quality score
+        feeBps: number | null;
+        isFillQualityEligible: boolean;
+        estimatedImpactBps: number | null; // populated with amountUsd + fresh depth data
+        estimatedOutUsd: number | null;
+        sizeAwareScore: number | null;
+        depthAsOf: number | null; // unix seconds of the depth sample
+        reasons: string[]; // e.g. ["liquidity"], ["execution_quality_override", "depth_unavailable"]
+    }>;
+    meta: {
+        asOf: number; // unix seconds
+        scoringVersion: string;
+        sizeAwareScoringVersion: string | null;
+        strategy: 'execution_quality' | 'size_aware';
+        sizeLadderUsd: number[] | null;
+        depthSource: string | null;
+        depthCoverage: { withCurves: number; total: number } | null; // present when amountUsd given
+    };
+}
+```
+
+Single-variant assets return one entry with `primary.reason: "only_candidate"`; assets
+with no Solana variants return an empty `variants` array and `primary: null`. Unknown
+assets return `404`.
+
+```bash
+curl -H "x-api-key: $API_KEY" \
+  "https://api.tokens.xyz/v2/execution/route?asset=bitcoin&amountUsd=1000000"
+```

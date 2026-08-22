@@ -6,8 +6,9 @@
  * Usage:
  *   API_BASE_URL=http://localhost:3002 API_KEY=... bun scripts/verify-execution-api-v2-contract.ts
  *
- * Exercises GET /v2/execution/links (execution:read). The route endpoint is
- * added to this script when it ships (PR 4 of the execution stack).
+ * Exercises GET /v2/execution/links and GET /v2/execution/route
+ * (execution:read). Route checks tolerate depthCoverage.withCurves = 0 so the
+ * script passes before the depth-sampling cron warms.
  */
 
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
@@ -137,7 +138,86 @@ async function main(): Promise<void> {
     assert(missing.status === 400, `missing mint/assetId must 400, got ${missing.status}`);
     console.log('links(errors): 400/404 envelopes verified');
 
+    // 6. Route: size-agnostic ranking.
+    const routeBody = await getJson(baseUrl, apiKey, 'api/v2/execution/route?asset=bitcoin');
+    const ranked = assertRouteResponse(routeBody, 'route(bitcoin)', { expectAmount: null });
+    assert(ranked.variantMints.length > 1, 'bitcoin must rank multiple variants');
+    console.log(`route(bitcoin): ${ranked.variantMints.length} variants, primary=${ranked.primaryMint ?? 'null'}`);
+
+    // 7. Route: size-aware request (fields typed, tolerant of no depth data yet).
+    const sized = await getJson(baseUrl, apiKey, 'api/v2/execution/route?asset=bitcoin&amountUsd=1000000');
+    assertRouteResponse(sized, 'route(bitcoin, $1M)', { expectAmount: 1_000_000 });
+    console.log('route(bitcoin, $1M): size-aware contract verified');
+
+    // 8. Route errors.
+    const routeUnknown = await getRaw(baseUrl, apiKey, 'api/v2/execution/route?asset=not-a-real-asset');
+    assert(routeUnknown.status === 404, `unknown asset must 404, got ${routeUnknown.status}`);
+    const routeMissing = await getRaw(baseUrl, apiKey, 'api/v2/execution/route');
+    assert(routeMissing.status === 400, `missing asset must 400, got ${routeMissing.status}`);
+    const routeBadAmount = await getRaw(baseUrl, apiKey, 'api/v2/execution/route?asset=bitcoin&amountUsd=-1');
+    assert(routeBadAmount.status === 400, `negative amountUsd must 400, got ${routeBadAmount.status}`);
+    console.log('route(errors): 400/404 envelopes verified');
+
     console.log('v2 execution API contract OK');
+}
+
+function assertNullableNumber(value: unknown, path: string): void {
+    if (value === null) return;
+    assert(typeof value === 'number' && Number.isFinite(value), `${path} must be a finite number or null`);
+}
+
+function assertRouteResponse(
+    body: unknown,
+    label: string,
+    opts: { expectAmount: number | null },
+): { variantMints: string[]; primaryMint: string | null } {
+    assertObject(body, label);
+    assertObject(body.asset, `${label}.asset`);
+    assert(typeof body.asset.assetId === 'string', `${label}.asset.assetId must be a string`);
+    assert(body.side === 'buy' || body.side === 'sell', `${label}.side must be buy or sell`);
+    assert(body.amountUsd === opts.expectAmount, `${label}.amountUsd must echo ${String(opts.expectAmount)}`);
+    assert(Array.isArray(body.variants), `${label}.variants must be an array`);
+
+    const variantMints: string[] = [];
+    body.variants.forEach((entry, i) => {
+        const path = `${label}.variants[${i}]`;
+        assertObject(entry, path);
+        assert(typeof entry.mint === 'string' && entry.mint.length > 0, `${path}.mint must be a string`);
+        assert(typeof entry.variantId === 'string', `${path}.variantId must be a string`);
+        assert(entry.rank === i + 1, `${path}.rank must be ${i + 1}`);
+        assertNullableNumber(entry.liquidityUsd, `${path}.liquidityUsd`);
+        assertNullableNumber(entry.executionScore, `${path}.executionScore`);
+        assertNullableNumber(entry.estimatedImpactBps, `${path}.estimatedImpactBps`);
+        assertNullableNumber(entry.sizeAwareScore, `${path}.sizeAwareScore`);
+        assert(typeof entry.isFillQualityEligible === 'boolean', `${path}.isFillQualityEligible must be boolean`);
+        assert(Array.isArray(entry.reasons) && entry.reasons.length > 0, `${path}.reasons must be non-empty`);
+        variantMints.push(entry.mint);
+    });
+
+    let primaryMint: string | null = null;
+    if (body.primary !== null) {
+        assertObject(body.primary, `${label}.primary`);
+        assert(typeof body.primary.mint === 'string', `${label}.primary.mint must be a string`);
+        assert(variantMints.includes(body.primary.mint), `${label}.primary.mint must be a ranked variant`);
+        primaryMint = body.primary.mint as string;
+    }
+
+    assertObject(body.meta, `${label}.meta`);
+    assert(typeof body.meta.scoringVersion === 'string', `${label}.meta.scoringVersion must be a string`);
+    assert(
+        body.meta.strategy === 'execution_quality' || body.meta.strategy === 'size_aware',
+        `${label}.meta.strategy must be execution_quality or size_aware`,
+    );
+    if (opts.expectAmount !== null) {
+        assertObject(body.meta.depthCoverage, `${label}.meta.depthCoverage`);
+        assert(
+            typeof body.meta.depthCoverage.withCurves === 'number' &&
+                typeof body.meta.depthCoverage.total === 'number',
+            `${label}.meta.depthCoverage must have numeric withCurves/total`,
+        );
+    }
+
+    return { variantMints, primaryMint };
 }
 
 main().catch(error => {

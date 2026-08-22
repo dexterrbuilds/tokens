@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import {
     isSpotLikeVariantKind,
     pickPrimaryVariantWithRanking,
+    rankVariantsWithReasons,
     type PrimaryVariantStrategy,
     type VariantFillQualityRankingSnapshot,
     type VariantMarketRankingSnapshot,
@@ -332,5 +333,158 @@ describe('pickPrimaryVariantWithRanking', () => {
         });
 
         expect(selected?.mint).toBe(MINT_A);
+    });
+});
+
+describe('rankVariantsWithReasons', () => {
+    function rank(params: {
+        variants: AssetVariant[];
+        marketByMint?: Map<string, VariantMarketRankingSnapshot>;
+        fillQualityByMint?: Map<string, VariantFillQualityRankingSnapshot>;
+        strategy?: PrimaryVariantStrategy;
+    }) {
+        return rankVariantsWithReasons({
+            asset: asset(params.variants),
+            mintRank: new Map([
+                [MINT_A, 0],
+                [MINT_B, 1],
+                [MINT_C, 2],
+                [MINT_D, 3],
+            ]),
+            ...(params.marketByMint ? { marketByMint: params.marketByMint } : {}),
+            ...(params.fillQualityByMint ? { fillQualityByMint: params.fillQualityByMint } : {}),
+            options: { nowSeconds: NOW, ...(params.strategy ? { strategy: params.strategy } : {}) },
+        });
+    }
+
+    it('matches the pickPrimaryVariantWithRanking winner across strategies and data shapes', () => {
+        const configs: Array<{
+            variants: AssetVariant[];
+            marketByMint: Map<string, VariantMarketRankingSnapshot>;
+            fillQualityByMint?: Map<string, VariantFillQualityRankingSnapshot>;
+            strategy?: PrimaryVariantStrategy;
+        }> = [
+            {
+                variants: [variant(MINT_A, 'tesla:ondo'), variant(MINT_B, 'tesla:xstock')],
+                marketByMint: new Map([
+                    [MINT_A, market({ liquidity: 100_000 })],
+                    [MINT_B, market({ liquidity: 5_000_000 })],
+                ]),
+            },
+            {
+                variants: [
+                    variant(MINT_A, 'tesla:ondo'),
+                    variant(MINT_B, 'tesla:xstock'),
+                    variant(MINT_C, 'tesla:c'),
+                ],
+                marketByMint: new Map([
+                    [MINT_A, market({ liquidity: 2_000_000 })],
+                    [MINT_B, market({ liquidity: 1_900_000 })],
+                    [MINT_C, market({ liquidity: 40, volume24hUSD: 10, trade24h: 1 })],
+                ]),
+            },
+            {
+                variants: [variant(MINT_A, 'tesla:ondo'), variant(MINT_B, 'tesla:xstock')],
+                marketByMint: new Map([
+                    [MINT_A, market({ liquidity: 1_000_000 })],
+                    [MINT_B, market({ liquidity: 900_000 })],
+                ]),
+                fillQualityByMint: new Map([
+                    [MINT_A, fill({ executionScore: 30 })],
+                    [MINT_B, fill({ executionScore: 80 })],
+                ]),
+                strategy: 'execution_quality' as PrimaryVariantStrategy,
+            },
+        ];
+
+        for (const config of configs) {
+            const ranked = rankVariantsWithReasons({
+                asset: asset(config.variants),
+                mintRank: new Map([
+                    [MINT_A, 0],
+                    [MINT_B, 1],
+                    [MINT_C, 2],
+                ]),
+                marketByMint: config.marketByMint,
+                ...(config.fillQualityByMint ? { fillQualityByMint: config.fillQualityByMint } : {}),
+                options: { nowSeconds: NOW, ...(config.strategy ? { strategy: config.strategy } : {}) },
+            });
+            const picked = pickPrimaryVariantWithRanking({
+                asset: asset(config.variants),
+                mintRank: new Map([
+                    [MINT_A, 0],
+                    [MINT_B, 1],
+                    [MINT_C, 2],
+                ]),
+                marketByMint: config.marketByMint,
+                ...(config.fillQualityByMint ? { fillQualityByMint: config.fillQualityByMint } : {}),
+                options: { nowSeconds: NOW, ...(config.strategy ? { strategy: config.strategy } : {}) },
+            });
+            expect(ranked[0]?.variant.mint).toBe(picked.variant!.mint);
+            expect(ranked[0]?.reason).toBe(picked.reason!);
+        }
+    });
+
+    it('orders candidates by liquidity and covers every variant exactly once with 1-based ranks', () => {
+        const ranked = rank({
+            variants: [variant(MINT_A, 'tesla:a'), variant(MINT_B, 'tesla:b'), variant(MINT_C, 'tesla:c')],
+            marketByMint: new Map([
+                [MINT_A, market({ liquidity: 1_000_000 })],
+                [MINT_B, market({ liquidity: 3_000_000 })],
+                [MINT_C, market({ liquidity: 2_000_000 })],
+            ]),
+        });
+
+        expect(ranked.map(entry => entry.variant.mint)).toEqual([MINT_B, MINT_C, MINT_A]);
+        expect(ranked.map(entry => entry.rank)).toEqual([1, 2, 3]);
+        expect(ranked[0]?.reason).toBe('liquidity');
+        expect(ranked.every(entry => entry.isPrimaryCandidate)).toBe(true);
+    });
+
+    it('trails activity-filtered variants with an exclusion reason', () => {
+        const ranked = rank({
+            variants: [variant(MINT_A, 'tesla:a'), variant(MINT_B, 'tesla:b'), variant(MINT_C, 'tesla:c')],
+            marketByMint: new Map([
+                [MINT_A, market({ liquidity: 1_000_000 })],
+                [MINT_B, market({ liquidity: 3_000_000 })],
+                [MINT_C, market({ liquidity: 2_000_000, volume24hUSD: 10, trade24h: 1 })],
+            ]),
+        });
+
+        const last = ranked[ranked.length - 1]!;
+        expect(last.variant.mint).toBe(MINT_C);
+        expect(last.reason).toBe('excluded_by_activity_filter');
+        expect(last.isPrimaryCandidate).toBe(false);
+        expect(ranked.filter(entry => entry.isPrimaryCandidate).length).toBe(2);
+    });
+
+    it('trails non-spot-like variants when spot-like variants exist', () => {
+        const spot: AssetVariant = { ...variant(MINT_A, 'gold:spot'), kind: 'spot' };
+        const etf: AssetVariant = { ...variant(MINT_B, 'gold:etf'), kind: 'etf' };
+        const ranked = rank({
+            variants: [spot, etf],
+            marketByMint: new Map([
+                [MINT_A, market({ liquidity: 100_000 })],
+                [MINT_B, market({ liquidity: 5_000_000 })],
+            ]),
+        });
+
+        expect(ranked.map(entry => entry.variant.mint)).toEqual([MINT_A, MINT_B]);
+        expect(ranked[0]?.reason).toBe('only_candidate');
+        expect(ranked[1]?.reason).toBe('non_spot_like');
+        expect(ranked[1]?.isPrimaryCandidate).toBe(false);
+    });
+
+    it('reports only_candidate for a single-variant asset', () => {
+        const ranked = rank({
+            variants: [variant(MINT_A, 'tesla:a')],
+            marketByMint: new Map([[MINT_A, market()]]),
+        });
+        expect(ranked).toHaveLength(1);
+        expect(ranked[0]?.reason).toBe('only_candidate');
+    });
+
+    it('returns an empty list for an asset with no variants', () => {
+        expect(rank({ variants: [] })).toEqual([]);
     });
 });

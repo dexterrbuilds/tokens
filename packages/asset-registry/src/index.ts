@@ -21,8 +21,10 @@ export type {
     PrimaryVariantSelectionReason,
     PrimaryVariantSelectionResult,
     PrimaryVariantStrategy,
+    RankedVariantEntry,
     VariantFillQualityRankingSnapshot,
     VariantMarketRankingSnapshot,
+    VariantRankingExclusionReason,
 } from './primary-variant-ranking';
 export {
     FILL_QUALITY_SCORING_VERSION,
@@ -30,6 +32,7 @@ export {
     isFillQualityEligibleForPrimary,
     isSpotLikeVariantKind,
     pickPrimaryVariantWithRanking,
+    rankVariantsWithReasons,
 } from './primary-variant-ranking';
 
 export {

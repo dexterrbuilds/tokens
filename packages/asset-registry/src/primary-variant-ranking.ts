@@ -177,6 +177,111 @@ export function pickPrimaryVariantWithRanking(params: {
     return { variant: best, reason };
 }
 
+export type VariantRankingExclusionReason = 'excluded_by_activity_filter' | 'non_spot_like';
+
+export interface RankedVariantEntry {
+    variant: AssetVariant;
+    /** 1-based position in the ranked list. */
+    rank: number;
+    reason: PrimaryVariantSelectionReason | VariantRankingExclusionReason;
+    /** True for variants that survived candidate filtering (spot-like preference + activity gate). */
+    isPrimaryCandidate: boolean;
+}
+
+/**
+ * List-producing counterpart of `pickPrimaryVariantWithRanking`: the full
+ * variant set in recommendation order with a per-variant reason. Ordering is
+ * derived by repeated selection with the exact pick-loop semantics, so the
+ * first entry is always the variant `pickPrimaryVariantWithRanking` returns
+ * for identical inputs (unit-tested invariant). Variants excluded from the
+ * candidate set (activity-filtered, or non-spot-like when spot-like variants
+ * exist) trail the candidates, ordered by liquidity.
+ */
+export function rankVariantsWithReasons(params: {
+    asset: CanonicalAsset;
+    mintRank: ReadonlyMap<string, number>;
+    marketByMint?: ReadonlyMap<string, VariantMarketRankingSnapshot | null | undefined>;
+    fillQualityByMint?: ReadonlyMap<string, VariantFillQualityRankingSnapshot | null | undefined>;
+    /**
+     * Reserved for size-aware ranking: interpolated price impact (bps) per
+     * mint. Informational-only until size-aware reordering is activated —
+     * it never affects ordering today.
+     */
+    impactByMint?: ReadonlyMap<string, number | null>;
+    options?: PrimaryVariantRankingOptions;
+}): RankedVariantEntry[] {
+    if (params.asset.variants.length === 0) return [];
+
+    const spotLikeVariants = params.asset.variants.filter(v => isSpotLikeVariantKind(v.kind));
+    const baseCandidates = spotLikeVariants.length > 0 ? spotLikeVariants : params.asset.variants;
+    const candidates = filterPrimaryCandidatesByActivity({
+        candidates: baseCandidates,
+        marketByMint: params.marketByMint,
+        fillQualityByMint: params.fillQualityByMint,
+    });
+
+    const nowSeconds = params.options?.nowSeconds ?? Math.floor(Date.now() / 1000);
+    const lexicalTieBreak = params.options?.lexicalTieBreak ?? false;
+    const strategy = params.options?.strategy ?? 'liquidity';
+    const activityFiltered = candidates.length !== baseCandidates.length;
+
+    const entries: RankedVariantEntry[] = [];
+    const remaining = [...candidates];
+    while (remaining.length > 0) {
+        // Each round replicates the pick loop over the remaining candidates,
+        // including its initial-reason semantics for the first round.
+        let best = remaining[0]!;
+        let reason: PrimaryVariantSelectionReason;
+        if (entries.length === 0) {
+            reason = candidates.length === 1 ? 'only_candidate' : activityFiltered ? 'activity_filter' : 'first_candidate';
+        } else {
+            reason = 'first_candidate';
+        }
+        for (let i = 1; i < remaining.length; i++) {
+            const next = remaining[i]!;
+            const comparison = comparePrimaryVariantCandidates({
+                next,
+                best,
+                assetCategory: params.asset.category,
+                mintRank: params.mintRank,
+                marketByMint: params.marketByMint,
+                fillQualityByMint: params.fillQualityByMint,
+                nowSeconds,
+                lexicalTieBreak,
+                strategy,
+            });
+            if (comparison.isBetter) {
+                best = next;
+                reason = comparison.reason;
+            }
+        }
+        entries.push({ variant: best, rank: entries.length + 1, reason, isPrimaryCandidate: true });
+        remaining.splice(remaining.indexOf(best), 1);
+    }
+
+    const rankedMints = new Set(entries.map(entry => entry.variant.mint));
+    const byLiquidityDesc = (a: AssetVariant, b: AssetVariant) =>
+        getLiquidity(params.marketByMint, b.mint) - getLiquidity(params.marketByMint, a.mint);
+
+    const activityExcluded = baseCandidates.filter(v => !rankedMints.has(v.mint)).sort(byLiquidityDesc);
+    for (const variant of activityExcluded) {
+        entries.push({
+            variant,
+            rank: entries.length + 1,
+            reason: 'excluded_by_activity_filter',
+            isPrimaryCandidate: false,
+        });
+        rankedMints.add(variant.mint);
+    }
+
+    const nonSpotLike = params.asset.variants.filter(v => !rankedMints.has(v.mint)).sort(byLiquidityDesc);
+    for (const variant of nonSpotLike) {
+        entries.push({ variant, rank: entries.length + 1, reason: 'non_spot_like', isPrimaryCandidate: false });
+    }
+
+    return entries;
+}
+
 function comparePrimaryVariantCandidates(params: {
     next: AssetVariant;
     best: AssetVariant;
