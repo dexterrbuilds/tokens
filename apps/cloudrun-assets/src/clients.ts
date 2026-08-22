@@ -1,7 +1,10 @@
 import { Effect, Schema } from 'effect';
+import bs58 from 'bs58';
+import { V1Client as TitanV1Client } from '@titanexchange/sdk-ts';
 import { fetchJsonWithRetry } from '@tokens/effect';
 import { decodeUpstreamOrWarn } from '@tokens/effect/schema';
 import { withExternalTiming } from './externalTiming';
+import type { DepthQuote, DepthQuoteClient } from './handlers/crons.depth';
 import type {
     BirdeyeClient,
     BirdeyeInterval,
@@ -1171,6 +1174,168 @@ export function makeBirdeyeMarketsClient(opts: MakeBirdeyeMarketsOptions): Birde
                 byAddress.set(market.address, market);
             }
             return Array.from(byAddress.values());
+        },
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Depth-sampling quote sources (see handlers/crons.depth.ts)
+// ---------------------------------------------------------------------------
+
+const JupiterQuoteEnvelopeSchema = Schema.Struct({
+    inAmount: Schema.optionalKey(Schema.Unknown),
+    outAmount: Schema.optionalKey(Schema.Unknown),
+    priceImpactPct: Schema.optionalKey(Schema.Unknown),
+    routePlan: Schema.optionalKey(Schema.Unknown),
+    contextSlot: Schema.optionalKey(Schema.Unknown),
+    errorCode: Schema.optionalKey(Schema.Unknown),
+});
+
+function toFinitePositiveNumber(value: unknown): number | null {
+    const parsed =
+        typeof value === 'number'
+            ? value
+            : typeof value === 'bigint'
+              ? Number(value)
+              : typeof value === 'string'
+                ? Number(value)
+                : NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+interface MakeJupiterQuoteOptions {
+    baseUrl?: string;
+    apiKey?: string;
+}
+
+/**
+ * Jupiter quote client (lite tier by default). Cross-check / fallback source
+ * for depth sampling; untradable pairs degrade to null like the Birdeye
+ * clients, transport failures throw after retries.
+ */
+export function makeJupiterQuoteClient(opts: MakeJupiterQuoteOptions = {}): DepthQuoteClient {
+    const baseUrl = (opts.baseUrl ?? (opts.apiKey ? 'https://api.jup.ag' : 'https://lite-api.jup.ag')).replace(
+        /\/+$/,
+        '',
+    );
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (opts.apiKey) headers['x-api-key'] = opts.apiKey;
+
+    return {
+        id: 'jupiter_lite',
+        async fetchQuote(args): Promise<DepthQuote | null> {
+            const url =
+                `${baseUrl}/swap/v1/quote?inputMint=${encodeURIComponent(args.inputMint)}` +
+                `&outputMint=${encodeURIComponent(args.outputMint)}` +
+                `&amount=${Math.round(args.amount)}` +
+                `&slippageBps=${args.slippageBps ?? 50}`;
+            const json = await Effect.runPromise(
+                fetchJsonWithRetry<Record<string, unknown> | null>({
+                    url,
+                    service: 'jupiter',
+                    init: { headers },
+                    maxRetries: 2,
+                    timeout: '15 seconds',
+                    schema: JupiterQuoteEnvelopeSchema,
+                }).pipe(
+                    // 400s (TOKEN_NOT_TRADABLE, COULD_NOT_FIND_ANY_ROUTE, ...)
+                    // keep the null-degrade contract; 429/5xx retry then throw.
+                    Effect.catchTag('UpstreamHttpError', () => Effect.succeed(null)),
+                ),
+            );
+            if (!json) return null;
+            const inAmount = toFinitePositiveNumber(json.inAmount);
+            const outAmount = toFinitePositiveNumber(json.outAmount);
+            if (inAmount === null || outAmount === null) return null;
+
+            const routeVenues: string[] = [];
+            if (Array.isArray(json.routePlan)) {
+                for (const step of json.routePlan) {
+                    const label = (step as { swapInfo?: { label?: unknown } } | null)?.swapInfo?.label;
+                    if (typeof label === 'string' && label && !routeVenues.includes(label)) routeVenues.push(label);
+                }
+            }
+            const contextSlot = toFinitePositiveNumber(json.contextSlot);
+
+            return {
+                inAmount,
+                outAmount,
+                routeVenues,
+                ...(contextSlot !== null ? { contextSlot: contextSlot } : {}),
+            };
+        },
+        async close(): Promise<void> {
+            // HTTP client: nothing to release.
+        },
+    };
+}
+
+interface MakeTitanQuoteOptions {
+    /** WebSocket endpoint, e.g. wss://.../ws — auth token is appended as ?auth=. */
+    wsUrl: string;
+    authToken: string;
+}
+
+const TITAN_NO_ROUTE_PATTERN = /no.?route|not.?tradable|unsupported|unknown.?(mint|token)/i;
+
+/**
+ * Titan quote client — primary depth source. Titan's API is
+ * WebSocket-streaming; we use the one-shot getSwapPrice call (best simulated
+ * route, no transaction) over a lazily opened connection that the cron closes
+ * at the end of each tick.
+ */
+export function makeTitanQuoteClient(opts: MakeTitanQuoteOptions): DepthQuoteClient {
+    const url = `${opts.wsUrl}${opts.wsUrl.includes('?') ? '&' : '?'}auth=${encodeURIComponent(opts.authToken)}`;
+    let clientPromise: Promise<TitanV1Client> | null = null;
+
+    async function getClient(): Promise<TitanV1Client> {
+        if (clientPromise) {
+            const existing = await clientPromise.catch(() => null);
+            if (existing && !existing.closed) return existing;
+        }
+        clientPromise = TitanV1Client.connect(url);
+        return clientPromise;
+    }
+
+    async function priceOnce(args: { inputMint: string; outputMint: string; amount: number }) {
+        const client = await getClient();
+        return client.getSwapPrice({
+            inputMint: bs58.decode(args.inputMint),
+            outputMint: bs58.decode(args.outputMint),
+            amount: Math.round(args.amount),
+        });
+    }
+
+    return {
+        id: 'titan',
+        async fetchQuote(args): Promise<DepthQuote | null> {
+            try {
+                const price = await withExternalTiming('titan', url, async () => {
+                    try {
+                        return await priceOnce(args);
+                    } catch (error) {
+                        // One reconnect attempt: the pooled connection may have
+                        // idled out between shards.
+                        clientPromise = null;
+                        if (error instanceof Error && TITAN_NO_ROUTE_PATTERN.test(error.message)) throw error;
+                        return await priceOnce(args);
+                    }
+                });
+                const inAmount = toFinitePositiveNumber(price.amountIn);
+                const outAmount = toFinitePositiveNumber(price.amountOut);
+                if (inAmount === null || outAmount === null) return null;
+                return { inAmount, outAmount, routeVenues: [] };
+            } catch (error) {
+                if (error instanceof Error && TITAN_NO_ROUTE_PATTERN.test(error.message)) return null;
+                throw error;
+            }
+        },
+        async close(): Promise<void> {
+            const pending = clientPromise;
+            clientPromise = null;
+            if (!pending) return;
+            const client = await pending.catch(() => null);
+            if (client && !client.closed) await client.close().catch(() => undefined);
         },
     };
 }

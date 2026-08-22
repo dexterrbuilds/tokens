@@ -124,6 +124,7 @@ import {
 } from './handlers/crons.assetVariants';
 import { seedJobs, type SeedCronDeps, type SeedJobHandler } from './handlers/crons.seed';
 import { prestocksJobs, type PrestocksCronDeps, type PrestocksJobHandler } from './handlers/crons.prestocks';
+import { depthJobs, type DepthCronDeps, type DepthJobHandler } from './handlers/crons.depth';
 import { trendingJobs, type TrendingCronDeps, type TrendingJobHandler } from './handlers/crons.trending';
 import {
     clickhouseExtrasJobs,
@@ -190,6 +191,7 @@ export interface ServerDeps {
     trendingCronDeps?: TrendingCronDeps;
     clickhouseExtrasCronDeps?: ClickhouseExtrasCronDeps;
     prestocksCronDeps?: PrestocksCronDeps;
+    depthCronDeps?: DepthCronDeps;
     cacheWarmDeps?: CacheWarmDeps;
     adminActionsDeps?: AdminActionsDeps;
     verifyOidc?: VerifyOidc;
@@ -607,6 +609,7 @@ export function createApp(deps: ServerDeps) {
     const prestocksJobsTable: Record<string, PrestocksJobHandler> = {
         ...prestocksJobs,
     };
+    const depthJobsTable: Record<string, DepthJobHandler> = { ...depthJobs };
 
     interface JobGroup {
         has(name: string): boolean;
@@ -656,6 +659,11 @@ export function createApp(deps: ServerDeps) {
             run: deps.prestocksCronDeps
                 ? (name, args) => prestocksJobsTable[name]!(deps.prestocksCronDeps!, args)
                 : null,
+        },
+        {
+            has: name => Object.hasOwn(depthJobsTable, name),
+            run: deps.depthCronDeps ? (name, args) => depthJobsTable[name]!(deps.depthCronDeps!, args) : null,
+            disabledError: 'depth_jobs_disabled',
         },
     ];
 

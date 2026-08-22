@@ -9,6 +9,7 @@ import {
     makePreStocksClient,
     makeRwaXyzClient,
     makeSanctumClient,
+    makeTitanQuoteClient,
     makeWebacyClient,
 } from './clients';
 import { parseAdminClerkUserIds, parseAdminEmails } from './adminAuth';
@@ -39,6 +40,7 @@ import {
     makePostgresTrendingReadsRepo,
     makePostgresTrendingRepo,
     makePostgresClickhouseExtrasRepo,
+    makePostgresDepthCurvesRepo,
     makePostgresPrestocksReadsRepo,
     makePostgresPrestocksRepo,
     makePostgresStockReadsRepo,
@@ -54,6 +56,7 @@ import type { SeedCronDeps } from './handlers/crons.seed';
 import type { TrendingCronDeps } from './handlers/crons.trending';
 import type { ClickhouseExtrasCronDeps } from './handlers/crons.clickhouse.extras';
 import type { PrestocksCronDeps } from './handlers/crons.prestocks';
+import type { DepthCronDeps } from './handlers/crons.depth';
 import { makeGoogleOidcVerifier } from './oidc';
 import { createApp, type ServiceRole } from './server';
 
@@ -93,6 +96,7 @@ let seedCronDeps: SeedCronDeps | undefined;
 let trendingCronDeps: TrendingCronDeps | undefined;
 let clickhouseExtrasCronDeps: ClickhouseExtrasCronDeps | undefined;
 let prestocksCronDeps: PrestocksCronDeps | undefined;
+let depthCronDeps: DepthCronDeps | undefined;
 let verifyOidc: ReturnType<typeof makeGoogleOidcVerifier> | undefined;
 if (birdeyeApiKey) {
     if (!cronAudience && !cronInvokerSa) {
@@ -232,6 +236,21 @@ if (birdeyeApiKey) {
     console.warn('[cloudrun-assets] BIRDEYE_API_KEY not set — /jobs/* endpoints disabled');
 }
 
+// Depth sampling has its own credentials (not coupled to BIRDEYE_API_KEY);
+// the job additionally no-ops unless DEPTH_REFRESH_ENABLED=true is set.
+const titanWsUrl = process.env.TITAN_WS_URL?.trim();
+const titanApiKey = process.env.TITAN_API_KEY?.trim();
+if (titanWsUrl && titanApiKey) {
+    depthCronDeps = {
+        quoteSource: makeTitanQuoteClient({ wsUrl: titanWsUrl, authToken: titanApiKey }),
+        repo: makePostgresDepthCurvesRepo(sql),
+        now: () => Date.now(),
+        env: () => process.env,
+    };
+} else {
+    console.warn('[cloudrun-assets] TITAN_WS_URL/TITAN_API_KEY not set — depth /jobs/* disabled');
+}
+
 let cacheWarmDeps: CacheWarmDeps | undefined;
 if (cronDeps && miscCronDeps && seedCronDeps) {
     cacheWarmDeps = {
@@ -319,6 +338,7 @@ const app = createApp({
     ...(trendingCronDeps ? { trendingCronDeps } : {}),
     ...(clickhouseExtrasCronDeps ? { clickhouseExtrasCronDeps } : {}),
     ...(prestocksCronDeps ? { prestocksCronDeps } : {}),
+    ...(depthCronDeps ? { depthCronDeps } : {}),
     ...(cacheWarmDeps ? { cacheWarmDeps } : {}),
     ...(adminActionsDeps ? { adminActionsDeps } : {}),
 });
