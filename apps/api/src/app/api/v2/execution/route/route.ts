@@ -31,6 +31,15 @@ const MAX_VARIANT_MINTS = 250;
 /** Curves older than this are treated as absent (depth_unavailable). */
 const MAX_DEPTH_AGE_SECONDS = 6 * 60 * 60;
 
+/**
+ * Which sampled source the read path trusts. Prod runs Titan; local/staging
+ * may sample with Jupiter instead, and without this the endpoint would
+ * silently report zero depth coverage there.
+ */
+function depthReadSource(): 'titan' | 'jupiter_lite' {
+    return process.env.DEPTH_READ_SOURCE?.trim() === 'jupiter_lite' ? 'jupiter_lite' : 'titan';
+}
+
 // Registry data is static per deploy; the curated rank never changes at runtime.
 const CURATED_MINT_RANK = buildCuratedMintRank();
 
@@ -99,7 +108,11 @@ export const GET = route(
                                   // Depth is additive: a read failure degrades to
                                   // depth_unavailable instead of failing the request.
                                   wantsDepth
-                                      ? variantDepthCurvesGetLatestByMints({ mints, side }).pipe(
+                                      ? variantDepthCurvesGetLatestByMints({
+                                            mints,
+                                            side,
+                                            source: depthReadSource(),
+                                        }).pipe(
                                             tapErrorAndDefault(
                                                 'v2.execution.route.depthCurves',
                                                 [] as VariantDepthCurvesGetLatestByMintsResult,

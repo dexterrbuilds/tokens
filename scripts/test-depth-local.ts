@@ -18,7 +18,7 @@
  * Add --source=titan to any mode to use Titan instead of Jupiter.
  */
 
-import { SQL } from 'bun';
+import postgres from 'postgres';
 
 import { BITCOIN_VARIANT_GROUP } from '../packages/asset-registry/src/data/token-variants';
 import { interpolateImpactBps } from '../packages/asset-registry/src/primary-variant-ranking';
@@ -79,7 +79,7 @@ function makeClient(): DepthQuoteClient {
     return makeJupiterQuoteClient(jupiterApiKey ? { apiKey: jupiterApiKey } : {});
 }
 
-const sql = new SQL(databaseUrl);
+const sql = postgres(databaseUrl, { max: 4 });
 const BTC_MINTS = BITCOIN_VARIANT_GROUP.addresses.map(a => a.address);
 
 async function probe() {
@@ -106,7 +106,8 @@ async function probe() {
 }
 
 async function run() {
-    console.log(`source: ${source}`);
+    const delayMs = Number(args.find(a => a.startsWith('--delayMs='))?.split('=')[1] ?? 1200);
+    console.log(`source: ${source}, delayMs: ${delayMs}`);
     const universe = listDepthUniverseMints();
     console.log(`universe: ${universe.length} mints total; sampling ${BTC_MINTS.length} BTC mints`);
     console.log(`ladder: ${DEPTH_SIZE_LADDER_USD.map(s => `$${(s / 1000).toLocaleString()}k`).join(', ')}`);
@@ -119,7 +120,7 @@ async function run() {
             now: () => Date.now(),
             env: () => ({ DEPTH_REFRESH_ENABLED: 'true' }) as NodeJS.ProcessEnv,
         },
-        { mints: BTC_MINTS, delayMs: 500, requireRefreshEnabled: false },
+        { mints: BTC_MINTS, delayMs, requireRefreshEnabled: false },
     );
     console.log('\ncron result:', JSON.stringify(result, null, 2));
 }
@@ -162,5 +163,5 @@ try {
         process.exit(1);
     }
 } finally {
-    await sql.end();
+    await sql.end({ timeout: 5 });
 }
