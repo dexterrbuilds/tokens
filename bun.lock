@@ -243,6 +243,7 @@
         "@tanstack/react-virtual": "^3.13.23",
         "@tokens/asset-registry": "workspace:*",
         "@tokens/effect": "workspace:*",
+        "@tokens/execution-links": "workspace:*",
         "@tokens/token-risk-helpers": "workspace:*",
         "@tokens/ui": "workspace:*",
         "@toolwind/corner-shape": "0.0.8-3",
