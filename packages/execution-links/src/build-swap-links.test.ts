@@ -54,8 +54,8 @@ describe('web parity for a regular token buy', () => {
         expect(urlById(result, 'dflow')).toBe(`https://dflow.net/?sendToken=${SOL_MINT}&receiveToken=${CBBTC_MINT}`);
     });
 
-    test('sunrise is USDC-denominated regardless of sell mint', () => {
-        expect(urlById(result, 'sunrise')).toBe('https://sunrise.xyz/?fromToken=USDC&toToken=cbBTC');
+    test('sunrise is USDC-denominated and links the buy MINT (their app only resolves mints)', () => {
+        expect(urlById(result, 'sunrise')).toBe(`https://sunrise.xyz/?fromToken=USDC&toToken=${CBBTC_MINT}`);
     });
 
     test('omfg is USDC-denominated regardless of sell mint', () => {
@@ -115,25 +115,29 @@ describe('web parity when buying SOL', () => {
     });
 });
 
-describe('symbol fallback chain', () => {
-    test('falls back to the registry symbol when buySymbol is omitted', () => {
+describe('sunrise gating (registry-known tokens only, mint-based link)', () => {
+    test('a registry symbol gates visibility but the MINT goes in toToken', () => {
         const match = getVariantByMint(CBBTC_MINT);
-        const expected = match?.variant.symbol ?? match?.asset.symbol ?? null;
-        expect(expected).not.toBeNull();
+        expect(match?.variant.symbol ?? match?.asset.symbol ?? null).not.toBeNull();
 
         const result = buildSwapLinks({ buyMint: CBBTC_MINT });
-        expect(urlById(result, 'sunrise')).toBe(`https://sunrise.xyz/?fromToken=USDC&toToken=${expected}`);
+        expect(urlById(result, 'sunrise')).toBe(`https://sunrise.xyz/?fromToken=USDC&toToken=${CBBTC_MINT}`);
     });
 
-    test('sunrise is omitted when no symbol can be resolved', () => {
+    test('sunrise is omitted when no symbol can be resolved (likely unlisted there)', () => {
         const result = buildSwapLinks({ buyMint: UNKNOWN_MINT });
         expect(urlById(result, 'sunrise')).toBeUndefined();
         // The other venues are mint-based and unaffected.
         expect(urlById(result, 'jupiter')).toBeDefined();
     });
 
-    test('sunrise is omitted when buy and sell symbols match', () => {
-        const result = buildSwapLinks({ buyMint: UNKNOWN_MINT, buySymbol: 'USDC' });
+    test('an explicit buySymbol makes an unknown mint linkable, still by mint', () => {
+        const result = buildSwapLinks({ buyMint: UNKNOWN_MINT, buySymbol: 'FOO' });
+        expect(urlById(result, 'sunrise')).toBe(`https://sunrise.xyz/?fromToken=USDC&toToken=${UNKNOWN_MINT}`);
+    });
+
+    test('sunrise is omitted when buying USDC itself', () => {
+        const result = buildSwapLinks({ buyMint: USDC_MINT, buySymbol: 'USDC' });
         expect(urlById(result, 'sunrise')).toBeUndefined();
     });
 });

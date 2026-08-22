@@ -44,9 +44,15 @@ export const VENUES: readonly VenueMeta[] = [
         name: 'Sunrise',
         venueType: 'dex',
         iconPath: '/logos/popular/sunrise.svg',
-        // Sunrise deep links are symbol-based and USDC-denominated in the web
-        // UI regardless of the sell mint; an explicit sellSymbol overrides.
-        build: ctx => getSunriseSwapUrl({ fromToken: ctx.sellSymbol ?? 'USDC', toToken: ctx.buySymbol }),
+        // Sunrise resolves toToken ONLY by mint (verified 2026-08-22: symbol
+        // values, any casing, are dropped and the app falls back to its
+        // default market). fromToken accepts the USDC symbol. The link stays
+        // gated on a resolvable registry symbol so we only send users there
+        // for curated assets Sunrise plausibly lists.
+        build: ctx =>
+            ctx.buySymbol === null || ctx.buyMint === USDC_MINT
+                ? null
+                : getSunriseSwapUrl({ fromToken: ctx.sellSymbol ?? 'USDC', toToken: ctx.buyMint }),
     },
     {
         id: 'omfg',

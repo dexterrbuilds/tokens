@@ -48,9 +48,9 @@ interface ExecutionLinksResponse {
 }
 ```
 
-Some venues drop out per pair instead of erroring: symbol-based venues (Sunrise) are
-omitted when no display symbol can be resolved, and same-mint pairs are omitted where a
-venue can't express them.
+Some venues drop out per pair instead of erroring: Sunrise (which resolves tokens by
+mint but lists a limited asset set) is omitted when the mint has no registry symbol,
+and same-mint pairs are omitted where a venue can't express them.
 
 ```bash
 curl -H "x-api-key: $API_KEY" \
