@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { IconCheckmark, IconChevronDown, IconExclamationmarkTriangleFill, IconEyeSlashFill } from 'symbols-react';
 
+import { Button } from '@tokens/ui/button';
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@tokens/ui/command';
 import { Skeleton } from '@tokens/ui/skeleton';
 import { Spinner } from '@tokens/ui/spinner';
@@ -23,8 +24,8 @@ import {
  * ⌘K curator search palette, modeled on the archive PR's v2 search dialog:
  * judged results with score pills and warnings, an expandable per-result
  * inspector (score bars, reasons, attestations), the suppressed set, and a
- * policy switcher in the footer. Selecting a result adds it to the active
- * list — the palette stays open so several tokens can be added in one pass.
+ * policy switcher in the footer. Clicking a result inspects it; the explicit
+ * Add button or Enter adds it to the active list while the palette stays open.
  */
 
 const POLICY_IDS = ['strict', 'default', 'degen'] as const;
@@ -45,7 +46,13 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
     return debounced;
 }
 
-function CodeChip({ children, tone = 'neutral' }: { children: React.ReactNode; tone?: 'neutral' | 'warn' | 'good' | 'bad' }) {
+function CodeChip({
+    children,
+    tone = 'neutral',
+}: {
+    children: React.ReactNode;
+    tone?: 'neutral' | 'warn' | 'good' | 'bad';
+}) {
     const tones = {
         neutral: 'bg-gray-100 text-muted-foreground',
         warn: 'bg-amber-100 text-amber-700',
@@ -78,11 +85,18 @@ function ScoreBar({ label, value }: { label: string; value: number }) {
     );
 }
 
-/** Per-result judgment breakdown, toggled by the chevron on a result row. */
-function ResultInspector({ token }: { token: SearchResult }) {
+/** Per-result judgment breakdown, toggled by its result row. */
+function ResultInspector({ token, id, onInteraction }: { token: SearchResult; id: string; onInteraction: () => void }) {
     return (
-        <div className="mt-2 w-full rounded-xl border border-border-extra-light bg-gray-50/70 dark:bg-zinc-900/40 p-3 text-left">
-            <div className="grid gap-3 md:grid-cols-2">
+        <div
+            id={id}
+            onClick={event => {
+                event.stopPropagation();
+                onInteraction();
+            }}
+            className="mt-2 w-full cursor-text overflow-hidden rounded-lg border border-black/[0.15] bg-white text-left shadow-sm dark:bg-zinc-950/30"
+        >
+            <div className="grid gap-3 p-3 md:grid-cols-2">
                 <div className="flex flex-col gap-1.5">
                     <span className="text-[10px] font-inter-semibold uppercase tracking-wide text-muted-foreground">
                         Score components
@@ -144,7 +158,7 @@ function ResultInspector({ token }: { token: SearchResult }) {
                     </div>
                 </div>
             </div>
-            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-border-extra-light pt-2 text-[11px] text-muted-foreground">
+            <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-black/[0.1] px-3 py-2 text-[11px] text-muted-foreground dark:border-white/10">
                 <span className="font-berkeley-mono">{token.mint}</span>
                 <span>liq {formatUsd(token.market.liquidityUsd)}</span>
                 <span>24h vol {formatUsd(token.market.volume24hUsd)}</span>
@@ -182,9 +196,15 @@ export function TokenSearchCommand({
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(false);
     const [expandedMint, setExpandedMint] = useState<string | null>(null);
+    const pointerSelectionMintRef = useRef<string | null>(null);
 
     const debouncedQuery = useDebouncedValue(query.trim(), 300);
     const hasQuery = debouncedQuery.length >= 2;
+
+    useEffect(() => {
+        setExpandedMint(null);
+        pointerSelectionMintRef.current = null;
+    }, [debouncedQuery, policy]);
 
     useEffect(() => {
         if (!open || !hasQuery) {
@@ -231,13 +251,13 @@ export function TokenSearchCommand({
     const sourceTone = (status: string): 'good' | 'neutral' | 'warn' =>
         status === 'ok' ? 'good' : status === 'disabled' ? 'neutral' : 'warn';
 
+    const toggleInspector = (mint: string) => {
+        setExpandedMint(previous => (previous === mint ? null : mint));
+    };
+
     return (
         <CommandDialog open={open} onOpenChange={handleOpenChange}>
-            <CommandInput
-                placeholder={`Search tokens to add to ${listSlug}…`}
-                value={query}
-                onValueChange={setQuery}
-            />
+            <CommandInput placeholder={`Search tokens to add to ${listSlug}…`} value={query} onValueChange={setQuery} />
 
             <CommandList className="h-[380px] max-h-[380px]">
                 {!hasQuery ? (
@@ -247,7 +267,12 @@ export function TokenSearchCommand({
                 ) : loading && results === null ? (
                     <CommandGroup heading="Judging candidates…">
                         {Array.from({ length: 4 }, (_, index) => (
-                            <CommandItem key={index} disabled value={`__loading__${index}`} className="flex items-center gap-3 px-3 py-2">
+                            <CommandItem
+                                key={index}
+                                disabled
+                                value={`__loading__${index}`}
+                                className="flex items-center gap-3 px-3 py-2"
+                            >
                                 <Skeleton className="h-8 w-8 rounded-full" />
                                 <div className="flex flex-1 flex-col gap-1">
                                     <Skeleton className="h-4 w-40 rounded" />
@@ -261,7 +286,11 @@ export function TokenSearchCommand({
                     <>
                         <CommandGroup heading="Ranked results">
                             {results.length === 0 && (
-                                <CommandItem disabled value="__no_results__" className="px-3 py-2 text-muted-foreground">
+                                <CommandItem
+                                    disabled
+                                    value="__no_results__"
+                                    className="px-3 py-2 text-muted-foreground"
+                                >
                                     No results survived the {policy} policy.
                                 </CommandItem>
                             )}
@@ -269,17 +298,33 @@ export function TokenSearchCommand({
                                 const isMember = memberMints.has(result.mint);
                                 const isAdding = addingMint === result.mint;
                                 const expanded = expandedMint === result.mint;
+                                const inspectorId = `token-result-inspector-${result.mint}`;
+                                const symbol = result.claims.symbol ?? shortMint(result.mint);
+                                const warningCount = result.warnings.length;
+                                const warningLabel = `${warningCount} warning${warningCount === 1 ? '' : 's'}`;
                                 return (
                                     <CommandItem
                                         key={result.mint}
                                         value={result.mint}
-                                        disabled={isMember || isAdding}
-                                        onSelect={() => {
-                                            if (!isMember && !isAdding) onAdd(result);
+                                        aria-expanded={expanded}
+                                        aria-controls={inspectorId}
+                                        onClickCapture={() => {
+                                            pointerSelectionMintRef.current = result.mint;
                                         }}
-                                        className="flex flex-col items-stretch gap-0 rounded-xl px-3 py-2"
+                                        onSelect={() => {
+                                            const selectedWithPointer = pointerSelectionMintRef.current === result.mint;
+                                            pointerSelectionMintRef.current = null;
+
+                                            if (selectedWithPointer || isMember) {
+                                                toggleInspector(result.mint);
+                                                return;
+                                            }
+
+                                            if (!isAdding && addingMint === null) onAdd(result);
+                                        }}
+                                        className="group flex cursor-pointer flex-col items-stretch gap-0 rounded-xl px-3 py-2 aria-selected:bg-accent/70"
                                     >
-                                        <div className="flex w-full items-center gap-3">
+                                        <div className="flex w-full items-center gap-2 sm:gap-3">
                                             <div className="min-w-0 flex-1">
                                                 <TokenIdentity
                                                     mint={result.mint}
@@ -287,54 +332,94 @@ export function TokenSearchCommand({
                                                     name={result.claims.name}
                                                     logoURI={result.market.logoURI}
                                                     verified={result.verified}
+                                                    symbolAccessory={
+                                                        warningCount > 0 ? (
+                                                            <span
+                                                                title={warningLabel}
+                                                                className="inline-flex shrink-0 items-center gap-1 rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] leading-4 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+                                                            >
+                                                                <IconExclamationmarkTriangleFill
+                                                                    aria-hidden="true"
+                                                                    className="size-3 shrink-0 fill-current"
+                                                                />
+                                                                {warningLabel}
+                                                            </span>
+                                                        ) : undefined
+                                                    }
                                                 >
                                                     <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
                                                         <span>{formatUsd(result.market.price)}</span>
                                                         <span>liq {formatUsd(result.market.liquidityUsd)}</span>
-                                                        {result.warnings.length > 0 && (
-                                                            <span className="inline-flex items-center gap-1 text-amber-600">
-                                                                <IconExclamationmarkTriangleFill className="size-3 fill-amber-500" />
-                                                                {result.warnings.length}
-                                                            </span>
-                                                        )}
                                                     </div>
                                                 </TokenIdentity>
                                             </div>
                                             <span
-                                                className={`inline-flex items-center rounded-full px-2 py-0.5 font-berkeley-mono text-xs font-semibold ${scoreTone(result.score.total)}`}
+                                                aria-label={`Judgment score: ${result.score.total}`}
+                                                title={`Judgment score: ${result.score.total}`}
+                                                className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 font-berkeley-mono text-xs font-semibold ${scoreTone(result.score.total)}`}
                                             >
                                                 {result.score.total}
                                             </span>
                                             {isAdding ? (
-                                                <Spinner size="sm" />
+                                                <Button
+                                                    type="button"
+                                                    size="sm"
+                                                    disabled
+                                                    aria-label={`Adding ${symbol} to ${listSlug}`}
+                                                    className="h-7 shrink-0 rounded-md px-2.5 text-xs"
+                                                >
+                                                    <Spinner size="sm" />
+                                                    Adding
+                                                </Button>
                                             ) : isMember ? (
-                                                <span className="inline-flex items-center gap-1 text-xs text-emerald-600">
-                                                    <IconCheckmark className="size-3 fill-emerald-600" />
+                                                <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-emerald-50 px-2 py-1 text-xs text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+                                                    <IconCheckmark
+                                                        aria-hidden="true"
+                                                        className="size-3 shrink-0 fill-current"
+                                                    />
                                                     Added
                                                 </span>
                                             ) : (
-                                                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                                                    ↵ add
-                                                </span>
+                                                <Button
+                                                    type="button"
+                                                    size="sm"
+                                                    disabled={addingMint !== null}
+                                                    aria-label={`Add ${symbol} to ${listSlug}`}
+                                                    onPointerDown={event => {
+                                                        event.stopPropagation();
+                                                        pointerSelectionMintRef.current = null;
+                                                    }}
+                                                    onClick={event => {
+                                                        event.preventDefault();
+                                                        event.stopPropagation();
+                                                        pointerSelectionMintRef.current = null;
+                                                        if (addingMint === null) onAdd(result);
+                                                    }}
+                                                    className="h-7 shrink-0 rounded-md px-2.5 text-xs"
+                                                >
+                                                    Add
+                                                    <span
+                                                        aria-hidden="true"
+                                                        className="font-berkeley-mono text-[10px] opacity-60"
+                                                    >
+                                                        ↵
+                                                    </span>
+                                                </Button>
                                             )}
-                                            <button
-                                                type="button"
-                                                aria-label={expanded ? 'Hide judgment details' : 'Show judgment details'}
-                                                onClick={event => {
-                                                    event.stopPropagation();
-                                                    event.preventDefault();
-                                                    setExpandedMint(previous =>
-                                                        previous === result.mint ? null : result.mint,
-                                                    );
-                                                }}
-                                                className="flex size-6 shrink-0 items-center justify-center rounded-md hover:bg-black/[0.06] dark:hover:bg-white/10"
-                                            >
-                                                <IconChevronDown
-                                                    className={`size-3 fill-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`}
-                                                />
-                                            </button>
+                                            <IconChevronDown
+                                                aria-hidden="true"
+                                                className={`size-3.5 shrink-0 fill-muted-foreground transition-transform duration-150 ease-out motion-reduce:transition-none ${expanded ? 'rotate-180' : ''}`}
+                                            />
                                         </div>
-                                        {expanded && <ResultInspector token={result} />}
+                                        {expanded && (
+                                            <ResultInspector
+                                                id={inspectorId}
+                                                token={result}
+                                                onInteraction={() => {
+                                                    pointerSelectionMintRef.current = null;
+                                                }}
+                                            />
+                                        )}
                                     </CommandItem>
                                 );
                             })}

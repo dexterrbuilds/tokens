@@ -61,6 +61,9 @@ function createMemberColumns(): ColumnDef<V2ListToken>[] {
                     logoURI={row.original.logoURI}
                     verified={row.original.verified}
                     layout="inline"
+                    symbolClassName="text-[13px]"
+                    nameClassName="truncate text-[11px] text-muted-foreground"
+                    indicatorClassName="size-2"
                 />
             ),
         },

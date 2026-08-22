@@ -123,19 +123,27 @@ export function TokenIdentity({
     verified,
     size = 'row',
     layout = 'stacked',
+    symbolAccessory,
+    symbolClassName,
+    nameClassName,
+    indicatorClassName,
     children,
 }: {
     mint: string;
     symbol: string | null;
-    name: string | null;
+    name: React.ReactNode;
     logoURI: string | null;
     verified?: boolean;
     size?: 'row' | 'dialog';
     layout?: 'stacked' | 'inline';
+    symbolAccessory?: React.ReactNode;
+    symbolClassName?: string;
+    nameClassName?: string;
+    indicatorClassName?: string;
     children?: React.ReactNode;
 }) {
     const avatarSize = size === 'dialog' ? 'h-12 w-12' : layout === 'inline' ? 'h-5 w-5' : 'h-8 w-8';
-    const indicatorSize = size === 'dialog' ? 'size-3' : 'size-2';
+    const indicatorSize = indicatorClassName ?? (size === 'dialog' ? 'size-3' : 'size-2.5');
     const symbolText = symbol ?? shortMint(mint);
     return (
         <div className="flex items-center gap-3 min-w-0">
@@ -157,16 +165,18 @@ export function TokenIdentity({
             </div>
             {layout === 'inline' ? (
                 <div className="flex min-w-0 items-center gap-2">
-                    <span className="shrink-0 text-sm font-inter-medium">{symbolText}</span>
-                    <span className="truncate text-xs text-muted-foreground">{name ?? '—'}</span>
+                    <span className={`shrink-0 text-sm font-inter-medium ${symbolClassName ?? ''}`}>{symbolText}</span>
+                    {symbolAccessory}
+                    <span className={nameClassName ?? 'truncate text-xs text-muted-foreground'}>{name ?? '—'}</span>
                     {children}
                 </div>
             ) : (
                 <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate font-inter-medium">{symbolText}</span>
+                        <span className={`truncate font-inter-medium ${symbolClassName ?? ''}`}>{symbolText}</span>
+                        {symbolAccessory}
                     </div>
-                    <div className="truncate text-sm text-muted-foreground">{name ?? '—'}</div>
+                    <div className={nameClassName ?? 'truncate text-sm text-muted-foreground'}>{name ?? '—'}</div>
                     {children}
                 </div>
             )}

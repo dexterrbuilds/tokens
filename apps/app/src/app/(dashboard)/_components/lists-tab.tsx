@@ -7,6 +7,7 @@ import {
     IconCheckmark,
     IconCircleGridCrossFill,
     IconCommand,
+    IconExclamationmarkTriangleFill,
     IconInfoCircle,
     IconK,
     IconKeySlashFill,
@@ -23,14 +24,7 @@ import { Skeleton } from '@tokens/ui/skeleton';
 import { Spinner } from '@tokens/ui/spinner';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@tokens/ui/tooltip';
 import { CopyButton } from '@/components/app-ui/copy-button';
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from '@/components/app-ui/dialog';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/app-ui/dialog';
 import { EmptyState } from '@/components/global/empty-state';
 import { TabNavigation } from '@/components/global/tab-navigation';
 import { ComposeEndpointSheet, type ComposableList } from './compose-endpoint-dialog';
@@ -40,10 +34,7 @@ import { MEMBER_GRID_TEMPLATE_COLUMNS, MemberTable } from './member-table';
 import { SelectionDock } from './selection-dock';
 import { BulkRemoveError, useListSelection } from './use-list-selection';
 import {
-    SectionHeading,
-    SummaryField,
     TokenIdentity,
-    WarningChips,
     formatUsd,
     formatValue,
     humanize,
@@ -71,6 +62,40 @@ interface V2ListSummary {
     owner: { name?: string; projectId?: string };
     tokenCount: number;
     updatedAt: number | null;
+}
+
+function MetadataStat({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="min-w-0 bg-background px-4 py-4 sm:px-5">
+            <div className="text-sm text-muted-foreground">{label}</div>
+            <div className="mt-2 truncate text-lg font-inter-semibold tabular-nums text-foreground">{value}</div>
+        </div>
+    );
+}
+
+function MetadataTooltipChip({ children }: { children: React.ReactNode }) {
+    return (
+        <span className="inline-flex items-center rounded-md bg-white/5 px-1.5 py-0.5 font-berkeley-mono text-[10px] leading-4 text-white">
+            {children}
+        </span>
+    );
+}
+
+function MetadataScoreBar({ label, value }: { label: string; value: number }) {
+    return (
+        <div className="flex items-center gap-2">
+            <span className="w-28 shrink-0 font-berkeley-mono text-[10px] text-muted-foreground">{label}</span>
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-100">
+                <div
+                    className={`h-full rounded-full ${value >= 70 ? 'bg-emerald-500' : value >= 40 ? 'bg-amber-500' : 'bg-red-400'}`}
+                    style={{ width: `${Math.max(2, Math.min(100, value))}%` }}
+                />
+            </div>
+            <span className="w-7 shrink-0 text-right font-berkeley-mono text-[10px] text-muted-foreground">
+                {Math.round(value)}
+            </span>
+        </div>
+    );
 }
 
 type WriteAccess = 'checking' | 'granted' | 'denied';
@@ -348,15 +373,14 @@ function TokenMetadataSheet({
 
     return (
         <Sheet open={open} onOpenChange={onOpenChange}>
-            <SheetContent className="w-full overflow-y-auto border-border-light sm:max-w-2xl">
-                <SheetHeader>
+            <SheetContent className="w-full overflow-y-auto border-border-light p-0 sm:max-w-2xl">
+                <SheetHeader className="sr-only">
                     <SheetTitle>Token metadata</SheetTitle>
                     <SheetDescription>Live market data and the judgment breakdown for this mint.</SheetDescription>
                 </SheetHeader>
 
-                <div className="space-y-5 py-2">
-                    {/* Identity */}
-                    <div className="rounded-md border border-border-medium bg-white dark:bg-zinc-950/30 p-3">
+                <div className="border-b border-border-light px-6 pb-6 pt-8 pr-14 sm:px-8 sm:pr-16">
+                    <div className="flex items-start justify-between gap-4">
                         <TokenIdentity
                             mint={mint}
                             symbol={symbol}
@@ -368,29 +392,28 @@ function TokenMetadataSheet({
                             {judged && judged.badges.length > 0 && (
                                 <div className="mt-1.5 flex flex-wrap gap-1">
                                     {judged.badges.map(badge => (
-                                        <Badge key={badge} variant="outline" className="px-1.5 text-[10px]">
+                                        <Badge key={badge} variant="secondary" className="px-1.5 text-[10px]">
                                             {badge}
                                         </Badge>
                                     ))}
                                 </div>
                             )}
                         </TokenIdentity>
-                        <div className="mt-3 flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                            <span className="min-w-0 truncate font-berkeley-mono">{mint}</span>
-                            <CopyButton
-                                textToCopy={mint}
-                                showText={false}
-                                ariaLabel="Copy mint address"
-                                className="h-7 w-7 shrink-0 rounded-sm hover:bg-gray-50/60 transition-colors duration-150"
-                                iconClassName="h-3.5 w-3.5 text-muted-foreground"
-                                iconClassNameCheck="h-3.5 w-3.5"
-                                onCopied={() => toast.success('Mint address copied')}
-                            />
-                        </div>
+                        <CopyButton
+                            textToCopy={mint}
+                            showText={false}
+                            ariaLabel="Copy mint address"
+                            className="h-7 w-7 shrink-0 rounded-sm transition-colors duration-150 hover:bg-black/[0.06] active:scale-[0.97]"
+                            iconClassName="h-3.5 w-3.5 text-muted-foreground"
+                            iconClassNameCheck="h-3.5 w-3.5 text-emerald-500"
+                            onCopied={() => toast.success('Mint address copied')}
+                        />
                     </div>
+                </div>
 
+                <div className="space-y-10 px-6 py-8 sm:px-8">
                     {loading && (
-                        <div className="flex items-center justify-center py-10">
+                        <div className="flex items-center justify-center py-12">
                             <Button variant="outline" size="sm" disabled>
                                 <span className="inline-flex items-center gap-2">
                                     <Spinner size="sm" />
@@ -401,65 +424,143 @@ function TokenMetadataSheet({
                     )}
 
                     {!loading && !judged && (
-                        <p className="text-sm text-muted-foreground">
+                        <p className="py-8 text-center text-sm text-muted-foreground">
                             No live market or judgment data is available for this mint right now.
                         </p>
                     )}
 
                     {!loading && judged && (
                         <>
-                            {/* Market */}
-                            <div className="space-y-2">
-                                <SectionHeading>Market</SectionHeading>
-                                <div className="grid gap-2 sm:grid-cols-3">
-                                    <SummaryField label="Price" value={formatValue(judged.market.price)} />
-                                    <SummaryField label="Liquidity" value={formatUsd(judged.market.liquidityUsd)} />
-                                    <SummaryField label="Volume 24h" value={formatUsd(judged.market.volume24hUsd)} />
-                                    <SummaryField label="Market cap" value={formatUsd(judged.market.marketCapUsd)} />
-                                    <SummaryField label="Holders" value={formatValue(judged.market.holderCount)} />
-                                    <SummaryField label="Decimals" value={formatValue(judged.market.decimals)} />
+                            <section>
+                                <h2 className="mb-5 text-xl font-inter-semibold text-foreground">Market</h2>
+                                <div className="grid grid-cols-2 gap-px overflow-hidden bg-border-light sm:grid-cols-3">
+                                    <MetadataStat label="Price" value={formatUsd(judged.market.price)} />
+                                    <MetadataStat label="Liquidity" value={formatUsd(judged.market.liquidityUsd)} />
+                                    <MetadataStat label="24H Volume" value={formatUsd(judged.market.volume24hUsd)} />
+                                    <MetadataStat label="Market Cap" value={formatUsd(judged.market.marketCapUsd)} />
+                                    <MetadataStat label="Holders" value={formatValue(judged.market.holderCount)} />
+                                    <MetadataStat label="Decimals" value={formatValue(judged.market.decimals)} />
                                 </div>
-                            </div>
+                            </section>
 
-                            {/* Judgment */}
-                            <div className="space-y-2">
-                                <SectionHeading>Judgment · score {judged.score.total}</SectionHeading>
-                                <div className="grid gap-2 sm:grid-cols-3">
-                                    {Object.entries(judged.score.components).map(([key, value]) => (
-                                        <SummaryField key={key} label={humanize(key)} value={String(value)} />
-                                    ))}
+                            <section>
+                                <div className="mb-5 flex items-center gap-2">
+                                    <h2 className="text-xl font-inter-semibold text-foreground">Score Card</h2>
+                                    <Badge
+                                        variant="secondary"
+                                        className="rounded-full px-2 py-0.5 font-berkeley-mono text-xs"
+                                    >
+                                        {judged.score.total}
+                                    </Badge>
+                                    <Tooltip delayDuration={300}>
+                                        <TooltipTrigger asChild>
+                                            <button
+                                                type="button"
+                                                aria-label="View score reasons and evidence"
+                                                className="inline-flex size-3.5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                            >
+                                                <IconInfoCircle aria-hidden="true" className="size-3 fill-current" />
+                                            </button>
+                                        </TooltipTrigger>
+                                        <TooltipContent
+                                            side="right"
+                                            className="max-w-64 rounded-sm bg-zinc-800 px-2 py-1.5 dark:bg-zinc-900"
+                                        >
+                                            <div className="text-[10px] font-inter-semibold uppercase tracking-wide text-white/60">
+                                                Reasons
+                                            </div>
+                                            <div className="mt-1 flex flex-wrap gap-1">
+                                                {judged.reasons.length > 0 ? (
+                                                    judged.reasons.map(reason => (
+                                                        <MetadataTooltipChip key={reason}>
+                                                            {humanize(reason)}
+                                                        </MetadataTooltipChip>
+                                                    ))
+                                                ) : (
+                                                    <span className="text-xs text-white/70">No specific reasons.</span>
+                                                )}
+                                            </div>
+                                            <div className="mt-2 border-t border-white/10 pt-2">
+                                                <div className="text-[10px] font-inter-semibold uppercase tracking-wide text-white/60">
+                                                    Evidence
+                                                </div>
+                                                <div className="mt-1 flex flex-wrap gap-1">
+                                                    {judged.claims.attestations.length > 0 ? (
+                                                        judged.claims.attestations.map(attestation => (
+                                                            <MetadataTooltipChip
+                                                                key={`${attestation.code}:${attestation.detail}`}
+                                                            >
+                                                                {attestation.detail}
+                                                            </MetadataTooltipChip>
+                                                        ))
+                                                    ) : (
+                                                        <span className="text-xs text-white/70">No attestations.</span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </TooltipContent>
+                                    </Tooltip>
+                                    {judged.warnings.length > 0 && (
+                                        <Tooltip delayDuration={300}>
+                                            <TooltipTrigger asChild>
+                                                <button
+                                                    type="button"
+                                                    aria-label={`View ${judged.warnings.length} warning${judged.warnings.length === 1 ? '' : 's'}`}
+                                                    className="inline-flex size-3.5 items-center justify-center rounded-full text-amber-600 transition-colors hover:text-amber-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-amber-300 dark:hover:text-amber-200"
+                                                >
+                                                    <IconExclamationmarkTriangleFill
+                                                        aria-hidden="true"
+                                                        className="size-3 fill-current"
+                                                    />
+                                                </button>
+                                            </TooltipTrigger>
+                                            <TooltipContent
+                                                side="right"
+                                                className="max-w-64 rounded-sm bg-zinc-800 px-2 py-1.5 dark:bg-zinc-900"
+                                            >
+                                                <div className="text-[10px] font-inter-semibold uppercase tracking-wide text-white/60">
+                                                    Warnings
+                                                </div>
+                                                <div className="mt-1 flex flex-wrap gap-1">
+                                                    {judged.warnings.map(warning => (
+                                                        <MetadataTooltipChip key={warning}>
+                                                            {humanize(warning)}
+                                                        </MetadataTooltipChip>
+                                                    ))}
+                                                </div>
+                                            </TooltipContent>
+                                        </Tooltip>
+                                    )}
                                 </div>
-                                {judged.reasons.length > 0 && (
-                                    <div className="flex flex-wrap gap-1 pt-1">
-                                        {judged.reasons.map(reason => (
-                                            <Badge key={reason} variant="secondary" className="px-1.5 text-[10px]">
-                                                {humanize(reason)}
-                                            </Badge>
+                                <div className="border-t border-border-light pt-4">
+                                    <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
+                                        {Object.entries(judged.score.components).map(([key, value]) => (
+                                            <MetadataScoreBar key={key} label={humanize(key)} value={value} />
                                         ))}
                                     </div>
-                                )}
-                                <WarningChips warnings={judged.warnings} />
-                            </div>
+                                </div>
+                            </section>
 
-                            {/* Attestations */}
                             {judged.claims.attestations.length > 0 && (
-                                <div className="space-y-2">
-                                    <SectionHeading>Attestations</SectionHeading>
-                                    <div className="grid gap-2 sm:grid-cols-2">
+                                <section>
+                                    <h2 className="mb-5 text-xl font-inter-semibold text-foreground">Evidence</h2>
+                                    <div className="grid grid-cols-2 gap-px overflow-hidden bg-border-light sm:grid-cols-3">
                                         {judged.claims.attestations.map(attestation => (
-                                            <SummaryField
+                                            <MetadataStat
                                                 key={`${attestation.code}:${attestation.detail}`}
                                                 label={humanize(attestation.code)}
                                                 value={attestation.detail}
                                             />
                                         ))}
                                     </div>
-                                </div>
+                                </section>
                             )}
 
                             {judged.inLists.length > 0 && (
-                                <div className="space-y-2">
-                                    <SectionHeading>Already in lists</SectionHeading>
+                                <section>
+                                    <h2 className="mb-3 text-sm font-inter-semibold text-foreground">
+                                        Already in lists
+                                    </h2>
                                     <div className="flex flex-wrap gap-1">
                                         {judged.inLists.map(slug => (
                                             <Badge key={slug} variant="outline" className="px-1.5 text-[10px]">
@@ -467,7 +568,7 @@ function TokenMetadataSheet({
                                             </Badge>
                                         ))}
                                     </div>
-                                </div>
+                                </section>
                             )}
                         </>
                     )}
@@ -1195,17 +1296,15 @@ export function ListsTab(): React.JSX.Element {
             />
 
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-                <DialogContent>
+                <DialogContent className="sm:max-w-[425px]">
                     <DialogHeader>
-                        <DialogTitle>Create a token list</DialogTitle>
-                        <DialogDescription>
-                            Everything here stays editable later, including the slug — renaming just breaks consumers
-                            pinned to the old path.
-                        </DialogDescription>
+                        <DialogTitle className="flex items-center gap-2">Create a list</DialogTitle>
                     </DialogHeader>
-                    <div className="space-y-4 py-2">
-                        <div className="space-y-1.5">
-                            <Label htmlFor="list-name">Name</Label>
+                    <div className="grid gap-4 py-4">
+                        <div className="grid gap-2">
+                            <Label htmlFor="list-name" className="text-[11px] uppercase text-text-extra-low">
+                                Name
+                            </Label>
                             <Input
                                 id="list-name"
                                 value={createName}
@@ -1214,10 +1313,13 @@ export function ListsTab(): React.JSX.Element {
                                     if (!slugTouched) setCreateSlug(slugify(event.target.value));
                                 }}
                                 placeholder="Ownership Core"
+                                className="mt-1 rounded-lg bg-zinc-50 transition-all duration-150 ease-out focus-visible:border-zinc-400/60 focus-visible:bg-white focus-visible:ring-4 focus-visible:ring-zinc-400/20 focus-visible:ring-offset-0 dark:bg-zinc-900 dark:focus-visible:border-zinc-600/80 dark:focus-visible:bg-zinc-950/50 dark:focus-visible:ring-zinc-600/20"
                             />
                         </div>
-                        <div className="space-y-1.5">
-                            <Label htmlFor="list-slug">Slug</Label>
+                        <div className="grid gap-2">
+                            <Label htmlFor="list-slug" className="text-[11px] uppercase text-text-extra-low">
+                                Slug
+                            </Label>
                             <Input
                                 id="list-slug"
                                 value={createSlug}
@@ -1227,7 +1329,7 @@ export function ListsTab(): React.JSX.Element {
                                 }}
                                 placeholder="ownership-core"
                                 aria-invalid={createSlugBlocked}
-                                className={`font-berkeley-mono ${
+                                className={`mt-1 rounded-lg bg-zinc-50 font-berkeley-mono transition-all duration-150 ease-out focus-visible:border-zinc-400/60 focus-visible:bg-white focus-visible:ring-4 focus-visible:ring-zinc-400/20 focus-visible:ring-offset-0 dark:bg-zinc-900 dark:focus-visible:border-zinc-600/80 dark:focus-visible:bg-zinc-950/50 dark:focus-visible:ring-zinc-600/20 ${
                                     createSlugBlocked
                                         ? 'border-destructive text-destructive focus-visible:border-destructive focus-visible:ring-destructive/20'
                                         : ''
@@ -1261,12 +1363,9 @@ export function ListsTab(): React.JSX.Element {
                             </div>
                         )}
                     </div>
-                    <DialogFooter>
-                        <Button variant="ghost" onClick={() => setCreateOpen(false)}>
-                            Cancel
-                        </Button>
+                    <DialogFooter className="flex !flex-col gap-2">
                         <Button
-                            variant="outline"
+                            variant="default"
                             onClick={() => void handleCreate()}
                             disabled={
                                 creating ||
@@ -1275,8 +1374,17 @@ export function ListsTab(): React.JSX.Element {
                                 createSlugBlocked ||
                                 createSlugAvailability.state === 'checking'
                             }
+                            className="w-full"
                         >
                             {creating ? <Spinner size="sm" /> : 'Create list'}
+                        </Button>
+                        <Button
+                            variant="outline"
+                            onClick={() => setCreateOpen(false)}
+                            disabled={creating}
+                            className="w-full"
+                        >
+                            Cancel
                         </Button>
                     </DialogFooter>
                 </DialogContent>
