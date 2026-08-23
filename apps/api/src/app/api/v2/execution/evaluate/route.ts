@@ -16,6 +16,7 @@ import {
     type VariantMarketRankingSnapshot,
 } from '@tokens/asset-registry';
 import {
+    depthSampleMints,
     executionQuotesLive,
     variantDepthCurvesGetLatestByMints,
     variantFillQualityGetLatestByMints,
@@ -104,6 +105,8 @@ export const GET = route(
             const amountUsd = yield* decodeAmountUsd(url.searchParams.get('amountUsd'));
             const side = yield* decodeSide(url.searchParams.get('side'));
             const quoteMode = yield* decodeQuoteMode(url.searchParams.get('quotes'));
+            // Read-through warm: sample uncovered mints on demand (bounded server-side).
+            const sampleMissing = (url.searchParams.get('sample') ?? '').trim() === 'missing';
             // Live quotes only exist for the buy side at a concrete size.
             const wantsLive = quoteMode === 'live' && amountUsd !== null && side === 'buy';
 
@@ -163,12 +166,38 @@ export const GET = route(
                 const nowSeconds = Math.floor(Date.now() / 1000);
                 // Fresh curves, including empty-ladder rows: an empty ladder is a
                 // recorded "no route right now" finding, not missing data.
-                const freshCurveByMint = new Map<string, (typeof depthRows)[number]['depthCurve']>();
-                for (const row of depthRows) {
-                    const curve = row.depthCurve;
-                    if (!curve) continue;
-                    if (nowSeconds - curve.asOf > MAX_DEPTH_AGE_SECONDS) continue;
-                    freshCurveByMint.set(row.mint, curve);
+                const collectFresh = (rows: VariantDepthCurvesGetLatestByMintsResult) => {
+                    const byMint = new Map<string, (typeof rows)[number]['depthCurve']>();
+                    for (const row of rows) {
+                        const curve = row.depthCurve;
+                        if (!curve) continue;
+                        if (nowSeconds - curve.asOf > MAX_DEPTH_AGE_SECONDS) continue;
+                        byMint.set(row.mint, curve);
+                    }
+                    return byMint;
+                };
+                let freshCurveByMint = collectFresh(depthRows);
+
+                if (sampleMissing && wantsDepth) {
+                    const missing = mints.filter(mint => !freshCurveByMint.has(mint)).slice(0, 4);
+                    if (missing.length > 0) {
+                        const sampled = yield* depthSampleMints({ mints: missing }).pipe(
+                            tapErrorAndDefault('v2.execution.evaluate.sampleMissing', null),
+                        );
+                        if (sampled && sampled.sampled.length > 0) {
+                            const refreshed = yield* variantDepthCurvesGetLatestByMints({
+                                mints: sampled.sampled,
+                                side,
+                                source: depthReadSource(),
+                            }).pipe(
+                                tapErrorAndDefault(
+                                    'v2.execution.evaluate.sampleRefetch',
+                                    [] as VariantDepthCurvesGetLatestByMintsResult,
+                                ),
+                            );
+                            freshCurveByMint = new Map([...freshCurveByMint, ...collectFresh(refreshed)]);
+                        }
+                    }
                 }
                 const liveByMint = new Map<string, number>();
                 let liveAsOf: number | null = null;

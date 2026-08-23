@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { executionQuotesLive, type LiveQuoteDeps } from './liveQuotes';
+import { depthSampleMints, executionQuotesLive, type LiveQuoteDeps } from './liveQuotes';
 import type { DepthQuote, DepthQuoteClient } from './crons.depth';
 
 const MINT_A = 'cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij';
@@ -81,5 +81,89 @@ describe('executionQuotesLive', () => {
         expect(result.entries).toHaveLength(8);
         expect(result.amountUsd).toBe(50_000_000);
         expect(seen.size).toBe(8);
+    });
+});
+
+describe('depthSampleMints', () => {
+    function sampleDeps(args: {
+        handler: (a: { outputMint: string; amount: number }) => Promise<DepthQuote | null>;
+        existing?: Array<{ mint: string; lastComputedAt: number }>;
+    }) {
+        const upserts: Array<{ mint: string; points: number }> = [];
+        const quoteSource: DepthQuoteClient = {
+            id: 'jupiter_lite',
+            async fetchQuote(q) {
+                return args.handler({ outputMint: q.outputMint, amount: q.amount });
+            },
+            async close() {},
+        };
+        const deps = {
+            quoteSource,
+            curvesRepo: {
+                async selectStalestDepthMints() {
+                    return [];
+                },
+                async upsertVariantDepthCurve(row: { mint: string; points: number }) {
+                    upserts.push({ mint: row.mint, points: row.points });
+                },
+            },
+            readsRepo: {
+                async findLatestByMints() {
+                    return (args.existing ?? []).map(row => ({
+                        mint: row.mint,
+                        quote_mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+                        side: 'buy',
+                        source: 'jupiter_lite',
+                        ladder: [],
+                        points: 0,
+                        failed_points: 0,
+                        as_of: 0,
+                        last_computed_at: row.lastComputedAt,
+                    }));
+                },
+            },
+            now: () => 1_700_000_000_000,
+        };
+        return { deps: deps as never, upserts };
+    }
+
+    it('samples uncovered mints and persists curves', async () => {
+        const { deps, upserts } = sampleDeps({ handler: async ({ amount }) => syntheticQuote(amount) });
+        const result = await depthSampleMints(deps, { mints: [MINT_A, MINT_B] });
+        expect(result.sampled.sort()).toEqual([MINT_A, MINT_B].sort());
+        expect(upserts).toHaveLength(2);
+        expect(upserts[0]?.points).toBe(4);
+    });
+
+    it('skips mints sampled within the min-age window', async () => {
+        const { deps, upserts } = sampleDeps({
+            handler: async ({ amount }) => syntheticQuote(amount),
+            existing: [{ mint: MINT_A, lastComputedAt: 1_700_000_000_000 - 60_000 }],
+        });
+        const result = await depthSampleMints(deps, { mints: [MINT_A, MINT_B] });
+        expect(result.skippedFresh).toEqual([MINT_A]);
+        expect(result.sampled).toEqual([MINT_B]);
+        expect(upserts).toHaveLength(1);
+    });
+
+    it('persists an empty ladder for untradable mints and caps at 4', async () => {
+        const { deps, upserts } = sampleDeps({ handler: async () => null });
+        const mints = Array.from({ length: 6 }, (_, i) => `${MINT_A.slice(0, -2)}${String(i).padStart(2, '0')}`);
+        const result = await depthSampleMints(deps, { mints });
+        expect(result.sampled).toHaveLength(4);
+        expect(upserts.every(row => row.points === 0)).toBe(true);
+    });
+
+    it('reports transport failures per mint without failing the batch', async () => {
+        const { deps, upserts } = sampleDeps({
+            handler: async ({ outputMint, amount }) => {
+                if (outputMint === MINT_A) throw new Error('connection reset');
+                return syntheticQuote(amount);
+            },
+        });
+        const result = await depthSampleMints(deps, { mints: [MINT_A, MINT_B] });
+        expect(result.failed).toEqual([MINT_A]);
+        expect(result.sampled).toEqual([MINT_B]);
+        expect(upserts).toHaveLength(1);
     });
 });

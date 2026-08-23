@@ -141,7 +141,7 @@ export function computeLadderImpacts(
     }));
 }
 
-async function sampleMintLadder(args: {
+export async function sampleMintLadder(args: {
     quoteSource: DepthQuoteClient;
     mint: string;
     delayMs: number;

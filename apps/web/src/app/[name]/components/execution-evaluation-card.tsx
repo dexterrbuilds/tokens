@@ -113,14 +113,21 @@ export function ExecutionEvaluationCard({
     }, [amountInput]);
 
     const scorecard = useExecutionEvaluation(assetId);
+    // First visit to an unsampled asset: ask the API to sample it on demand
+    // (persisted server-side, so only the first visitor waits).
+    const needsSample = scorecard.data
+        ? scorecard.data.meta.depthCoverage.withCurves === 0 && scorecard.data.variants.length > 0
+        : false;
+    const sampledScorecard = useExecutionEvaluation(assetId, { sample: true, enabled: needsSample });
     const sized = useExecutionEvaluation(assetId, {
         amountUsd: debouncedAmount,
         live: true,
         enabled: debouncedAmount !== null,
     });
 
-    const data = scorecard.data;
+    const data = needsSample && sampledScorecard.data ? sampledScorecard.data : scorecard.data;
     const hasDepth = (data?.meta.depthCoverage.withCurves ?? 0) > 0;
+    const isSampling = needsSample && sampledScorecard.isPending;
 
     const trackedRef = React.useRef(false);
     React.useEffect(() => {
@@ -148,8 +155,31 @@ export function ExecutionEvaluationCard({
         });
     }, [assetId, debouncedAmount, sizedVariants]);
 
-    // Progressive enhancement: stay invisible until there is depth to show.
-    if (!data || !hasDepth) return null;
+    if (!data) return null;
+    // Nothing evaluable at all (no on-chain variants): keep the page unchanged.
+    if (data.variants.length === 0) return null;
+
+    if (isSampling) {
+        return (
+            <section className="rounded-2xl border border-border-light bg-white p-4 shadow-[0_8px_40px_rgba(0,0,0,0.03)]">
+                <h2 className="text-title-sm text-text-extra-high">Execution quality</h2>
+                <p className="mt-2 text-body-md text-text-medium">
+                    Sampling market depth… first visit to this asset takes a few seconds.
+                </p>
+            </section>
+        );
+    }
+
+    if (!hasDepth) {
+        return (
+            <section className="rounded-2xl border border-border-light bg-white p-4 shadow-[0_8px_40px_rgba(0,0,0,0.03)]">
+                <h2 className="text-title-sm text-text-extra-high">Execution quality</h2>
+                <p className="mt-2 text-body-md text-text-medium">
+                    No routable on-chain depth found for this asset right now.
+                </p>
+            </section>
+        );
+    }
 
     const ladderSizes = data.meta.sizeLadderUsd ?? [];
     const withCurves = data.variants.filter(variant => variant.ladder && variant.ladder.length > 0);

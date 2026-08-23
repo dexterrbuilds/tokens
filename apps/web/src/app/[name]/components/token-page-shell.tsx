@@ -4,7 +4,6 @@ import { cn } from '@tokens/ui/cn';
 
 import { TokenBreadcrumb } from '@/app/token/[address]/components/token-breadcrumb';
 import { SwapProvidersDropdown } from '@/app/token/[address]/components/swap-providers-dropdown';
-import { ExecutionEvaluationCard } from '@/app/[name]/components/execution-evaluation-card';
 import { ExpandableText } from '@/components/expandable-text';
 import { FloatingMarketFeedPageContext } from '@/components/floating-market-feed-context';
 import { SiteFooter } from '@/components/site-footer';
@@ -22,10 +21,6 @@ export function TokenPageBackgroundBlur({ children }: TokenPageBackgroundBlurPro
 }
 
 export interface TokenPageSidebarProps {
-    /** Canonical asset id; enables the execution-evaluation card. */
-    assetId?: string;
-    /** Mint being viewed, when in a variant view. */
-    activeMint?: string | null;
     buyAddress: string | null;
     buySymbol?: string;
     buyLogoURI?: string;
@@ -36,8 +31,6 @@ export interface TokenPageSidebarProps {
 }
 
 export function TokenPageSidebar({
-    assetId,
-    activeMint,
     buyAddress,
     buySymbol,
     buyLogoURI,
@@ -59,8 +52,6 @@ export function TokenPageSidebar({
                         />
                     </div>
                 )}
-
-                {assetId ? <ExecutionEvaluationCard assetId={assetId} activeMint={activeMint ?? null} /> : null}
 
                 {description && description.trim().length > 0 && (
                     <section>

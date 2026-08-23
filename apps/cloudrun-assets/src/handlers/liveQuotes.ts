@@ -1,5 +1,12 @@
 import { InvalidArgsError } from './assets';
-import { DEPTH_USDC_QUOTE_MINT, type DepthQuoteClient } from './crons.depth';
+import {
+    DEPTH_USDC_QUOTE_MINT,
+    sampleMintLadder,
+    type DepthCronRepo,
+    type DepthQuoteClient,
+    type DepthQuoteSourceId,
+} from './crons.depth';
+import type { DepthCurveReadsRepo } from './depthCurveReads';
 
 const MAX_MINTS = 8;
 const MIN_AMOUNT_USD = 1;
@@ -105,5 +112,94 @@ export async function executionQuotesLive(deps: LiveQuoteDeps, args: unknown): P
         baselineSizeUsd: BASELINE_SIZE_USD,
         asOf: Math.floor(deps.now() / 1000),
         entries,
+    };
+}
+
+const SAMPLE_MAX_MINTS = 4;
+const SAMPLE_MIN_AGE_MS = 30 * 60 * 1000;
+const SAMPLE_RUNG_DELAY_MS = 250;
+const SAMPLE_MINT_CONCURRENCY = 2;
+
+export interface DepthSampleDeps {
+    quoteSource: DepthQuoteClient;
+    curvesRepo: DepthCronRepo;
+    readsRepo: DepthCurveReadsRepo;
+    now: () => number;
+}
+
+export interface DepthSampleResult {
+    source: DepthQuoteSourceId;
+    sampled: string[];
+    skippedFresh: string[];
+    failed: string[];
+}
+
+/**
+ * On-demand depth sampling for mints the cron hasn't covered yet — the
+ * read-through path behind `sample=missing` on /v2/execution/evaluate. The
+ * first visitor to an unsampled asset pays a few seconds once; the result is
+ * persisted, so every later view reads the stored curve. Bounded hard:
+ * ≤ SAMPLE_MAX_MINTS per call, and mints sampled within SAMPLE_MIN_AGE_MS are
+ * skipped so page reloads can't drain upstream quota.
+ */
+export async function depthSampleMints(deps: DepthSampleDeps, args: unknown): Promise<DepthSampleResult> {
+    if (typeof args !== 'object' || args === null) {
+        throw new InvalidArgsError('args must be an object');
+    }
+    const a = args as { mints?: unknown };
+    if (!Array.isArray(a.mints) || a.mints.some(item => typeof item !== 'string')) {
+        throw new InvalidArgsError('mints must be an array of strings');
+    }
+    const requested = [...new Set((a.mints as string[]).map(m => m.trim()).filter(Boolean))].slice(0, SAMPLE_MAX_MINTS);
+
+    const existing = await deps.readsRepo.findLatestByMints({
+        mints: requested,
+        quoteMint: DEPTH_USDC_QUOTE_MINT,
+        side: 'buy',
+        source: deps.quoteSource.id as DepthQuoteSourceId,
+    });
+    const freshEnough = new Set(
+        existing
+            .filter(row => deps.now() - Number(row.last_computed_at) < SAMPLE_MIN_AGE_MS)
+            .map(row => row.mint),
+    );
+    const toSample = requested.filter(mint => !freshEnough.has(mint));
+
+    const sampled: string[] = [];
+    const failed: string[] = [];
+    for (let i = 0; i < toSample.length; i += SAMPLE_MINT_CONCURRENCY) {
+        const batch = toSample.slice(i, i + SAMPLE_MINT_CONCURRENCY);
+        await Promise.all(
+            batch.map(async mint => {
+                try {
+                    const { ladder, failedPoints } = await sampleMintLadder({
+                        quoteSource: deps.quoteSource,
+                        mint,
+                        delayMs: SAMPLE_RUNG_DELAY_MS,
+                    });
+                    await deps.curvesRepo.upsertVariantDepthCurve({
+                        mint,
+                        quoteMint: DEPTH_USDC_QUOTE_MINT,
+                        side: 'buy',
+                        source: deps.quoteSource.id as DepthQuoteSourceId,
+                        ladder,
+                        points: ladder.length,
+                        failedPoints,
+                        asOf: Math.floor(deps.now() / 1000),
+                        lastComputedAt: deps.now(),
+                    });
+                    sampled.push(mint);
+                } catch {
+                    failed.push(mint);
+                }
+            }),
+        );
+    }
+
+    return {
+        source: deps.quoteSource.id as DepthQuoteSourceId,
+        sampled,
+        skippedFresh: [...freshEnough],
+        failed,
     };
 }

@@ -17,6 +17,7 @@ import { formatLargeNumber } from '@/lib/format';
 import { getGlobalTokenStats, type GlobalTokenStats } from '@/lib/coingecko';
 import { looksLikeSolanaMintAddress } from '@/lib/solana-address';
 import { AssetPriceChartSection } from './components/asset-price-chart-section';
+import { ExecutionEvaluationCard } from './components/execution-evaluation-card';
 import { AssetMarketsSection } from './components/asset-markets-section';
 import { AssetMarketsOverviewSection } from './components/asset-markets-overview-section';
 import { AssetRiskSection } from './components/asset-risk-section';
@@ -450,7 +451,6 @@ async function TokenHeaderWithLinksLoader({
 function TokenSidebarWithData({
     descriptionOverride,
     assetId,
-    activeMint,
     coingeckoId,
     enableCoinGeckoFallback,
     buyAddress,
@@ -460,7 +460,6 @@ function TokenSidebarWithData({
 }: {
     descriptionOverride?: string | null;
     assetId: string;
-    activeMint?: string | null;
     coingeckoId: string | null;
     enableCoinGeckoFallback: boolean;
     buyAddress: string | null;
@@ -472,8 +471,6 @@ function TokenSidebarWithData({
         <Suspense
             fallback={
                 <TokenPageSidebar
-                    assetId={assetId}
-                    activeMint={activeMint}
                     buyAddress={buyAddress}
                     buySymbol={buySymbol}
                     buyLogoURI={buyLogoURI}
@@ -485,7 +482,6 @@ function TokenSidebarWithData({
             <TokenSidebarWithDataLoader
                 descriptionOverride={descriptionOverride}
                 assetId={assetId}
-                activeMint={activeMint}
                 coingeckoId={coingeckoId}
                 enableCoinGeckoFallback={enableCoinGeckoFallback}
                 buyAddress={buyAddress}
@@ -500,7 +496,6 @@ function TokenSidebarWithData({
 async function TokenSidebarWithDataLoader({
     descriptionOverride,
     assetId,
-    activeMint,
     coingeckoId,
     enableCoinGeckoFallback,
     buyAddress,
@@ -510,7 +505,6 @@ async function TokenSidebarWithDataLoader({
 }: {
     descriptionOverride?: string | null;
     assetId: string;
-    activeMint?: string | null;
     coingeckoId: string | null;
     enableCoinGeckoFallback: boolean;
     buyAddress: string | null;
@@ -522,8 +516,6 @@ async function TokenSidebarWithDataLoader({
 
     return (
         <TokenPageSidebar
-            assetId={assetId}
-            activeMint={activeMint}
             buyAddress={buyAddress}
             buySymbol={buySymbol}
             buyLogoURI={buyLogoURI}
@@ -1162,7 +1154,6 @@ async function AssetPageContent(props: AssetPageProps) {
                 <TokenSidebarWithData
                     descriptionOverride={assetDescription}
                     assetId={canonicalAssetId}
-                    activeMint={activeMint}
                     coingeckoId={coingeckoId ?? null}
                     enableCoinGeckoFallback={!isVariantView}
                     buyAddress={buyAddress}
@@ -1229,6 +1220,8 @@ async function AssetPageContent(props: AssetPageProps) {
                     }
                 />
             )}
+
+            <ExecutionEvaluationCard assetId={canonicalAssetId} activeMint={activeMint} />
 
             <AssetStatsSectionWithData
                 assetId={canonicalAssetId}

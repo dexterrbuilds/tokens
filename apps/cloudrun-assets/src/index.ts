@@ -59,7 +59,7 @@ import type { TrendingCronDeps } from './handlers/crons.trending';
 import type { ClickhouseExtrasCronDeps } from './handlers/crons.clickhouse.extras';
 import type { PrestocksCronDeps } from './handlers/crons.prestocks';
 import type { DepthCronDeps } from './handlers/crons.depth';
-import type { LiveQuoteDeps } from './handlers/liveQuotes';
+import type { DepthSampleDeps, LiveQuoteDeps } from './handlers/liveQuotes';
 import { makeGoogleOidcVerifier } from './oidc';
 import { createApp, type ServiceRole } from './server';
 
@@ -264,6 +264,12 @@ const liveQuoteDeps: LiveQuoteDeps = {
           ),
     now: () => Date.now(),
 };
+const depthSampleDeps: DepthSampleDeps = {
+    quoteSource: liveQuoteDeps.quoteSource,
+    curvesRepo: makePostgresDepthCurvesRepo(sql),
+    readsRepo: makePostgresDepthCurveReadsRepo(sql),
+    now: () => Date.now(),
+};
 
 let cacheWarmDeps: CacheWarmDeps | undefined;
 if (cronDeps && miscCronDeps && seedCronDeps) {
@@ -355,6 +361,7 @@ const app = createApp({
     ...(prestocksCronDeps ? { prestocksCronDeps } : {}),
     ...(depthCronDeps ? { depthCronDeps } : {}),
     liveQuoteDeps,
+    depthSampleDeps,
     ...(cacheWarmDeps ? { cacheWarmDeps } : {}),
     ...(adminActionsDeps ? { adminActionsDeps } : {}),
 });

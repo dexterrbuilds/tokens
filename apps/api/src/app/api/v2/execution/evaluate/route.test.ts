@@ -87,6 +87,7 @@ function depthCurveRow(mint: string, asOfSecondsAgo: number) {
 
 let depthResponder: (() => unknown) | null = null;
 let liveQuotesResponder: (() => unknown) | null = null;
+let sampleResponder: (() => unknown) | null = null;
 
 function stubCloudRun(): void {
     globalThis.fetch = (async (input: string | URL | Request) => {
@@ -101,6 +102,10 @@ function stubCloudRun(): void {
         if (url.includes('/query/executionQuotesLive')) {
             if (!liveQuotesResponder) throw new Error('live quotes query not stubbed');
             return new Response(JSON.stringify(liveQuotesResponder()), { status: 200 });
+        }
+        if (url.includes('/mutation/depthSampleMints')) {
+            if (!sampleResponder) throw new Error('sample mutation not stubbed');
+            return new Response(JSON.stringify(sampleResponder()), { status: 200 });
         }
         if (url.includes('/query/variantMarketsGetLatestByMints')) {
             return new Response(
@@ -141,6 +146,7 @@ beforeEach(() => {
     __resetCloudRunClientForTesting();
     depthResponder = null;
     liveQuotesResponder = null;
+    sampleResponder = null;
     stubCloudRun();
 
     console.log = () => undefined;
@@ -352,6 +358,38 @@ describe('GET /api/v2/execution/evaluate', () => {
         // from curves that actually have rungs.
         expect(body.meta.depthCoverage.withCurves).toBe(1);
         expect(body.meta.sizeLadderUsd).toBeNull();
+    });
+
+    it('samples uncovered mints on demand with sample=missing', async () => {
+        let depthCalls = 0;
+        depthResponder = () => {
+            depthCalls += 1;
+            // First fetch: nothing stored. Refetch after sampling: cbBTC covered.
+            return depthCalls === 1 ? [] : [depthCurveRow(CBBTC_MINT, 5)];
+        };
+        let sampledMints: unknown = null;
+        sampleResponder = () => {
+            sampledMints = true;
+            return { source: 'jupiter_lite', sampled: [CBBTC_MINT], skippedFresh: [], failed: [] };
+        };
+        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&sample=missing');
+        expect(response.status).toBe(200);
+        const body = await response.json();
+        expect(sampledMints).toBe(true);
+        expect(depthCalls).toBe(2);
+        expect(body.meta.depthCoverage.withCurves).toBe(1);
+        expect(body.variants[0].ladder?.length).toBe(4);
+    });
+
+    it('degrades gracefully when on-demand sampling fails', async () => {
+        depthResponder = () => [];
+        sampleResponder = () => {
+            throw new Error('sampler down');
+        };
+        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&sample=missing');
+        expect(response.status).toBe(200);
+        const body = await response.json();
+        expect(body.meta.depthCoverage.withCurves).toBe(0);
     });
 
     it('nulls the ladder for stale curves even without amountUsd', async () => {

@@ -74,18 +74,21 @@ interface UseExecutionEvaluationOptions {
     amountUsd?: number | null;
     /** Fetch live quotes at the requested amount instead of interpolating stored curves. */
     live?: boolean;
+    /** Ask the API to sample uncovered mints on demand (slow first call, then persisted). */
+    sample?: boolean;
     enabled?: boolean;
 }
 
 export function useExecutionEvaluation(assetId: string, options: UseExecutionEvaluationOptions = {}) {
-    const { amountUsd = null, live = false, enabled = true } = options;
+    const { amountUsd = null, live = false, sample = false, enabled = true } = options;
 
     return useQuery<ExecutionEvaluationResponse>({
-        queryKey: ['execution', 'evaluate', assetId, amountUsd, live],
+        queryKey: ['execution', 'evaluate', assetId, amountUsd, live, sample],
         queryFn: async ({ signal }) => {
             const params = new URLSearchParams({ asset: assetId });
             if (amountUsd !== null) params.set('amountUsd', String(amountUsd));
             if (live && amountUsd !== null) params.set('quotes', 'live');
+            if (sample) params.set('sample', 'missing');
 
             return Effect.runPromise(
                 apiJson<ExecutionEvaluationResponse>({ url: `/api/v2/execution/evaluate?${params.toString()}` }),
