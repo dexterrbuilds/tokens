@@ -196,7 +196,7 @@
   },
   {
     "eventName": "execution_quotes_requested",
-    "eventDescription": "User requested live router quotes on /evaluation (properties: mint, side, requested_count, amount_source, includes_custom_amount, providers_requested)",
+    "eventDescription": "User requested live router quotes on /evaluation (properties: mint, side, requested_count, includes_custom_amount, providers_requested)",
     "filePath": "src/app/evaluation/evaluation-playground.tsx"
   },
   {

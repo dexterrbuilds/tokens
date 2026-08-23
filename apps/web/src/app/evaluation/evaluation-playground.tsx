@@ -30,11 +30,14 @@ import { cleanTokenName } from '@/lib/logo-overrides';
 import { trackEvent } from '@/lib/posthog-client';
 
 /**
- * Cosmetic only: mirrors the endpoint's documented default ladder so the loading
- * skeleton has the right number of rows. We send no amounts at all and let the
- * server pick — `meta.defaultLadderUsd` in the response is the source of truth.
+ * The size curve this page exists to show: where a router's edge appears and
+ * where liquidity gives out are only legible across rungs, so we ask for all
+ * eight rather than the endpoint's cheaper three-rung default.
+ *
+ * Eight plus a custom amount is exactly the endpoint's nine-amount cap, so
+ * adding a rung here without raising MAX_AMOUNTS would start returning 400.
  */
-const DEFAULT_LADDER_PREVIEW = ['10000', '100000', '1000000'] as const;
+const BUY_TIERS = ['10000', '25000', '50000', '100000', '250000', '500000', '1000000', '5000000'] as const;
 
 const FALLBACK_LIST_BY_CATEGORY: Partial<Record<AssetCategory, CuratedTokenListIdWithoutLsts>> = {
     crypto: 'majors',
@@ -243,14 +246,11 @@ export function EvaluationPlayground() {
 
     const requestQuotes = React.useCallback(
         async (amounts: string[], includesCustom: boolean) => {
-            // No amounts means the server applies its default ladder, so the
-            // skeleton borrows the preview list purely to size itself.
-            setRequestedAmounts(amounts.length > 0 ? amounts : [...DEFAULT_LADDER_PREVIEW]);
+            setRequestedAmounts(amounts);
             trackEvent('execution_quotes_requested', {
                 mint: selectedMint,
                 side,
-                requested_count: amounts.length > 0 ? amounts.length : DEFAULT_LADDER_PREVIEW.length,
-                amount_source: amounts.length > 0 ? 'request' : 'default',
+                requested_count: amounts.length,
                 includes_custom_amount: includesCustom,
                 providers_requested: 2,
             });
@@ -305,10 +305,10 @@ export function EvaluationPlayground() {
         }
         setAmountError(null);
         setSubmittedCustom(custom);
-        // Each rung costs a real quote per provider, so ask for exactly what the
-        // user wants: their own size when they named one, otherwise nothing at
-        // all — the endpoint's default ladder is the cheap, documented path.
-        const amounts = side === 'buy' ? (custom ? [custom] : []) : [custom!];
+        // A custom amount joins the curve rather than replacing it, so it can be
+        // read against the neighbouring rungs. Deduped: typing a size that is
+        // already a tier must not spend a second quote on it.
+        const amounts = side === 'buy' ? [...new Set([...BUY_TIERS, ...(custom ? [custom] : [])])] : [custom!];
         void requestQuotes(amounts, custom !== null);
     };
 
