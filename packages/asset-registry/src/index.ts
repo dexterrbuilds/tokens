@@ -18,6 +18,7 @@ export {
 } from './liquidity-tier';
 export type {
     DepthLadderRung,
+    ImpactGrade,
     InterpolatedImpact,
     PrimaryVariantRankingOptions,
     PrimaryVariantSelectionReason,
@@ -29,12 +30,16 @@ export type {
     VariantRankingExclusionReason,
 } from './primary-variant-ranking';
 export {
+    EXECUTION_GRADING_VERSION,
     FILL_QUALITY_SCORING_VERSION,
+    IMPACT_GRADES,
+    IMPACT_GRADE_MAX_BPS,
     SIZE_AWARE_IMPACT_FLOOR_BPS,
     SIZE_AWARE_OVERRIDE_DELTA,
     SIZE_AWARE_SCORING_VERSION,
     computeSizeAwareScore,
     computeVariantExecutionScore,
+    gradeImpactBps,
     interpolateImpactBps,
     isFillQualityEligibleForPrimary,
     isSpotLikeVariantKind,

@@ -5,8 +5,10 @@ import { withStaleFallback } from '@/effect/stale-response-cache';
 import { BadRequestError } from '@tokens/effect';
 import {
     computeSizeAwareScore,
+    EXECUTION_GRADING_VERSION,
     FILL_QUALITY_SCORING_VERSION,
     getAsset,
+    gradeImpactBps,
     interpolateImpactBps,
     isFillQualityEligibleForPrimary,
     rankVariantsWithReasons,
@@ -70,7 +72,7 @@ function amountCacheBucket(amountUsd: number | null): string {
 }
 
 /**
- * GET /api/v2/execution/route — ranked "best variant" recommendation for a
+ * GET /api/v2/execution/evaluate — ranked "best variant" recommendation for a
  * canonical asset ("I want to buy bitcoin on Solana — which mint?").
  *
  * The full ranked list is always returned so callers render what they want;
@@ -98,7 +100,7 @@ export const GET = route(
                 const variants = asset?.variants ?? [];
                 const mints = variants.map(variant => variant.mint).slice(0, MAX_VARIANT_MINTS);
 
-                const wantsDepth = amountUsd !== null && mints.length > 0;
+                const wantsDepth = mints.length > 0;
                 const [marketRows, fillQualityRows, depthRows] =
                     mints.length > 0
                         ? yield* Effect.all(
@@ -114,7 +116,7 @@ export const GET = route(
                                             source: depthReadSource(),
                                         }).pipe(
                                             tapErrorAndDefault(
-                                                'v2.execution.route.depthCurves',
+                                                'v2.execution.evaluate.depthCurves',
                                                 [] as VariantDepthCurvesGetLatestByMintsResult,
                                             ),
                                         )
@@ -189,11 +191,11 @@ export const GET = route(
                         const market = marketDocByMint.get(entry.variant.mint) ?? null;
                         const fillQuality = fillQualityByMint.get(entry.variant.mint) ?? null;
 
-                        const curve = amountUsd !== null ? (freshCurveByMint.get(entry.variant.mint) ?? null) : null;
+                        const curve = freshCurveByMint.get(entry.variant.mint) ?? null;
                         const impact =
                             curve && amountUsd !== null ? interpolateImpactBps(curve.ladder, amountUsd) : null;
                         const reasons: string[] = [entry.reason];
-                        if (amountUsd !== null && impact === null) reasons.push('depth_unavailable');
+                        if (!curve) reasons.push('depth_unavailable');
                         if (impact?.extrapolated) reasons.push('beyond_sampled_depth');
 
                         return {
@@ -224,6 +226,20 @@ export const GET = route(
                                   })
                                 : null,
                             depthAsOf: curve?.asOf ?? null,
+                            // Sampled evaluation points, graded. Internal
+                            // sampling fields (outAmount, routeVenues, ...)
+                            // are deliberately not surfaced.
+                            ladder: curve
+                                ? curve.ladder
+                                      .filter(rung => rung.priceImpactBps !== null)
+                                      .sort((a, b) => a.sizeUsd - b.sizeUsd)
+                                      .map(rung => ({
+                                          sizeUsd: rung.sizeUsd,
+                                          impactBps: rung.priceImpactBps as number,
+                                          grade: gradeImpactBps(rung.priceImpactBps as number),
+                                      }))
+                                : null,
+                            executionGrade: impact ? gradeImpactBps(impact.impactBps) : null,
                             reasons,
                         };
                     }),
@@ -233,25 +249,22 @@ export const GET = route(
                         // Reported once size-aware reordering activates; the
                         // informational fields never influence ordering today.
                         sizeAwareScoringVersion: null as string | null,
+                        gradingVersion: EXECUTION_GRADING_VERSION,
                         strategy: 'execution_quality' as const,
-                        sizeLadderUsd: amountUsd !== null ? sizeLadderUsd : null,
-                        depthSource: amountUsd !== null ? depthSource : null,
-                        depthCoverage:
-                            amountUsd !== null
-                                ? {
-                                      withCurves: ranked.filter(entry => freshCurveByMint.has(entry.variant.mint))
-                                          .length,
-                                      total: ranked.length,
-                                  }
-                                : null,
+                        sizeLadderUsd,
+                        depthSource,
+                        depthCoverage: {
+                            withCurves: ranked.filter(entry => freshCurveByMint.has(entry.variant.mint)).length,
+                            total: ranked.length,
+                        },
                     },
                 };
             });
 
             return yield* withStaleFallback(
                 {
-                    operation: 'v2.execution.route',
-                    cacheKey: `v2:execution:route:${resolution.assetId}:${side}:${amountCacheBucket(amountUsd)}`,
+                    operation: 'v2.execution.evaluate',
+                    cacheKey: `v2:execution:evaluate:${resolution.assetId}:${side}:${amountCacheBucket(amountUsd)}`,
                     ttlSeconds: STALE_TTL_SECONDS,
                 },
                 main,

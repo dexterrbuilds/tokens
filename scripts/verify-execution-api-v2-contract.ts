@@ -6,7 +6,7 @@
  * Usage:
  *   API_BASE_URL=http://localhost:3002 API_KEY=... bun scripts/verify-execution-api-v2-contract.ts
  *
- * Exercises GET /v2/execution/links and GET /v2/execution/route
+ * Exercises GET /v2/execution/links and GET /v2/execution/evaluate
  * (execution:read). Route checks tolerate depthCoverage.withCurves = 0 so the
  * script passes before the depth-sampling cron warms.
  */
@@ -14,6 +14,7 @@
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
 const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const CBBTC_MINT = 'cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij';
+const IMPACT_GRADES = ['excellent', 'good', 'fair', 'poor', 'avoid'];
 
 function assert(condition: unknown, message: string): asserts condition {
     if (!condition) throw new Error(message);
@@ -138,23 +139,23 @@ async function main(): Promise<void> {
     assert(missing.status === 400, `missing mint/assetId must 400, got ${missing.status}`);
     console.log('links(errors): 400/404 envelopes verified');
 
-    // 6. Route: size-agnostic ranking.
-    const routeBody = await getJson(baseUrl, apiKey, 'api/v2/execution/route?asset=bitcoin');
+    // 6. Evaluate: scorecard (no amount) — graded ladders when depth is warm.
+    const routeBody = await getJson(baseUrl, apiKey, 'api/v2/execution/evaluate?asset=bitcoin');
     const ranked = assertRouteResponse(routeBody, 'route(bitcoin)', { expectAmount: null });
     assert(ranked.variantMints.length > 1, 'bitcoin must rank multiple variants');
     console.log(`route(bitcoin): ${ranked.variantMints.length} variants, primary=${ranked.primaryMint ?? 'null'}`);
 
-    // 7. Route: size-aware request (fields typed, tolerant of no depth data yet).
-    const sized = await getJson(baseUrl, apiKey, 'api/v2/execution/route?asset=bitcoin&amountUsd=1000000');
+    // 7. Evaluate: sized request (fields typed, tolerant of no depth data yet).
+    const sized = await getJson(baseUrl, apiKey, 'api/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000');
     assertRouteResponse(sized, 'route(bitcoin, $1M)', { expectAmount: 1_000_000 });
     console.log('route(bitcoin, $1M): size-aware contract verified');
 
-    // 8. Route errors.
-    const routeUnknown = await getRaw(baseUrl, apiKey, 'api/v2/execution/route?asset=not-a-real-asset');
+    // 8. Evaluate errors.
+    const routeUnknown = await getRaw(baseUrl, apiKey, 'api/v2/execution/evaluate?asset=not-a-real-asset');
     assert(routeUnknown.status === 404, `unknown asset must 404, got ${routeUnknown.status}`);
-    const routeMissing = await getRaw(baseUrl, apiKey, 'api/v2/execution/route');
+    const routeMissing = await getRaw(baseUrl, apiKey, 'api/v2/execution/evaluate');
     assert(routeMissing.status === 400, `missing asset must 400, got ${routeMissing.status}`);
-    const routeBadAmount = await getRaw(baseUrl, apiKey, 'api/v2/execution/route?asset=bitcoin&amountUsd=-1');
+    const routeBadAmount = await getRaw(baseUrl, apiKey, 'api/v2/execution/evaluate?asset=bitcoin&amountUsd=-1');
     assert(routeBadAmount.status === 400, `negative amountUsd must 400, got ${routeBadAmount.status}`);
     console.log('route(errors): 400/404 envelopes verified');
 
@@ -189,6 +190,28 @@ function assertRouteResponse(
         assertNullableNumber(entry.executionScore, `${path}.executionScore`);
         assertNullableNumber(entry.estimatedImpactBps, `${path}.estimatedImpactBps`);
         assertNullableNumber(entry.sizeAwareScore, `${path}.sizeAwareScore`);
+        // Graded ladder: null before the depth cron warms, otherwise ascending graded rungs.
+        if (entry.ladder !== null) {
+            assert(Array.isArray(entry.ladder), `${path}.ladder must be an array or null`);
+            let previousSize = 0;
+            entry.ladder.forEach((rung, r) => {
+                const rungPath = `${path}.ladder[${r}]`;
+                assertObject(rung, rungPath);
+                assert(
+                    typeof rung.sizeUsd === 'number' && rung.sizeUsd > previousSize,
+                    `${rungPath}.sizeUsd must ascend`,
+                );
+                previousSize = rung.sizeUsd;
+                assert(typeof rung.impactBps === 'number', `${rungPath}.impactBps must be a number`);
+                assert(IMPACT_GRADES.includes(rung.grade as string), `${rungPath}.grade must be a known grade`);
+            });
+        }
+        if (entry.executionGrade !== null) {
+            assert(
+                IMPACT_GRADES.includes(entry.executionGrade as string),
+                `${path}.executionGrade must be a known grade or null`,
+            );
+        }
         assert(typeof entry.isFillQualityEligible === 'boolean', `${path}.isFillQualityEligible must be boolean`);
         assert(Array.isArray(entry.reasons) && entry.reasons.length > 0, `${path}.reasons must be non-empty`);
         variantMints.push(entry.mint);
@@ -204,19 +227,16 @@ function assertRouteResponse(
 
     assertObject(body.meta, `${label}.meta`);
     assert(typeof body.meta.scoringVersion === 'string', `${label}.meta.scoringVersion must be a string`);
+    assert(typeof body.meta.gradingVersion === 'string', `${label}.meta.gradingVersion must be a string`);
+    assertObject(body.meta.depthCoverage, `${label}.meta.depthCoverage`);
+    assert(
+        typeof body.meta.depthCoverage.withCurves === 'number' && typeof body.meta.depthCoverage.total === 'number',
+        `${label}.meta.depthCoverage must have numeric withCurves/total`,
+    );
     assert(
         body.meta.strategy === 'execution_quality' || body.meta.strategy === 'size_aware',
         `${label}.meta.strategy must be execution_quality or size_aware`,
     );
-    if (opts.expectAmount !== null) {
-        assertObject(body.meta.depthCoverage, `${label}.meta.depthCoverage`);
-        assert(
-            typeof body.meta.depthCoverage.withCurves === 'number' &&
-                typeof body.meta.depthCoverage.total === 'number',
-            `${label}.meta.depthCoverage must have numeric withCurves/total`,
-        );
-    }
-
     return { variantMints, primaryMint };
 }
 

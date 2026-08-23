@@ -1,6 +1,6 @@
 ---
 title: Execution
-description: Venue deep links for adding a "buy X" action to your app.
+description: Venue deep links and pre-trade depth evaluation for buy/sell flows.
 ---
 
 All endpoints on this page are Platform API endpoints authenticated with `x-api-key` and
@@ -57,18 +57,29 @@ curl -H "x-api-key: $API_KEY" \
   "https://api.tokens.xyz/v2/execution/links?assetId=bitcoin&venues=titan,jupiter,orca"
 ```
 
-## `GET /v2/execution/route`
+## `GET /v2/execution/evaluate`
 
-Ranked "best variant" recommendation for a canonical asset — "I want to buy bitcoin on
-Solana, which mint?". Returns the full ranked variant list (render what you want) with
-our recommendation as `primary`, scored by the same execution-quality ranking that
-powers primary-variant selection across v1 (liquidity, volume, fill quality, trust tier).
+Evaluate a hypothetical buy or sell of a canonical asset against **current sampled
+on-chain depth**. This is an evaluation surface, not an order router — it never routes
+or executes anything. Ask it "how good is a $1M buy of bitcoin on Solana right now?" and
+it answers per variant mint, with a grade.
 
-Size-aware fields are part of the contract from day one and populate once the
-depth-sampling pipeline is live: with `amountUsd`, variants gain `estimatedImpactBps` /
-`estimatedOutUsd` / `sizeAwareScore` interpolated from sampled price-impact curves.
-Until a variant has a fresh curve, those fields are `null` and its `reasons` include
-`depth_unavailable`.
+### Why evaluate before you trade
+
+- **Pre-trade guardrails.** Gate or warn on a Buy CTA when the user's size grades `poor`
+  or `avoid`. HYPE absorbs $1M at 140bps but $5M costs ~7,000bps (you'd receive ~30% of
+  your input) — this tells you which side of that cliff a user is on before they click.
+- **Treasury / OTC sizing.** Find the largest clip that still grades `good`, or split an
+  order across the sampled ladder instead of discovering slippage after the fill.
+- **Variant selection at size.** The best mint changes with size: cbBTC beats wBTC at
+  $1M and loses to it at $5M. Pick per trade, not per asset.
+
+### Two modes
+
+- **Without `amountUsd`** — the scorecard: each variant returns its sampled `ladder`
+  (one entry per size rung) with a grade per rung. One cheap call, ideal on page load.
+- **With `amountUsd`** — adds `estimatedImpactBps`, `estimatedOutUsd`, `sizeAwareScore`,
+  and `executionGrade` interpolated (log-linear) at your exact size.
 
 - **Scope**: `execution:read`
 - **Query params**:
@@ -76,8 +87,25 @@ Until a variant has a fresh curve, those fields are `null` and its `reasons` inc
   - `amountUsd` (optional) — intended trade size in USD, clamped to `[1, 50000000]`.
   - `side` (optional) — `buy` (default) or `sell`.
 
+### Grades
+
+`impactBps` maps to a grade via inclusive upper bounds. The scale is ordered
+best-to-worst, so you can rank or threshold on it:
+
+| Grade | Impact (bps) | Read as |
+| --- | --- | --- |
+| `excellent` | ≤ 10 | negligible cost |
+| `good` | ≤ 50 | normal for size |
+| `fair` | ≤ 150 | noticeable, still tradeable |
+| `poor` | ≤ 500 | expensive — consider splitting |
+| `avoid` | > 500 | not enough depth at this size |
+
+`meta.gradingVersion` identifies the thresholds (`impact-grade-v1`). It changes whenever
+the boundaries or the grade set change, so pin behavior on it rather than hardcoding
+numbers.
+
 ```ts
-interface ExecutionRouteResponse {
+interface ExecutionEvaluateResponse {
     asset: { assetId: string; name: string | null; symbol: string | null; category: string | null };
     side: 'buy' | 'sell';
     amountUsd: number | null;
@@ -96,29 +124,43 @@ interface ExecutionRouteResponse {
         executionScore: number | null; // 0-100 fill-quality score
         feeBps: number | null;
         isFillQualityEligible: boolean;
-        estimatedImpactBps: number | null; // populated with amountUsd + fresh depth data
+        // Sampled evaluation points; null when this variant has no fresh depth sample.
+        ladder: Array<{ sizeUsd: number; impactBps: number; grade: string }> | null;
+        // The four fields below require `amountUsd`.
+        estimatedImpactBps: number | null;
         estimatedOutUsd: number | null;
         sizeAwareScore: number | null;
+        executionGrade: string | null; // grade at amountUsd
         depthAsOf: number | null; // unix seconds of the depth sample
-        reasons: string[]; // e.g. ["liquidity"], ["execution_quality_override", "depth_unavailable"]
+        reasons: string[]; // e.g. ["liquidity"], ["only_candidate", "depth_unavailable"]
     }>;
     meta: {
         asOf: number; // unix seconds
         scoringVersion: string;
-        sizeAwareScoringVersion: string | null;
+        sizeAwareScoringVersion: string | null; // non-null only once depth influences ordering
+        gradingVersion: string; // e.g. "impact-grade-v1"
         strategy: 'execution_quality' | 'size_aware';
-        sizeLadderUsd: number[] | null;
-        depthSource: string | null;
-        depthCoverage: { withCurves: number; total: number } | null; // present when amountUsd given
+        sizeLadderUsd: number[] | null; // the sampled rungs, when any variant has depth
+        depthSource: string | null; // e.g. "titan"
+        depthCoverage: { withCurves: number; total: number };
     };
 }
 ```
 
-Single-variant assets return one entry with `primary.reason: "only_candidate"`; assets
-with no Solana variants return an empty `variants` array and `primary: null`. Unknown
-assets return `404`.
+Variants without a fresh depth sample carry `depth_unavailable` in `reasons` and a null
+`ladder`; samples older than 6h are treated as absent. An `amountUsd` beyond the largest
+sampled rung is clamped and flagged with `beyond_sampled_depth`. Size-aware fields are
+informational — they do not reorder `variants` while `meta.sizeAwareScoringVersion` is
+null. Single-variant assets return one entry with `primary.reason: "only_candidate"`;
+assets with no Solana variants return an empty `variants` array and `primary: null`.
+Unknown assets return `404`.
 
 ```bash
+# Scorecard: graded ladder per variant
 curl -H "x-api-key: $API_KEY" \
-  "https://api.tokens.xyz/v2/execution/route?asset=bitcoin&amountUsd=1000000"
+  "https://api.tokens.xyz/v2/execution/evaluate?asset=bitcoin"
+
+# Evaluate a specific size
+curl -H "x-api-key: $API_KEY" \
+  "https://api.tokens.xyz/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000"
 ```

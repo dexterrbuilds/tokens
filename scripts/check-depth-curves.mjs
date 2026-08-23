@@ -3,7 +3,7 @@
 /**
  * Read-only validation of stored depth curves against live Jupiter lite quotes.
  *
- * For each variant returned by GET /v2/execution/route for an asset, compares
+ * For each variant returned by GET /v2/execution/evaluate for an asset, compares
  * the stored per-rung price impact (Titan-sampled) with a fresh Jupiter lite
  * quote ladder computed the same way (effective price vs the smallest rung).
  * Independent cross-check: different aggregator, same math.
@@ -55,11 +55,11 @@ function impactsFromEffectivePrices(points) {
 
 async function main() {
     const routeRes = await fetch(
-        `${baseUrl}/v2/execution/route?asset=${encodeURIComponent(assetId)}&amountUsd=1000000`,
+        `${baseUrl}/v2/execution/evaluate?asset=${encodeURIComponent(assetId)}&amountUsd=1000000`,
         { headers: { 'x-api-key': apiKey } },
     );
     if (!routeRes.ok) {
-        console.error(`GET /v2/execution/route failed: HTTP ${routeRes.status}`);
+        console.error(`GET /v2/execution/evaluate failed: HTTP ${routeRes.status}`);
         process.exit(1);
     }
     const route = await routeRes.json();

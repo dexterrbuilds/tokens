@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 import {
     computeSizeAwareScore,
+    gradeImpactBps,
+    IMPACT_GRADES,
+    IMPACT_GRADE_MAX_BPS,
     interpolateImpactBps,
     isSpotLikeVariantKind,
     pickPrimaryVariantWithRanking,
@@ -558,5 +561,43 @@ describe('computeSizeAwareScore', () => {
     it('clamps out-of-range inputs', () => {
         expect(computeSizeAwareScore({ executionScore: 150, impactBps: -10 })).toBe(100);
         expect(computeSizeAwareScore({ executionScore: -5, impactBps: 10_000 })).toBe(0);
+    });
+});
+
+describe('gradeImpactBps', () => {
+    it('grades inclusive upper bounds', () => {
+        expect(gradeImpactBps(IMPACT_GRADE_MAX_BPS.excellent)).toBe('excellent');
+        expect(gradeImpactBps(IMPACT_GRADE_MAX_BPS.good)).toBe('good');
+        expect(gradeImpactBps(IMPACT_GRADE_MAX_BPS.fair)).toBe('fair');
+        expect(gradeImpactBps(IMPACT_GRADE_MAX_BPS.poor)).toBe('poor');
+    });
+
+    it('steps to the next grade just past each bound', () => {
+        expect(gradeImpactBps(10.01)).toBe('good');
+        expect(gradeImpactBps(50.01)).toBe('fair');
+        expect(gradeImpactBps(150.01)).toBe('poor');
+        expect(gradeImpactBps(501)).toBe('avoid');
+    });
+
+    it('treats zero and price improvement as excellent', () => {
+        expect(gradeImpactBps(0)).toBe('excellent');
+        expect(gradeImpactBps(-25)).toBe('excellent');
+    });
+
+    it('fails closed to avoid on non-finite input', () => {
+        expect(gradeImpactBps(Number.NaN)).toBe('avoid');
+        expect(gradeImpactBps(Number.POSITIVE_INFINITY)).toBe('avoid');
+    });
+
+    it('matches the observed sampled-depth anchors', () => {
+        // HYPE @$1M, wETH @$5M, HYPE @$5M from local jupiter_lite sampling.
+        expect(gradeImpactBps(140)).toBe('fair');
+        expect(gradeImpactBps(158)).toBe('poor');
+        expect(gradeImpactBps(7040)).toBe('avoid');
+    });
+
+    it('pins the avoid cutoff to the size-aware impact floor', () => {
+        expect(IMPACT_GRADE_MAX_BPS.poor).toBe(SIZE_AWARE_IMPACT_FLOOR_BPS);
+        expect(IMPACT_GRADES).toEqual(['excellent', 'good', 'fair', 'poor', 'avoid']);
     });
 });

@@ -248,6 +248,38 @@ export function computeSizeAwareScore(input: { executionScore: number; impactBps
     return Math.round(clamp(score, 0, 100) * 10_000) / 10_000;
 }
 
+export const EXECUTION_GRADING_VERSION = 'impact-grade-v1';
+
+/** Ordered best-to-worst; publish this order so consumers can rank. */
+export const IMPACT_GRADES = ['excellent', 'good', 'fair', 'poor', 'avoid'] as const;
+export type ImpactGrade = (typeof IMPACT_GRADES)[number];
+
+/**
+ * Inclusive upper bound (bps) per grade; anything above `poor` is `avoid`.
+ * The `poor` bound intentionally equals SIZE_AWARE_IMPACT_FLOOR_BPS: `avoid`
+ * is exactly where the size-aware blend's impact component floors to zero.
+ */
+export const IMPACT_GRADE_MAX_BPS = {
+    excellent: 10,
+    good: 50,
+    fair: 150,
+    poor: SIZE_AWARE_IMPACT_FLOOR_BPS,
+} as const;
+
+/**
+ * Grade a price-impact reading. Zero or negative impact (price improvement)
+ * is `excellent`; non-finite input fails closed to `avoid`. Bump
+ * EXECUTION_GRADING_VERSION when thresholds or the enum change.
+ */
+export function gradeImpactBps(impactBps: number): ImpactGrade {
+    if (!Number.isFinite(impactBps)) return 'avoid';
+    if (impactBps <= IMPACT_GRADE_MAX_BPS.excellent) return 'excellent';
+    if (impactBps <= IMPACT_GRADE_MAX_BPS.good) return 'good';
+    if (impactBps <= IMPACT_GRADE_MAX_BPS.fair) return 'fair';
+    if (impactBps <= IMPACT_GRADE_MAX_BPS.poor) return 'poor';
+    return 'avoid';
+}
+
 export type VariantRankingExclusionReason = 'excluded_by_activity_filter' | 'non_spot_like';
 
 export interface RankedVariantEntry {

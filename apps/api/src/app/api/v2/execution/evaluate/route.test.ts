@@ -174,9 +174,9 @@ async function request(path: string, scopes: string[] = ['execution:read']): Pro
     );
 }
 
-describe('GET /api/v2/execution/route', () => {
+describe('GET /api/v2/execution/evaluate', () => {
     it('ranks bitcoin variants and recommends the top candidate as primary', async () => {
-        const response = await request('/api/v2/execution/route?asset=bitcoin');
+        const response = await request('/api/v2/execution/evaluate?asset=bitcoin');
         expect(response.status).toBe(200);
         expect(response.headers.get('cache-control')).toBe('private, max-age=60');
 
@@ -197,8 +197,14 @@ describe('GET /api/v2/execution/route', () => {
         expect(body.meta.scoringVersion).toBe('fill-quality-24h-5s-v1');
         expect(body.meta.strategy).toBe('execution_quality');
         expect(body.meta.sizeAwareScoringVersion).toBeNull();
+        expect(body.meta.gradingVersion).toBe('impact-grade-v1');
+        // Depth coverage is reported even without amountUsd (scorecard call);
+        // nothing is stubbed here, so no variant has a curve.
         expect(body.meta.depthSource).toBeNull();
-        expect(body.meta.depthCoverage).toBeNull();
+        expect(body.meta.depthCoverage).toEqual({ withCurves: 0, total: body.variants.length });
+        expect(body.variants[0].ladder).toBeNull();
+        expect(body.variants[0].executionGrade).toBeNull();
+        expect(body.variants[0].reasons).toContain('depth_unavailable');
 
         // Ranks are contiguous and every variant appears exactly once.
         const mints = body.variants.map((entry: { mint: string }) => entry.mint);
@@ -208,9 +214,60 @@ describe('GET /api/v2/execution/route', () => {
         );
     });
 
+    it('returns a graded ladder scorecard without amountUsd', async () => {
+        depthResponder = () => [depthCurveRow(CBBTC_MINT, 60)];
+        const response = await request('/api/v2/execution/evaluate?asset=bitcoin');
+        expect(response.status).toBe(200);
+        const body = await response.json();
+
+        const top = body.variants[0];
+        expect(top.mint).toBe(CBBTC_MINT);
+        // Ladder is graded and sorted ascending by size.
+        expect(top.ladder).toEqual([
+            { sizeUsd: 10_000, impactBps: 0, grade: 'excellent' },
+            { sizeUsd: 100_000, impactBps: 10, grade: 'excellent' },
+            { sizeUsd: 1_000_000, impactBps: 40, grade: 'good' },
+            { sizeUsd: 5_000_000, impactBps: 120, grade: 'fair' },
+        ]);
+        // Amount-gated fields stay null on the scorecard call.
+        expect(top.executionGrade).toBeNull();
+        expect(top.estimatedImpactBps).toBeNull();
+        expect(top.sizeAwareScore).toBeNull();
+        expect(top.reasons).not.toContain('depth_unavailable');
+
+        expect(body.meta.depthSource).toBe('titan');
+        expect(body.meta.sizeLadderUsd).toEqual([10_000, 100_000, 1_000_000, 5_000_000]);
+        expect(body.meta.depthCoverage.withCurves).toBe(1);
+        expect(body.meta.gradingVersion).toBe('impact-grade-v1');
+    });
+
+    it('grades the interpolated amount consistently with the impact reading', async () => {
+        depthResponder = () => [depthCurveRow(CBBTC_MINT, 60)];
+        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000');
+        const body = await response.json();
+        const top = body.variants[0];
+        expect(top.estimatedImpactBps).toBe(40);
+        expect(top.executionGrade).toBe('good');
+
+        const beyond = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=20000000');
+        const beyondTop = (await beyond.json()).variants[0];
+        expect(beyondTop.estimatedImpactBps).toBe(120);
+        expect(beyondTop.executionGrade).toBe('fair');
+        expect(beyondTop.reasons).toContain('beyond_sampled_depth');
+    });
+
+    it('nulls the ladder for stale curves even without amountUsd', async () => {
+        depthResponder = () => [depthCurveRow(CBBTC_MINT, 7 * 60 * 60)];
+        const response = await request('/api/v2/execution/evaluate?asset=bitcoin');
+        const body = await response.json();
+        expect(body.variants[0].ladder).toBeNull();
+        expect(body.variants[0].reasons).toContain('depth_unavailable');
+        expect(body.meta.depthCoverage.withCurves).toBe(0);
+    });
+
     it('populates informational depth fields from a fresh curve without reordering', async () => {
         depthResponder = () => [depthCurveRow(CBBTC_MINT, 60)];
-        const response = await request('/api/v2/execution/route?asset=bitcoin&amountUsd=1000000');
+        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000');
         expect(response.status).toBe(200);
         const body = await response.json();
 
@@ -235,7 +292,7 @@ describe('GET /api/v2/execution/route', () => {
 
     it('flags extrapolation above the sampled ladder', async () => {
         depthResponder = () => [depthCurveRow(CBBTC_MINT, 60)];
-        const response = await request('/api/v2/execution/route?asset=bitcoin&amountUsd=20000000');
+        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=20000000');
         const body = await response.json();
         const top = body.variants[0];
         expect(top.estimatedImpactBps).toBe(120);
@@ -244,7 +301,7 @@ describe('GET /api/v2/execution/route', () => {
 
     it('treats stale curves as absent', async () => {
         depthResponder = () => [depthCurveRow(CBBTC_MINT, 7 * 60 * 60)];
-        const response = await request('/api/v2/execution/route?asset=bitcoin&amountUsd=1000000');
+        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000');
         const body = await response.json();
         expect(body.variants[0].estimatedImpactBps).toBeNull();
         expect(body.variants[0].reasons).toContain('depth_unavailable');
@@ -256,7 +313,7 @@ describe('GET /api/v2/execution/route', () => {
         depthResponder = () => {
             throw new Error('depth read down');
         };
-        const response = await request('/api/v2/execution/route?asset=bitcoin&amountUsd=1000000');
+        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000');
         expect(response.status).toBe(200);
         const body = await response.json();
         expect(body.variants[0].estimatedImpactBps).toBeNull();
@@ -264,7 +321,7 @@ describe('GET /api/v2/execution/route', () => {
     });
 
     it('marks every variant depth_unavailable when amountUsd is given (Phase A)', async () => {
-        const response = await request('/api/v2/execution/route?asset=bitcoin&amountUsd=1000000');
+        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000');
         expect(response.status).toBe(200);
         const body = await response.json();
         expect(body.amountUsd).toBe(1_000_000);
@@ -276,38 +333,38 @@ describe('GET /api/v2/execution/route', () => {
     });
 
     it('clamps amountUsd to the supported range', async () => {
-        const response = await request('/api/v2/execution/route?asset=bitcoin&amountUsd=999999999');
+        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=999999999');
         const body = await response.json();
         expect(body.amountUsd).toBe(50_000_000);
     });
 
     it('accepts side=sell and defaults side to buy', async () => {
-        const sell = await request('/api/v2/execution/route?asset=bitcoin&side=sell');
+        const sell = await request('/api/v2/execution/evaluate?asset=bitcoin&side=sell');
         expect((await sell.json()).side).toBe('sell');
 
-        const invalid = await request('/api/v2/execution/route?asset=bitcoin&side=hold');
+        const invalid = await request('/api/v2/execution/evaluate?asset=bitcoin&side=hold');
         expect(invalid.status).toBe(400);
     });
 
     it('rejects a non-positive amountUsd', async () => {
-        const response = await request('/api/v2/execution/route?asset=bitcoin&amountUsd=-5');
+        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=-5');
         expect(response.status).toBe(400);
     });
 
     it('requires the asset param', async () => {
-        const response = await request('/api/v2/execution/route');
+        const response = await request('/api/v2/execution/evaluate');
         expect(response.status).toBe(400);
     });
 
     it('404s for an unknown asset', async () => {
-        const response = await request('/api/v2/execution/route?asset=not-a-real-asset');
+        const response = await request('/api/v2/execution/evaluate?asset=not-a-real-asset');
         expect(response.status).toBe(404);
         const body = await response.json();
         expect(body.error._tag).toBe('NotFoundError');
     });
 
     it('403s without the execution:read scope', async () => {
-        const response = await request('/api/v2/execution/route?asset=bitcoin', ['assets:read']);
+        const response = await request('/api/v2/execution/evaluate?asset=bitcoin', ['assets:read']);
         expect(response.status).toBe(403);
     });
 });
