@@ -8,12 +8,14 @@ import { Alert, AlertDescription, AlertTitle } from '@tokens/ui/alert';
 
 import type {
     ExecutionEvaluationResponse,
-    ExecutionQuoteCandidate,
+    ExecutionProviderQuote,
+    ExecutionQuoteEdge,
     ExecutionQuoteProvider,
     ExecutionQuoteRouteStep,
     ExecutionQuoteSide,
+    PriceImpactSource,
 } from '@/hooks/queries/use-execution-evaluation';
-import { formatJupiterPriceImpact, fullJupiterPriceImpact } from '@/lib/execution-quote-format';
+import { formatPriceImpactRatio, fullPriceImpactRatio } from '@/lib/execution-quote-format';
 
 function formatRequestedAmount(amount: string, side: ExecutionQuoteSide): string {
     const numeric = Number(amount);
@@ -51,12 +53,12 @@ function ProviderBadge({ provider }: { provider: ExecutionQuoteProvider }) {
     );
 }
 
-function routeLabel(route: ExecutionQuoteRouteStep[], provider: ExecutionQuoteProvider): string {
+function routeLabel(route: readonly ExecutionQuoteRouteStep[], provider: ExecutionQuoteProvider): string {
     const labels = route.map(step => step.label).filter((label): label is string => Boolean(label));
     return labels.length > 0 ? labels.join(' → ') : `${providerLabel(provider)} route`;
 }
 
-function routeDetails(route: ExecutionQuoteRouteStep[], contextSlot: number | null): string {
+function routeDetails(route: readonly ExecutionQuoteRouteStep[], contextSlot: number | null): string {
     const steps = route.map((step, index) => {
         const percent = step.percent === null ? '' : ` (${step.percent}%)`;
         return `${index + 1}. ${step.label ?? 'Unknown venue'}${percent}\n${step.inputMint ?? '—'} → ${step.outputMint ?? '—'}`;
@@ -71,15 +73,86 @@ function formatQuoteTime(value: string): string {
     return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' }).format(date);
 }
 
-function ImpactValue({ provider, value }: { provider: ExecutionQuoteProvider; value: number | null }) {
-    if (provider === 'titan') {
+function ImpactValue({ value, source }: { value: number | null; source: PriceImpactSource }) {
+    if (value === null) {
         return (
-            <Tooltip content="Titan does not provide price impact for this quote." side="top" align="end">
+            <Tooltip
+                content={
+                    source === 'unavailable'
+                        ? 'This router does not report price impact for the quote.'
+                        : 'No price impact reported for this quote.'
+                }
+                side="top"
+                align="end"
+            >
                 <span className="cursor-help">—</span>
             </Tooltip>
         );
     }
-    return <span title={fullJupiterPriceImpact(value)}>{formatJupiterPriceImpact(value)}</span>;
+    return <span title={fullPriceImpactRatio(value)}>{formatPriceImpactRatio(value)}</span>;
+}
+
+/** How much the winner beat the runner-up by, in bps and dollars. */
+function EdgeValue({ edge }: { edge: ExecutionQuoteEdge | null }) {
+    if (!edge) {
+        return (
+            <Tooltip content="Only one router quoted this size, so there is nothing to compare." side="top" align="end">
+                <span className="cursor-help text-text-extra-low">—</span>
+            </Tooltip>
+        );
+    }
+    const usd = Math.abs(edge.usd) >= 0.01 ? ` · +$${edge.usd.toLocaleString('en-US', { maximumFractionDigits: 2 })}` : '';
+    return (
+        <Tooltip
+            content={`Best output is ${edge.bps} bps above ${providerLabel(edge.runnerUp)} (+${edge.outAmountDiff}).`}
+            side="top"
+            align="end"
+        >
+            <span className={`cursor-help tabular-nums ${edge.bps > 0 ? 'text-green-800' : 'text-text-medium'}`}>
+                +{edge.bps} bps{usd}
+            </span>
+        </Tooltip>
+    );
+}
+
+/**
+ * One-line verdict for the whole ladder. Only meaningful over contested sizes,
+ * so it says so rather than implying a comparison that did not happen.
+ */
+function ComparisonSummary({ meta }: { meta: ExecutionEvaluationResponse['meta'] }) {
+    const { summary } = meta;
+    if (summary.comparableEntries === 0) {
+        return (
+            <p className="text-[12px] text-text-medium">
+                {summary.bestProvider
+                    ? `Only ${providerLabel(summary.bestProvider)} quoted, so there is nothing to compare.`
+                    : 'No size had two routers quote, so there is nothing to compare.'}
+            </p>
+        );
+    }
+
+    const winner = summary.bestProvider;
+    const wins = winner ? meta.providerStats[winner].wins : 0;
+    return (
+        <p className="text-[12px] text-text-medium">
+            {winner ? (
+                <>
+                    <span className="font-medium text-text-extra-high">{providerLabel(winner)}</span> best on {wins} of{' '}
+                    {summary.comparableEntries} compared {summary.comparableEntries === 1 ? 'size' : 'sizes'}
+                </>
+            ) : (
+                <span className="font-medium text-text-extra-high">Evenly matched</span>
+            )}
+            {summary.medianEdgeBps !== null ? <> · median edge +{summary.medianEdgeBps} bps</> : null}
+            {summary.maxEdgeBps !== null && summary.maxEdgeAt ? (
+                <>
+                    {' '}
+                    · biggest +{summary.maxEdgeBps} bps at{' '}
+                    {formatRequestedAmount(summary.maxEdgeAt.amount, summary.maxEdgeAt.unit === 'usd' ? 'buy' : 'sell')}
+                </>
+            ) : null}
+        </p>
+    );
 }
 
 function LoadingRow({ amount, side }: { amount: string; side: ExecutionQuoteSide }) {
@@ -88,7 +161,7 @@ function LoadingRow({ amount, side }: { amount: string; side: ExecutionQuoteSide
             <td className="py-3 pl-4 pr-3 text-[14px] font-medium text-text-high tabular-nums">
                 {formatRequestedAmount(amount, side)}
             </td>
-            {Array.from({ length: 5 }, (_, index) => (
+            {Array.from({ length: 6 }, (_, index) => (
                 <td key={index} className="px-3 py-3 last:pr-4">
                     <span className="ml-auto block h-3 w-20 animate-pulse rounded bg-gray-100 motion-reduce:animate-none" />
                 </td>
@@ -97,7 +170,7 @@ function LoadingRow({ amount, side }: { amount: string; side: ExecutionQuoteSide
     );
 }
 
-function CandidateComparison({ candidates, winner }: { candidates: ExecutionQuoteCandidate[]; winner: ExecutionQuoteProvider }) {
+function CandidateComparison({ candidates }: { candidates: ExecutionProviderQuote[] }) {
     return (
         <div
             className="px-4 py-4"
@@ -126,7 +199,7 @@ function CandidateComparison({ candidates, winner }: { candidates: ExecutionQuot
                     </thead>
                     <tbody className="divide-y divide-border-light">
                         {candidates.map(candidate => {
-                            const isWinner = candidate.status === 'available' && candidate.provider === winner;
+                            const isWinner = candidate.isBest;
                             return (
                                 <tr key={candidate.provider}>
                                     <td className="px-3 py-3"><ProviderBadge provider={candidate.provider} /></td>
@@ -145,7 +218,10 @@ function CandidateComparison({ candidates, winner }: { candidates: ExecutionQuot
                                                 {formatTokenAmount(candidate.output.amount)} {candidate.output.symbol}
                                             </td>
                                             <td className="px-3 py-3 text-right text-[11px] text-text-medium tabular-nums">
-                                                <ImpactValue provider={candidate.provider} value={candidate.priceImpactPct} />
+                                                <ImpactValue
+                                                    value={candidate.priceImpactPct}
+                                                    source={candidate.priceImpactSource}
+                                                />
                                             </td>
                                             <td className="max-w-[190px] px-3 py-3 text-right text-[11px] text-text-medium">
                                                 <Tooltip content={routeDetails(candidate.route, candidate.contextSlot)} side="top" align="end">
@@ -172,7 +248,7 @@ function CandidateComparison({ candidates, winner }: { candidates: ExecutionQuot
     );
 }
 
-export function ExecutionEvaluationCard({
+export function QuoteComparisonTable({
     data,
     isPending,
     isError,
@@ -192,7 +268,11 @@ export function ExecutionEvaluationCard({
 
     const unavailable = data?.quotes.filter(quote => quote.status === 'unavailable') ?? [];
     const titanUnavailable = data?.quotes.filter(
-        quote => quote.status === 'available' && quote.candidates.some(candidate => candidate.provider === 'titan' && candidate.status === 'unavailable'),
+        quote =>
+            quote.status === 'available' &&
+            quote.providerQuotes.some(
+                providerQuote => providerQuote.provider === 'titan' && providerQuote.status === 'unavailable',
+            ),
     ) ?? [];
     const allUnavailable = Boolean(data && data.meta.available === 0);
 
@@ -209,13 +289,20 @@ export function ExecutionEvaluationCard({
                 </span>
             </div>
 
+            {data && !isPending ? (
+                <div className="border-b border-border-extra-light bg-gray-50/40 px-4 py-2.5">
+                    <ComparisonSummary meta={data.meta} />
+                </div>
+            ) : null}
+
             <div className="overflow-x-auto">
-                <table className="w-full min-w-[920px] border-collapse text-left">
+                <table className="w-full min-w-[980px] border-collapse text-left">
                     <thead>
                         <tr className="border-b border-border-light bg-gray-50/80">
                             <th className="py-3 pl-4 pr-3 text-[11px] font-medium text-text-extra-low">Requested</th>
                             <th className="px-3 py-3 text-right text-[11px] font-medium text-text-extra-low">You pay</th>
                             <th className="px-3 py-3 text-right text-[11px] font-medium text-text-extra-low">Best quoted output</th>
+                            <th className="px-3 py-3 text-right text-[11px] font-medium text-text-extra-low">Edge</th>
                             <th className="px-3 py-3 text-right text-[11px] font-medium text-text-extra-low">Impact</th>
                             <th className="px-3 py-3 text-right text-[11px] font-medium text-text-extra-low">Winning route</th>
                             <th className="px-3 py-3 pr-4 text-right text-[11px] font-medium text-text-extra-low">Quoted</th>
@@ -237,14 +324,15 @@ export function ExecutionEvaluationCard({
                                               </td>
                                               {row.status === 'available' ? (
                                                   <>
-                                                      <td className="px-3 py-3 text-right text-[13px] text-text-high tabular-nums" title={`${row.input.amount} ${row.input.symbol}`}>{formatTokenAmount(row.input.amount)} {row.input.symbol}</td>
-                                                      <td className="px-3 py-3 text-right text-[13px] font-medium text-text-extra-high tabular-nums" title={`${row.output.amount} ${row.output.symbol}`}>{formatTokenAmount(row.output.amount)} {row.output.symbol}</td>
-                                                      <td className="px-3 py-3 text-right text-[13px] text-text-high tabular-nums"><ImpactValue provider={row.provider} value={row.priceImpactPct} /></td>
+                                                      <td className="px-3 py-3 text-right text-[13px] text-text-high tabular-nums" title={`${row.best.input.amount} ${row.best.input.symbol}`}>{formatTokenAmount(row.best.input.amount)} {row.best.input.symbol}</td>
+                                                      <td className="px-3 py-3 text-right text-[13px] font-medium text-text-extra-high tabular-nums" title={`${row.best.output.amount} ${row.best.output.symbol}`}>{formatTokenAmount(row.best.output.amount)} {row.best.output.symbol}</td>
+                                                      <td className="px-3 py-3 text-right text-[13px] tabular-nums"><EdgeValue edge={row.edge} /></td>
+                                                      <td className="px-3 py-3 text-right text-[13px] text-text-high tabular-nums"><ImpactValue value={row.best.priceImpactPct} source={row.best.priceImpactSource} /></td>
                                                       <td className="max-w-[250px] px-3 py-3 text-right text-[12px] text-text-medium">
                                                           <div className="flex items-center justify-end gap-2">
-                                                              <ProviderBadge provider={row.provider} />
-                                                              <Tooltip content={routeDetails(row.route, row.contextSlot)} side="top" align="end">
-                                                                  <span className="inline-block max-w-[150px] cursor-help truncate align-bottom">{routeLabel(row.route, row.provider)}</span>
+                                                              <ProviderBadge provider={row.best.provider} />
+                                                              <Tooltip content={routeDetails(row.best.route, row.best.contextSlot)} side="top" align="end">
+                                                                  <span className="inline-block max-w-[150px] cursor-help truncate align-bottom">{routeLabel(row.best.route, row.best.provider)}</span>
                                                               </Tooltip>
                                                           </div>
                                                           <button
@@ -258,17 +346,17 @@ export function ExecutionEvaluationCard({
                                                               <ChevronDown className={`size-3 ${isExpanded ? 'rotate-180' : ''}`} aria-hidden />
                                                           </button>
                                                       </td>
-                                                      <td className="px-3 py-3 pr-4 text-right text-[11px] text-text-extra-low tabular-nums" title={row.quotedAt}>{formatQuoteTime(row.quotedAt)}</td>
+                                                      <td className="px-3 py-3 pr-4 text-right text-[11px] text-text-extra-low tabular-nums" title={row.best.quotedAt}>{formatQuoteTime(row.best.quotedAt)}</td>
                                                   </>
                                               ) : (
-                                                  <td colSpan={5} className="px-3 py-3 pr-4 text-right">
+                                                  <td colSpan={6} className="px-3 py-3 pr-4 text-right">
                                                       <span className="block text-[12px] font-medium text-text-high">Quote unavailable</span>
                                                       <span className="block text-[10px] text-text-extra-low">Neither Titan nor Jupiter could provide this route right now.</span>
                                                   </td>
                                               )}
                                           </tr>
                                           {row.status === 'available' && isExpanded ? (
-                                              <tr id={detailsId}><td colSpan={6}><CandidateComparison candidates={row.candidates} winner={row.provider} /></td></tr>
+                                              <tr id={detailsId}><td colSpan={7}><CandidateComparison candidates={row.providerQuotes} /></td></tr>
                                           ) : null}
                                       </React.Fragment>
                                   );

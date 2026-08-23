@@ -20,7 +20,7 @@ import {
     SelectValue,
 } from '@tokens/ui/select';
 
-import { ExecutionEvaluationCard } from '@/app/[name]/components/execution-evaluation-card';
+import { QuoteComparisonTable } from './quote-comparison-table';
 import { useExecutionEvaluation, type ExecutionQuoteSide } from '@/hooks/queries/use-execution-evaluation';
 import {
     CURATED_LIST_ORDER_WITHOUT_LSTS,
@@ -29,7 +29,12 @@ import {
 import { cleanTokenName } from '@/lib/logo-overrides';
 import { trackEvent } from '@/lib/posthog-client';
 
-const BUY_TIERS = ['10000', '25000', '50000', '100000', '250000', '500000', '1000000', '5000000'] as const;
+/**
+ * Cosmetic only: mirrors the endpoint's documented default ladder so the loading
+ * skeleton has the right number of rows. We send no amounts at all and let the
+ * server pick — `meta.defaultLadderUsd` in the response is the source of truth.
+ */
+const DEFAULT_LADDER_PREVIEW = ['10000', '100000', '1000000'] as const;
 
 const FALLBACK_LIST_BY_CATEGORY: Partial<Record<AssetCategory, CuratedTokenListIdWithoutLsts>> = {
     crypto: 'majors',
@@ -207,7 +212,7 @@ export function EvaluationPlayground() {
     const [side, setSide] = React.useState<ExecutionQuoteSide>('buy');
     const [amountInput, setAmountInput] = React.useState('');
     const [amountError, setAmountError] = React.useState<string | null>(null);
-    const [requestedAmounts, setRequestedAmounts] = React.useState<string[]>([...BUY_TIERS]);
+    const [requestedAmounts, setRequestedAmounts] = React.useState<string[]>([]);
     const [submittedCustom, setSubmittedCustom] = React.useState<string | null>(null);
     const { data, execute, isError, isPending, reset } = useExecutionEvaluation();
     const baseOptionGroups = React.useMemo(buildMintOptionGroups, []);
@@ -238,11 +243,14 @@ export function EvaluationPlayground() {
 
     const requestQuotes = React.useCallback(
         async (amounts: string[], includesCustom: boolean) => {
-            setRequestedAmounts(amounts);
+            // No amounts means the server applies its default ladder, so the
+            // skeleton borrows the preview list purely to size itself.
+            setRequestedAmounts(amounts.length > 0 ? amounts : [...DEFAULT_LADDER_PREVIEW]);
             trackEvent('execution_quotes_requested', {
                 mint: selectedMint,
                 side,
-                requested_count: amounts.length,
+                requested_count: amounts.length > 0 ? amounts.length : DEFAULT_LADDER_PREVIEW.length,
+                amount_source: amounts.length > 0 ? 'request' : 'default',
                 includes_custom_amount: includesCustom,
                 providers_requested: 2,
             });
@@ -256,10 +264,13 @@ export function EvaluationPlayground() {
                         requested_count: response.meta.requested,
                         available_count: response.meta.available,
                         unavailable_count: response.meta.unavailable,
-                        jupiter_available_count: response.meta.providerStats.jupiter.available,
-                        titan_available_count: response.meta.providerStats.titan.available,
+                        jupiter_available_count: response.meta.providerStats.jupiter.quoted,
+                        titan_available_count: response.meta.providerStats.titan.quoted,
                         jupiter_win_count: response.meta.providerStats.jupiter.wins,
                         titan_win_count: response.meta.providerStats.titan.wins,
+                        comparable_count: response.meta.summary.comparableEntries,
+                        best_provider: response.meta.summary.bestProvider,
+                        median_edge_bps: response.meta.summary.medianEdgeBps,
                         request_latency_ms: Math.round(performance.now() - startedAt),
                     });
                 }
@@ -294,7 +305,10 @@ export function EvaluationPlayground() {
         }
         setAmountError(null);
         setSubmittedCustom(custom);
-        const amounts = side === 'buy' ? [...new Set([...BUY_TIERS, ...(custom ? [custom] : [])])] : [custom!];
+        // Each rung costs a real quote per provider, so ask for exactly what the
+        // user wants: their own size when they named one, otherwise nothing at
+        // all — the endpoint's default ladder is the cheap, documented path.
+        const amounts = side === 'buy' ? (custom ? [custom] : []) : [custom!];
         void requestQuotes(amounts, custom !== null);
     };
 
@@ -402,7 +416,7 @@ export function EvaluationPlayground() {
                     {amountError ? <p className="mt-2 text-[11px] text-red-700">{amountError}</p> : null}
                 </form>
 
-                <ExecutionEvaluationCard
+                <QuoteComparisonTable
                     data={data}
                     isPending={isPending}
                     isError={isError}

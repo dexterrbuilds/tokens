@@ -164,7 +164,8 @@ export type ExecutionQuoteEntry =
       };
 
 export interface ExecutionQuotesLiveResult {
-    providers: ['jupiter', 'titan'];
+    /** Providers actually queried, in deterministic order. */
+    providers: ExecutionQuoteProvider[];
     mint: string;
     side: ExecutionQuoteSide;
     quoteMint: string;
@@ -273,6 +274,7 @@ export async function executionQuotesLive(deps: LiveQuoteDeps, args: unknown): P
         amounts?: unknown;
         tokenDecimals?: unknown;
         timeoutMs?: unknown;
+        providers?: unknown;
     };
     if (typeof a.mint !== 'string' || !a.mint.trim()) throw new InvalidArgsError('mint must be a string');
     const side = parseSide(a.side);
@@ -301,6 +303,23 @@ export async function executionQuotesLive(deps: LiveQuoteDeps, args: unknown): P
     }
     if (requests.length === 0) throw new InvalidArgsError('at least one amount is required');
     if (requests.length > MAX_QUOTE_AMOUNTS) throw new InvalidArgsError('at most 9 unique amounts are allowed');
+
+    // Callers can narrow the provider set to trade comparison breadth for cost.
+    const allProviders: ExecutionQuoteProvider[] = ['jupiter', 'titan'];
+    let providers = allProviders;
+    if (a.providers !== undefined) {
+        if (!Array.isArray(a.providers) || a.providers.some(item => typeof item !== 'string')) {
+            throw new InvalidArgsError('providers must be an array of strings');
+        }
+        const requested = new Set(a.providers as string[]);
+        for (const provider of requested) {
+            if (!allProviders.includes(provider as ExecutionQuoteProvider)) {
+                throw new InvalidArgsError(`Unknown provider: ${provider}`);
+            }
+        }
+        if (requested.size === 0) throw new InvalidArgsError('providers must name at least one provider');
+        providers = allProviders.filter(provider => requested.has(provider));
+    }
 
     const mint = a.mint.trim();
     const inputMint = side === 'buy' ? DEPTH_USDC_QUOTE_MINT : mint;
@@ -335,10 +354,7 @@ export async function executionQuotesLive(deps: LiveQuoteDeps, args: unknown): P
                     route: [] as [],
                     contextSlot: null,
                     quotedAt,
-                    candidates: [
-                        unavailableCandidate('jupiter', quotedAt, 'timeout'),
-                        unavailableCandidate('titan', quotedAt, 'timeout'),
-                    ],
+                    candidates: providers.map(provider => unavailableCandidate(provider, quotedAt, 'timeout')),
                 });
             }
             continue;
@@ -357,10 +373,16 @@ export async function executionQuotesLive(deps: LiveQuoteDeps, args: unknown): P
                         amountRaw: request.rawAmount,
                         timeoutMs: providerTimeoutMs,
                     };
-                    const candidates = await Promise.all([
-                        fetchCandidate(deps, deps.jupiterQuoteSource, 'jupiter', quoteArgs),
-                        fetchCandidate(deps, deps.titanQuoteSource, 'titan', quoteArgs),
-                    ]);
+                    const candidates = await Promise.all(
+                        providers.map(provider =>
+                            fetchCandidate(
+                                deps,
+                                provider === 'jupiter' ? deps.jupiterQuoteSource : deps.titanQuoteSource,
+                                provider,
+                                quoteArgs,
+                            ),
+                        ),
+                    );
                     const available = candidates.filter(
                         (candidate): candidate is Extract<ExecutionQuoteCandidate, { status: 'available' }> =>
                             candidate.status === 'available',
@@ -405,7 +427,7 @@ export async function executionQuotesLive(deps: LiveQuoteDeps, args: unknown): P
     }
 
     return {
-        providers: ['jupiter', 'titan'],
+        providers,
         mint,
         side,
         quoteMint: DEPTH_USDC_QUOTE_MINT,

@@ -195,13 +195,13 @@
     "filePath": "src/app/token/[address]/components/swap-providers-dropdown.tsx"
   },
   {
-    "eventName": "execution_eval_viewed",
-    "eventDescription": "Execution-quality card rendered with depth data (properties: asset_id, depth_coverage, variant_count, depth_source)",
-    "filePath": "src/app/[name]/components/execution-evaluation-card.tsx"
+    "eventName": "execution_quotes_requested",
+    "eventDescription": "User requested live router quotes on /evaluation (properties: mint, side, requested_count, amount_source, includes_custom_amount, providers_requested)",
+    "filePath": "src/app/evaluation/evaluation-playground.tsx"
   },
   {
-    "eventName": "execution_eval_amount_submitted",
-    "eventDescription": "User evaluated a custom trade size in the execution-quality card (properties: asset_id, amount_bucket, grade)",
-    "filePath": "src/app/[name]/components/execution-evaluation-card.tsx"
+    "eventName": "execution_quotes_completed",
+    "eventDescription": "Live multi-provider quote comparison returned (properties: mint, side, requested_count, available_count, unavailable_count, jupiter_available_count, titan_available_count, jupiter_win_count, titan_win_count, comparable_count, best_provider, median_edge_bps, request_latency_ms)",
+    "filePath": "src/app/evaluation/evaluation-playground.tsx"
   }
 ]

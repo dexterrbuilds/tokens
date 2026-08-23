@@ -59,124 +59,305 @@ curl -H "x-api-key: $API_KEY" \
 
 ## `GET /v2/execution/evaluate`
 
-Evaluate a hypothetical buy or sell of a canonical asset against **current sampled
-on-chain depth**. This is an evaluation surface, not an order router — it never routes
-or executes anything. Ask it "how good is a $1M buy of bitcoin on Solana right now?" and
-it answers per variant mint, with a grade.
+Live quotes from every router we integrate, for one mint at one or more sizes,
+ranked, with the edge between them. It answers a single question: **which router
+should I send this order to right now, and how much does it matter?**
 
-### Why evaluate before you trade
+Quotes are fetched at request time — nothing is cached or sampled.
 
-- **Pre-trade guardrails.** Gate or warn on a Buy CTA when the user's size grades `poor`
-  or `avoid`. HYPE absorbs $1M at 140bps but $5M costs ~7,000bps (you'd receive ~30% of
-  your input) — this tells you which side of that cliff a user is on before they click.
-- **Treasury / OTC sizing.** Find the largest clip that still grades `good`, or split an
-  order across the sampled ladder instead of discovering slippage after the fill.
-- **Variant selection at size.** The best mint changes with size: cbBTC beats wBTC at
-  $1M and loses to it at $5M. Pick per trade, not per asset.
+### Why this is valuable
 
-### Two modes
+- **Router selection.** Route each order to whoever is actually best at that
+  size. The winner changes with size, so a per-asset default leaves money on the
+  table.
+- **Best-execution evidence.** Timestamped, slot-stamped quotes from multiple
+  venues at decision time are the artifact a desk needs to show it did not
+  overpay.
+- **Pre-trade sizing.** Walk the ladder to find where impact turns over before
+  you send the order.
+- **Router monitoring.** Track `providerStats.wins` and `summary.medianEdgeBps`
+  over time to catch a router regressing on your flow.
 
-- **Without `amountUsd`** — the scorecard: each variant returns its sampled `ladder`
-  (one entry per size rung) with a grade per rung. One cheap call, ideal on page load.
-- **With `amountUsd`** — adds `estimatedImpactBps`, `estimatedOutUsd`, `sizeAwareScore`,
-  and `executionGrade` interpolated (log-linear) at your exact size.
+### Two ways to call it
+
+- **No amounts** — quotes the default ladder (`$10K`, `$100K`, `$1M`), so the
+  simplest possible call still returns a useful comparison. `meta.amountSource`
+  reports `default`.
+- **Explicit amounts** — repeat `amountUsd` (buys) or `tokenAmount` (sells) up to
+  9 times.
 
 - **Scope**: `execution:read`
 - **Query params**:
-  - `asset` (required) — canonical asset id, alias, or Solana mint (e.g. `bitcoin`).
-  - `amountUsd` (optional) — intended trade size in USD, clamped to `[1, 50000000]`.
-  - `side` (optional) — `buy` (default) or `sell`.
-  - `sample` (optional) — `missing` asks the API to sample uncovered mints on demand
-    before answering (read-through warm: the result is persisted, so only the first
-    caller waits). Bounded server-side: ≤4 mints per request, and mints sampled within
-    the last 30 minutes are skipped. Adds a few seconds when it fires.
-  - `quotes` (optional) — `sampled` (default) or `live`. With `live` + `amountUsd`, impact
-    is measured from two quotes fetched at request time (a $10K baseline and your size)
-    instead of interpolating stored curves. Adds upstream latency (~2-3s for multi-variant
-    assets); variants whose live quote fails fall back to sampled with a
-    `live_quote_unavailable` reason. `meta.quoteMode` reports what was actually used.
+  - `mint` (required) — Solana mint. Must be a listed token; unlisted mints
+    return `404` (see Limits).
+  - `side` (optional) — `buy` (default) quotes USDC → token; `sell` quotes
+    token → USDC.
+  - `amountUsd` (repeatable) — buy sizes in USDC, each `1` to `50000000`. Only
+    valid when `side=buy`.
+  - `tokenAmount` (repeatable) — sell sizes in the token's own units, at most
+    `token.decimals` decimal places. Only valid when `side=sell`.
+  - `providers` (optional) — comma-separated subset of `jupiter`, `titan`.
+    Unknown ids return `400` listing the valid set. With one provider there is
+    nothing to compare, so every `edge` is `null`.
 
-### Grades
+### How the comparison works
 
-`impactBps` maps to a grade via inclusive upper bounds. The scale is ordered
-best-to-worst, so you can rank or threshold on it:
+These rules are the contract; pin behavior on them rather than on observed data.
 
-| Grade | Impact (bps) | Read as |
+- Both sides are **exact-in**: we fix the input and compare what each router
+  returns, so outputs are directly comparable with no normalization.
+- The winner is the **greatest `output.rawAmount`**. Ties go to the provider
+  named by `meta.tieBreak` (`jupiter`).
+- `providerQuotes` is ranked best-first, so `providerQuotes[1]` is the
+  runner-up. Unavailable providers trail with `rank: null`.
+- `best` is the winning quote hoisted for one-line access. It is always equal to
+  `providerQuotes.find(q => q.isBest)`, and is non-null on every `available`
+  row — a size with no winner is reported as `unavailable`, never as an
+  available row you have to null-check.
+- `edge` compares the winner to the runner-up:
+  - `bps = (best.output / runnerUp.output - 1) * 10000` — the winner's gain over
+    the alternative.
+  - `usd` values that gain at the trade's own realized price, so it needs no
+    oracle. On sells the output is USDC, so `usd` is the raw surplus. On buys,
+    the winner got `X` tokens for `$N` and the runner-up got `Y`, so
+    `usd = N * (1 - Y / X)`.
+  - The two ratio bases differ by O(bps²) — `12.00` vs `11.99` bps. Both
+    formulas are stated here so you can reproduce either.
+  - `edge` is `null` when fewer than two providers quoted. It is never `0` in
+    that case, because "nothing to compare" is not the same as "they tied".
+- Aggregates in `meta.summary` and `providerStats.{meanEdgeBps,medianEdgeBps}`
+  cover **contested sizes only** (`summary.comparableEntries`). A median over
+  uncontested sizes would report a confident `0 bps` that really means "only one
+  router answered". `wins` likewise counts only contested sizes; a size where a
+  router was alone is counted in `soleQuotes`.
+- Quotes within one response are fetched milliseconds apart, so `contextSlot`
+  will differ between providers. They are not atomic, and they are not
+  comparable across two separate API calls.
+
+### Per-provider semantics
+
+The routers do not report the same fields. This is surfaced rather than papered
+over:
+
+| | Jupiter | Titan |
 | --- | --- | --- |
-| `excellent` | ≤ 10 | negligible cost |
-| `good` | ≤ 50 | normal for size |
-| `fair` | ≤ 150 | noticeable, still tradeable |
-| `poor` | ≤ 500 | expensive — consider splitting |
-| `avoid` | > 500 | not enough depth at this size |
+| `priceImpactPct` | reported | **not reported** |
+| `priceImpactSource` | `provider` | `unavailable` |
+| Route steps | venue labels per hop | venue labels per hop |
+| `contextSlot` | reported | reported when present |
+| Slippage used | 50 bps | 50 bps |
 
-`meta.gradingVersion` identifies the thresholds (`impact-grade-v1`). It changes whenever
-the boundaries or the grade set change, so pin behavior on it rather than hardcoding
-numbers.
+Branch on `priceImpactSource` (or on `priceImpactPct === null`), never on the
+provider name — a router that starts reporting impact should not need a client
+change. Because impact is not available from every router, **`output.rawAmount`
+is the comparable quality metric**, and it is what the winner is chosen by.
 
 ```ts
 interface ExecutionEvaluateResponse {
-    asset: { assetId: string; name: string | null; symbol: string | null; category: string | null };
+    mint: string;
     side: 'buy' | 'sell';
-    amountUsd: number | null;
-    primary: { mint: string; variantId: string; reason: string } | null;
-    variants: Array<{
-        rank: number; // 1-based
-        mint: string;
-        variantId: string;
-        kind: string; // native | wrapped | bridged | spot | lst | ...
-        issuer: string | null;
-        trustTier: string;
-        symbol: string | null;
-        name: string | null;
-        liquidityUsd: number | null;
-        volume24hUSD: number | null;
-        executionScore: number | null; // 0-100 fill-quality score
-        feeBps: number | null;
-        isFillQualityEligible: boolean;
-        // Sampled evaluation points; null when this variant has no fresh depth sample.
-        ladder: Array<{ sizeUsd: number; impactBps: number; grade: string }> | null;
-        // The four fields below require `amountUsd`.
-        estimatedImpactBps: number | null;
-        estimatedOutUsd: number | null;
-        sizeAwareScore: number | null;
-        executionGrade: string | null; // grade at amountUsd
-        depthAsOf: number | null; // unix seconds of the depth sample
-        reasons: string[]; // e.g. ["liquidity"], ["only_candidate", "depth_unavailable"]
+    providers: Array<'jupiter' | 'titan'>; // providers actually queried
+    token: { mint: string; symbol: string; name: string; decimals: number; verified: boolean };
+    quotes: Array<{
+        request: { unit: 'usd' | 'token'; amount: string; rawAmount: string };
+        status: 'available' | 'unavailable';
+        reason?: 'no_route' | 'timeout' | 'auth' | 'malformed' | 'error';
+        // Non-null exactly when status is 'available'.
+        best: ProviderQuote | null;   // === providerQuotes.find(q => q.isBest)
+        edge: {
+            runnerUp: 'jupiter' | 'titan';
+            comparedProviders: number;
+            outAmountDiffRaw: string;  // integer string, >= "0"
+            outAmountDiff: string;     // decimal, output mint decimals
+            bps: number;
+            usd: number;
+        } | null;
+        providerQuotes: ProviderQuote[]; // ranked best-first
     }>;
     meta: {
-        asOf: number; // unix seconds
-        scoringVersion: string;
-        sizeAwareScoringVersion: string | null; // non-null only once depth influences ordering
-        gradingVersion: string; // e.g. "impact-grade-v1"
-        quoteMode: 'sampled' | 'live'; // whether any live quote informed this response
-        strategy: 'execution_quality' | 'size_aware';
-        sizeLadderUsd: number[] | null; // the sampled rungs, when any variant has depth
-        depthSource: string | null; // e.g. "titan"
-        depthCoverage: { withCurves: number; total: number };
+        requested: number;
+        available: number;
+        unavailable: number;
+        deduped: number;              // duplicate amounts collapsed
+        upstreamQuotes: number;       // what this call spent upstream
+        limits: { maxAmounts: number; maxProviders: number };
+        tieBreak: 'jupiter';
+        comparisonVersion: string;    // e.g. "quote-compare-v1"
+        amountSource: 'request' | 'default';
+        defaultLadderUsd: number[] | null;
+        tokenSource: 'registry' | 'upstream';
+        providerStats: Record<'jupiter' | 'titan', {
+            quoted: number;
+            unavailable: number;
+            wins: number;             // contested sizes only
+            soleQuotes: number;       // sizes where it was the only quote
+            meanEdgeBps: number | null;
+            medianEdgeBps: number | null;
+        }>;
+        summary: {
+            bestProvider: 'jupiter' | 'titan' | null;
+            bestProviderReason: 'most_wins' | 'aggregate_edge' | 'only_provider' | 'tie' | 'no_comparison';
+            comparableEntries: number;
+            meanEdgeBps: number | null;
+            medianEdgeBps: number | null;
+            maxEdgeBps: number | null;
+            maxEdgeAt: { unit: 'usd' | 'token'; amount: string } | null;
+        };
+        warnings: string[];
     };
+}
+
+interface ProviderQuote {
+    provider: 'jupiter' | 'titan';
+    status: 'available' | 'unavailable';
+    reason?: 'no_route' | 'timeout' | 'auth' | 'malformed' | 'error';
+    rank: number | null;          // 1-based among available quotes
+    isBest: boolean;
+    input: Amount | null;
+    output: Amount | null;
+    effectivePrice: string | null; // output per unit of input
+    priceImpactPct: number | null;
+    priceImpactSource: 'provider' | 'unavailable';
+    route: Array<{
+        ammKey: string | null;
+        label: string | null;
+        percent: number | null;
+        inputMint: string | null;
+        outputMint: string | null;
+        inAmountRaw: string | null;
+        outAmountRaw: string | null;
+        feeAmountRaw: string | null;
+        feeMint: string | null;
+    }>;
+    contextSlot: number | null;
+    quotedAt: string;
+}
+
+interface Amount { mint: string; symbol: string; decimals: number; amount: string; rawAmount: string }
+```
+
+### Cost model and limits
+
+Each size is a real upstream quote per provider:
+
+```
+upstream quotes = amounts x providers
+```
+
+So the default ladder against both routers is 6 quotes; the 9-amount maximum
+against both is 18. `meta.upstreamQuotes` echoes what your call actually spent.
+
+- At most **9 unique amounts**. Exceeding it returns `400` — the ladder is never
+  silently truncated, because a truncated ladder is a silently wrong comparison.
+- Duplicate amounts collapse and are counted in `meta.deduped`.
+- Responses are `Cache-Control: no-store`. **Do not call this per keystroke** —
+  debounce to a deliberate action, and cache on your side if you need to render
+  the same comparison repeatedly.
+- `mint` must be a listed token. Unlisted mints return `404` today; that is a
+  cost-control boundary, not a bug.
+
+### Failure semantics
+
+A provider that cannot answer is reported, never substituted:
+
+| `reason` | Meaning |
+| --- | --- |
+| `no_route` | The router found no route. A real market answer. |
+| `timeout` | We ran out of time budget before it answered. |
+| `auth` | Our credential for that router was rejected. |
+| `malformed` | The router's response could not be parsed. |
+| `error` | Anything else, including a router we have not configured. |
+
+If one router is slow or down, the other's quotes are still returned — the
+response degrades per provider and per size rather than failing as a whole.
+
+```bash
+# Default ladder against both routers
+curl -H "x-api-key: $API_KEY" \
+  "https://api.tokens.xyz/v2/execution/evaluate?mint=cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij"
+
+# Specific sizes
+curl -H "x-api-key: $API_KEY" \
+  "https://api.tokens.xyz/v2/execution/evaluate?mint=cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij&amountUsd=100000&amountUsd=1000000"
+
+# Selling 12.5 tokens, Jupiter only
+curl -H "x-api-key: $API_KEY" \
+  "https://api.tokens.xyz/v2/execution/evaluate?mint=cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij&side=sell&tokenAmount=12.5&providers=jupiter"
+```
+
+Abridged response for a two-rung ladder where each router wins one size and the
+larger rung has no route at all:
+
+```json
+{
+  "mint": "cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij",
+  "side": "buy",
+  "providers": ["jupiter", "titan"],
+  "token": { "mint": "cbbtc...", "symbol": "cbBTC", "name": "Coinbase Wrapped BTC", "decimals": 8, "verified": true },
+  "quotes": [
+    {
+      "request": { "unit": "usd", "amount": "100000", "rawAmount": "100000000000" },
+      "status": "available",
+      "best": {
+        "provider": "titan",
+        "status": "available",
+        "rank": 1,
+        "isBest": true,
+        "output": { "mint": "cbbtc...", "symbol": "cbBTC", "decimals": 8, "amount": "0.90123456", "rawAmount": "90123456" },
+        "priceImpactPct": null,
+        "priceImpactSource": "unavailable",
+        "contextSlot": 298450112,
+        "quotedAt": "2026-08-23T18:02:11.104Z"
+      },
+      "edge": {
+        "runnerUp": "jupiter",
+        "comparedProviders": 2,
+        "outAmountDiffRaw": "10821",
+        "outAmountDiff": "0.00010821",
+        "bps": 12.01,
+        "usd": 120.09
+      },
+      "providerQuotes": ["... titan (rank 1), jupiter (rank 2) ..."]
+    },
+    {
+      "request": { "unit": "usd", "amount": "5000000", "rawAmount": "5000000000000" },
+      "status": "unavailable",
+      "reason": "no_route",
+      "best": null,
+      "edge": null,
+      "providerQuotes": ["... both unavailable ..."]
+    }
+  ],
+  "meta": {
+    "requested": 2,
+    "available": 1,
+    "unavailable": 1,
+    "upstreamQuotes": 4,
+    "tieBreak": "jupiter",
+    "comparisonVersion": "quote-compare-v1",
+    "amountSource": "request",
+    "providerStats": {
+      "jupiter": { "quoted": 1, "unavailable": 1, "wins": 0, "soleQuotes": 0, "meanEdgeBps": null, "medianEdgeBps": null },
+      "titan": { "quoted": 1, "unavailable": 1, "wins": 1, "soleQuotes": 0, "meanEdgeBps": 12.01, "medianEdgeBps": 12.01 }
+    },
+    "summary": {
+      "bestProvider": "titan",
+      "bestProviderReason": "most_wins",
+      "comparableEntries": 1,
+      "medianEdgeBps": 12.01,
+      "maxEdgeBps": 12.01,
+      "maxEdgeAt": { "unit": "usd", "amount": "100000" }
+    },
+    "warnings": []
+  }
 }
 ```
 
-Variants without a fresh depth sample carry `depth_unavailable` in `reasons` and a null
-`ladder`; samples older than 6h are treated as absent. A variant that was sampled and had
-**no route at any size** carries `no_route` with an empty `ladder` — the strongest avoid
-signal, distinct from "not sampled yet". An `amountUsd` beyond the largest
-sampled rung is clamped and flagged with `beyond_sampled_depth`. Size-aware fields are
-informational — they do not reorder `variants` while `meta.sizeAwareScoringVersion` is
-null. Single-variant assets return one entry with `primary.reason: "only_candidate"`;
-assets with no Solana variants return an empty `variants` array and `primary: null`.
-Unknown assets return `404`.
+### Errors
 
-```bash
-# Scorecard: graded ladder per variant
-curl -H "x-api-key: $API_KEY" \
-  "https://api.tokens.xyz/v2/execution/evaluate?asset=bitcoin"
-
-# Evaluate a specific size (sampled curves)
-curl -H "x-api-key: $API_KEY" \
-  "https://api.tokens.xyz/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000"
-
-# Same, but with quotes fetched at request time
-curl -H "x-api-key: $API_KEY" \
-  "https://api.tokens.xyz/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000&quotes=live"
-```
+| Status | When |
+| --- | --- |
+| `400` | Missing or invalid `mint`; amount for the wrong side; more than 9 amounts; a buy amount outside `1`–`50000000`; more decimal places than the token has; unknown `providers` value |
+| `403` | Key lacks `execution:read` |
+| `404` | Mint is not a listed token |
+| `429` | Rate limited |

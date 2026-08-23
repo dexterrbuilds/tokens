@@ -84,7 +84,7 @@ function availableEntry(amount: string, rawAmount: string) {
             {
                 provider: 'titan',
                 status: 'unavailable',
-                reason: 'quote_unavailable',
+                reason: 'no_route',
                 inAmountRaw: null,
                 outAmountRaw: null,
                 priceImpactPct: null,
@@ -237,29 +237,52 @@ describe('GET /api/v2/execution/evaluate', () => {
         expect((quoteArgs as { timeoutMs?: number }).timeoutMs).toBe(12_000);
 
         const body = await response.json();
-        expect({ mint: body.mint, side: body.side, providers: body.providers, token: body.token, meta: body.meta }).toEqual({
+        expect({ mint: body.mint, side: body.side, providers: body.providers, token: body.token }).toEqual({
             mint: MINT,
             side: 'buy',
             providers: ['jupiter', 'titan'],
-            token: { mint: MINT, symbol: 'cbBTC', name: 'Coinbase Wrapped BTC', decimals: 8 },
-            meta: {
-                requested: 1,
-                available: 1,
-                unavailable: 0,
-                providerStats: { jupiter: { available: 1, wins: 1 }, titan: { available: 0, wins: 0 } },
-            },
+            token: { mint: MINT, symbol: 'cbBTC', name: 'Coinbase Wrapped BTC', decimals: 8, verified: true },
         });
+        expect(body.meta.requested).toBe(1);
+        expect(body.meta.available).toBe(1);
+        expect(body.meta.unavailable).toBe(0);
+        expect(body.meta.upstreamQuotes).toBe(2);
+        expect(body.meta.limits).toEqual({ maxAmounts: 9, maxProviders: 2 });
+        expect(body.meta.tieBreak).toBe('jupiter');
+        expect(body.meta.comparisonVersion).toBe('quote-compare-v1');
+        expect(body.meta.amountSource).toBe('request');
+        expect(body.meta.defaultLadderUsd).toBeNull();
+        // Uncontested: Jupiter was the only quote, so it is a sole quote and not a win.
+        expect(body.meta.providerStats.jupiter).toEqual({
+            quoted: 1,
+            unavailable: 0,
+            wins: 0,
+            soleQuotes: 1,
+            meanEdgeBps: null,
+            medianEdgeBps: null,
+        });
+        expect(body.meta.summary.comparableEntries).toBe(0);
+        expect(body.meta.summary.bestProvider).toBe('jupiter');
+        expect(body.meta.summary.bestProviderReason).toBe('only_provider');
+
+        const entry = body.quotes[0];
+        expect(entry.request).toEqual({ unit: 'usd', amount: '10000', rawAmount: '10000000000' });
+        // Only one provider quoted, so there is nothing to compare against.
+        expect(entry.edge).toBeNull();
         expect({
-            request: body.quotes[0].request,
-            provider: body.quotes[0].provider,
-            input: body.quotes[0].input,
-            output: body.quotes[0].output,
-            priceImpactPct: body.quotes[0].priceImpactPct,
-            contextSlot: body.quotes[0].contextSlot,
-            quotedAt: body.quotes[0].quotedAt,
+            provider: entry.best.provider,
+            rank: entry.best.rank,
+            isBest: entry.best.isBest,
+            input: entry.best.input,
+            output: entry.best.output,
+            priceImpactPct: entry.best.priceImpactPct,
+            priceImpactSource: entry.best.priceImpactSource,
+            contextSlot: entry.best.contextSlot,
+            quotedAt: entry.best.quotedAt,
         }).toEqual({
-            request: { unit: 'usd', amount: '10000', rawAmount: '10000000000' },
             provider: 'jupiter',
+            rank: 1,
+            isBest: true,
             input: { mint: USDC, symbol: 'USDC', decimals: 6, amount: '10000', rawAmount: '10000000000' },
             output: {
                 mint: MINT,
@@ -269,16 +292,26 @@ describe('GET /api/v2/execution/evaluate', () => {
                 rawAmount: '123456789012345678',
             },
             priceImpactPct: 0.42,
+            priceImpactSource: 'provider',
             contextSlot: 123,
             quotedAt: '2026-08-22T12:34:56.000Z',
         });
-        expect(body.quotes[0].candidates.map((candidate: { provider: string; status: string }) => ({
-            provider: candidate.provider,
-            status: candidate.status,
-        }))).toEqual([
-            { provider: 'jupiter', status: 'available' },
-            { provider: 'titan', status: 'unavailable' },
+        // The hoisted winner is the same object as its providerQuotes entry.
+        expect(entry.best).toEqual(entry.providerQuotes.find((quote: { isBest: boolean }) => quote.isBest));
+        expect(
+            entry.providerQuotes.map((quote: { provider: string; status: string; rank: number | null }) => ({
+                provider: quote.provider,
+                status: quote.status,
+                rank: quote.rank,
+            })),
+        ).toEqual([
+            { provider: 'jupiter', status: 'available', rank: 1 },
+            { provider: 'titan', status: 'unavailable', rank: null },
         ]);
+        // Titan reports no impact field at all, which is not the same as zero.
+        const titanQuote = entry.providerQuotes.find((quote: { provider: string }) => quote.provider === 'titan');
+        expect(titanQuote.priceImpactSource).toBe('unavailable');
+        expect(titanQuote.priceImpactPct).toBeNull();
     });
 
     it('serializes a Titan winner and mixed-provider statistics', async () => {
@@ -308,19 +341,38 @@ describe('GET /api/v2/execution/evaluate', () => {
         });
 
         const body = await (await request(`/api/v2/execution/evaluate?mint=${MINT}&amountUsd=25000`)).json();
-        expect({ provider: body.quotes[0].provider, priceImpactPct: body.quotes[0].priceImpactPct }).toEqual({
+        const quote = body.quotes[0];
+        expect({ provider: quote.best.provider, priceImpactSource: quote.best.priceImpactSource }).toEqual({
             provider: 'titan',
-            priceImpactPct: null,
+            priceImpactSource: 'unavailable',
         });
-        expect(body.quotes[0].output.rawAmount).toBe('123456789012345679');
-        expect(body.quotes[0].candidates.map((candidate: { provider: string }) => candidate.provider)).toEqual([
-            'jupiter',
+        expect(quote.best.output.rawAmount).toBe('123456789012345679');
+        // Ranked best-first, so providerQuotes[1] is the runner-up the edge is measured against.
+        expect(quote.providerQuotes.map((quote: { provider: string }) => quote.provider)).toEqual([
             'titan',
+            'jupiter',
         ]);
-        expect(body.meta.providerStats).toEqual({
-            jupiter: { available: 1, wins: 0 },
-            titan: { available: 1, wins: 1 },
+        expect(quote.providerQuotes.map((quote: { rank: number }) => quote.rank)).toEqual([1, 2]);
+        // Titan beat Jupiter by exactly 1 raw unit out of ~1.2e17.
+        expect(quote.edge.runnerUp).toBe('jupiter');
+        expect(quote.edge.comparedProviders).toBe(2);
+        expect(quote.edge.outAmountDiffRaw).toBe('1');
+        expect(quote.edge.bps).toBe(0);
+
+        // Contested: Titan's win counts, and neither provider is a sole quote.
+        expect(body.meta.providerStats.titan).toEqual({
+            quoted: 1,
+            unavailable: 0,
+            wins: 1,
+            soleQuotes: 0,
+            meanEdgeBps: 0,
+            medianEdgeBps: 0,
         });
+        expect(body.meta.providerStats.jupiter.wins).toBe(0);
+        expect(body.meta.providerStats.jupiter.soleQuotes).toBe(0);
+        expect(body.meta.summary.comparableEntries).toBe(1);
+        expect(body.meta.summary.bestProvider).toBe('titan');
+        expect(body.meta.summary.bestProviderReason).toBe('most_wins');
     });
 
     it('accepts repeated buy amounts, normalizes and dedupes them', async () => {
@@ -338,12 +390,19 @@ describe('GET /api/v2/execution/evaluate', () => {
             side: 'sell',
             quoteMint: USDC,
             entries: [
-                {
-                    ...availableEntry('12.5', '1250000000'),
-                    request: { unit: 'token', amount: '12.5', rawAmount: '1250000000' },
-                    inAmountRaw: '1250000000',
-                    outAmountRaw: '987654321',
-                },
+                (() => {
+                    const base = availableEntry('12.5', '1250000000');
+                    // The response is built from the candidate, so the sell
+                    // amounts have to live there too.
+                    const candidate = { ...base.candidates[0], outAmountRaw: '987654321' };
+                    return {
+                        ...base,
+                        request: { unit: 'token', amount: '12.5', rawAmount: '1250000000' },
+                        inAmountRaw: '1250000000',
+                        outAmountRaw: '987654321',
+                        candidates: [candidate, base.candidates[1]],
+                    };
+                })(),
             ],
         });
         const response = await request(`/api/v2/execution/evaluate?mint=${MINT}&side=sell&tokenAmount=12.5`);
@@ -359,8 +418,17 @@ describe('GET /api/v2/execution/evaluate', () => {
             ),
         ).toEqual({ mint: MINT, side: 'sell', amounts: ['12.5'], tokenDecimals: 8 });
         const body = await response.json();
-        expect({ mint: body.quotes[0].input.mint, symbol: body.quotes[0].input.symbol, amount: body.quotes[0].input.amount }).toEqual({ mint: MINT, symbol: 'cbBTC', amount: '12.5' });
-        expect({ mint: body.quotes[0].output.mint, symbol: body.quotes[0].output.symbol, amount: body.quotes[0].output.amount }).toEqual({ mint: USDC, symbol: 'USDC', amount: '987.654321' });
+        const best = body.quotes[0].best;
+        expect({ mint: best.input.mint, symbol: best.input.symbol, amount: best.input.amount }).toEqual({
+            mint: MINT,
+            symbol: 'cbBTC',
+            amount: '12.5',
+        });
+        expect({ mint: best.output.mint, symbol: best.output.symbol, amount: best.output.amount }).toEqual({
+            mint: USDC,
+            symbol: 'USDC',
+            amount: '987.654321',
+        });
     });
 
     it('preserves unavailable rows without substituting a quote', async () => {
@@ -373,7 +441,7 @@ describe('GET /api/v2/execution/evaluate', () => {
                 {
                     request: { unit: 'usd', amount: '5000000', rawAmount: '5000000000000' },
                     status: 'unavailable',
-                    reason: 'quote_unavailable',
+                    reason: 'no_route',
                     provider: null,
                     inAmountRaw: null,
                     outAmountRaw: null,
@@ -385,7 +453,7 @@ describe('GET /api/v2/execution/evaluate', () => {
                         {
                             provider: 'jupiter',
                             status: 'unavailable',
-                            reason: 'quote_unavailable',
+                            reason: 'no_route',
                             inAmountRaw: null,
                             outAmountRaw: null,
                             priceImpactPct: null,
@@ -396,7 +464,7 @@ describe('GET /api/v2/execution/evaluate', () => {
                         {
                             provider: 'titan',
                             status: 'unavailable',
-                            reason: 'quote_unavailable',
+                            reason: 'auth',
                             inAmountRaw: null,
                             outAmountRaw: null,
                             priceImpactPct: null,
@@ -410,19 +478,86 @@ describe('GET /api/v2/execution/evaluate', () => {
         });
         const response = await request(`/api/v2/execution/evaluate?mint=${MINT}&amountUsd=5000000`);
         const body = await response.json();
-        expect({ status: body.quotes[0].status, input: body.quotes[0].input, output: body.quotes[0].output }).toEqual({ status: 'unavailable', input: null, output: null });
-        expect(body.meta).toEqual({
-            requested: 1,
-            available: 0,
-            unavailable: 1,
-            providerStats: { jupiter: { available: 0, wins: 0 }, titan: { available: 0, wins: 0 } },
+        // Unavailable rows carry no winner and nothing to compare.
+        expect({ status: body.quotes[0].status, best: body.quotes[0].best, edge: body.quotes[0].edge }).toEqual({
+            status: 'unavailable',
+            best: null,
+            edge: null,
         });
+        // The per-provider detail is still present, so callers can see who failed and why.
+        expect(body.quotes[0].providerQuotes.length).toBeGreaterThan(0);
+        for (const quote of body.quotes[0].providerQuotes) {
+            expect(quote.status).toBe('unavailable');
+            expect(quote.input).toBeNull();
+            expect(quote.rank).toBeNull();
+            expect(quote.isBest).toBe(false);
+        }
+        // Reasons are per-provider and must not be collapsed: a bad API key
+        // (auth) and a genuinely illiquid size (no_route) are different bugs.
+        expect(
+            (body.quotes[0].providerQuotes as { provider: string; reason: string }[]).map(quote => [
+                quote.provider,
+                quote.reason,
+            ]),
+        ).toEqual([
+            ['jupiter', 'no_route'],
+            ['titan', 'auth'],
+        ]);
+        expect({
+            requested: body.meta.requested,
+            available: body.meta.available,
+            unavailable: body.meta.unavailable,
+        }).toEqual({ requested: 1, available: 0, unavailable: 1 });
+        // Nothing quoted anywhere: no wins, no sole quotes, no verdict.
+        for (const provider of ['jupiter', 'titan'] as const) {
+            expect(body.meta.providerStats[provider]).toEqual({
+                quoted: 0,
+                unavailable: 1,
+                wins: 0,
+                soleQuotes: 0,
+                meanEdgeBps: null,
+                medianEdgeBps: null,
+            });
+        }
+        expect(body.meta.summary.bestProvider).toBeNull();
+        expect(body.meta.summary.bestProviderReason).toBe('no_comparison');
+        expect(body.meta.summary.comparableEntries).toBe(0);
+    });
+
+    it('narrows the provider set and reports no comparison for a single provider', async () => {
+        const response = await request(`/api/v2/execution/evaluate?mint=${MINT}&amountUsd=10000&providers=jupiter`);
+        expect(response.status).toBe(200);
+        expect(quoteArgs?.providers).toEqual(['jupiter']);
+
+        const body = await response.json();
+        // One provider: nothing to compare, so no edge anywhere.
+        expect(body.meta.upstreamQuotes).toBe(1);
+        for (const quote of body.quotes) expect(quote.edge).toBeNull();
+        expect(body.meta.summary.comparableEntries).toBe(0);
+        expect(body.meta.providerStats.titan.quoted).toBe(0);
+    });
+
+    it('rejects an unknown provider with the valid set in the message', async () => {
+        const response = await request(`/api/v2/execution/evaluate?mint=${MINT}&amountUsd=10000&providers=uniswap`);
+        expect(response.status).toBe(400);
+        const body = await response.json();
+        expect(body.error._tag).toBe('BadRequestError');
+        expect(body.error.message).toContain('uniswap');
+        expect(body.error.message).toContain('jupiter');
     });
 
     it('validates mint, side-specific amounts, precision, range, and batch size', async () => {
         expect((await request('/api/v2/execution/evaluate')).status).toBe(400);
         expect((await request('/api/v2/execution/evaluate?mint=bad&amountUsd=10')).status).toBe(400);
-        expect((await request(`/api/v2/execution/evaluate?mint=${MINT}`)).status).toBe(400);
+        // No amounts is no longer an error: the default ladder answers instead.
+        const defaulted = await request(`/api/v2/execution/evaluate?mint=${MINT}`);
+        expect(defaulted.status).toBe(200);
+        const defaultedBody = await defaulted.json();
+        expect(defaultedBody.meta.amountSource).toBe('default');
+        expect(defaultedBody.meta.defaultLadderUsd).toEqual([10_000, 100_000, 1_000_000]);
+        expect(quoteArgs?.amounts).toEqual(['10000', '100000', '1000000']);
+        // Sells still require explicit sizes until USD sells land.
+        expect((await request(`/api/v2/execution/evaluate?mint=${MINT}&side=sell`)).status).toBe(400);
         expect((await request(`/api/v2/execution/evaluate?mint=${MINT}&side=buy&tokenAmount=1`)).status).toBe(400);
         expect((await request(`/api/v2/execution/evaluate?mint=${MINT}&side=sell&amountUsd=1`)).status).toBe(400);
         expect((await request(`/api/v2/execution/evaluate?mint=${MINT}&amountUsd=0.5`)).status).toBe(400);
@@ -474,6 +609,29 @@ describe('GET /api/v2/execution/evaluate', () => {
                 },
             ),
         ).toEqual({ mint: MINT, side: 'buy', amounts: ['10000'], tokenDecimals: 8 });
+    });
+
+    it('rejects a malformed upstream raw amount instead of throwing inside BigInt', async () => {
+        const entry = availableEntry('10000', '10000000000');
+        quoteResponder = () => ({
+            providers: ['jupiter'],
+            mint: MINT,
+            side: 'buy',
+            quoteMint: USDC,
+            entries: [
+                {
+                    ...entry,
+                    outAmountRaw: 'not-a-number',
+                    candidates: [{ ...entry.candidates[0], outAmountRaw: 'not-a-number' }],
+                },
+            ],
+        });
+        const response = await request(`/api/v2/execution/evaluate?mint=${MINT}&amountUsd=10000`);
+        // A 500 either way, but a tagged upstream-data failure rather than an
+        // unhandled BigInt SyntaxError escaping serialization.
+        expect(response.status).toBe(500);
+        const body = await response.json();
+        expect(body.error._tag).toBe('UpstreamDataError');
     });
 
     it('retains the execution:read scope', async () => {

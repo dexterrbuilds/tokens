@@ -28,10 +28,10 @@ See [Lists endpoints](/docs/v2/endpoints/lists) for the full reference.
 for a "Buy" call-to-action in any app. Callers choose which venues to show; we return our
 recommendation as `primary`.
 
-`GET /v2/execution/evaluate` grades a hypothetical trade against current sampled on-chain
-depth: per-variant impact at each sampled size rung, plus an interpolated estimate and
-grade at your exact amount. Use it for pre-trade guardrails, sizing, and picking the right
-variant mint at a given size.
+`GET /v2/execution/evaluate` compares **live quotes across every router we integrate**
+(Jupiter and Titan today) for one mint at one or more sizes: who wins each size, by how
+many basis points, and via which route. Use it for router selection, best-execution
+evidence, pre-trade sizing, and monitoring a router's performance on your flow.
 
 Both require the `execution:read` scope, granted to all keys by default.
 
