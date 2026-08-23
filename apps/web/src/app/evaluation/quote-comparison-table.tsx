@@ -123,7 +123,7 @@ function ComparisonSummary({ meta }: { meta: ExecutionEvaluationResponse['meta']
     const { summary } = meta;
     if (summary.comparableEntries === 0) {
         return (
-            <p className="text-[12px] text-text-medium">
+            <p className="text-[11px] text-text-medium">
                 {summary.bestProvider
                     ? `Only ${providerLabel(summary.bestProvider)} quoted, so there is nothing to compare.`
                     : 'No size had two routers quote, so there is nothing to compare.'}
@@ -134,7 +134,7 @@ function ComparisonSummary({ meta }: { meta: ExecutionEvaluationResponse['meta']
     const winner = summary.bestProvider;
     const wins = winner ? meta.providerStats[winner].wins : 0;
     return (
-        <p className="text-[12px] text-text-medium">
+        <p className="text-[11px] text-text-medium">
             {winner ? (
                 <>
                     <span className="font-medium text-text-extra-high">{providerLabel(winner)}</span> best on {wins} of{' '}
@@ -278,23 +278,6 @@ export function QuoteComparisonTable({
 
     return (
         <section className="overflow-hidden rounded-[24px] border border-border-medium bg-white shadow-[0_8px_40px_rgba(0,0,0,0.03)]">
-            <div className="flex items-center border-b border-border-extra-light px-4 py-3">
-                <div>
-                    <h2 className="text-title-sm text-text-extra-high">Live execution quotes</h2>
-                    <p className="mt-0.5 text-[11px] text-text-extra-low">{side === 'buy' ? 'USDC into the selected mint' : 'Selected token into USDC'}</p>
-                </div>
-                <span className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-green-50 px-2 py-1 text-[11px] font-medium text-green-800">
-                    <span className="size-1.5 rounded-full bg-green-600" aria-hidden />
-                    Titan + Jupiter · Live comparison
-                </span>
-            </div>
-
-            {data && !isPending ? (
-                <div className="border-b border-border-extra-light bg-gray-50/40 px-4 py-2.5">
-                    <ComparisonSummary meta={data.meta} />
-                </div>
-            ) : null}
-
             <div className="overflow-x-auto">
                 <table className="w-full min-w-[980px] border-collapse text-left">
                     <thead>
@@ -370,6 +353,7 @@ export function QuoteComparisonTable({
                     <Info className="size-4 text-text-low" aria-hidden />
                     <AlertTitle className="text-[12px] font-medium text-text-high">{isError || allUnavailable ? 'Quotes unavailable' : 'Live comparison details'}</AlertTitle>
                     <AlertDescription className="space-y-1 text-[11px] text-text-low">
+                        {data && !isPending ? <ComparisonSummary meta={data.meta} /> : null}
                         {isError ? <p>Titan and Jupiter could not provide fresh quotes. No previous quote was substituted.</p> : null}
                         {unavailable.length > 0 ? <p>No quote found right now for: <span className="font-medium text-text-high">{unavailable.map(row => formatRequestedAmount(row.request.amount, side)).join(', ')}</span>.</p> : null}
                         {titanUnavailable.length > 0 ? <p>Titan could not provide quotes for: <span className="font-medium text-text-high">{titanUnavailable.map(row => formatRequestedAmount(row.request.amount, side)).join(', ')}</span>. Jupiter results are shown without substitution.</p> : null}
