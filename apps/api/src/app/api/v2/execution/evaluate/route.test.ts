@@ -11,7 +11,6 @@ const ORIGINAL_FETCH = globalThis.fetch;
 const ORIGINAL_LOG = console.log;
 const ORIGINAL_WARN = console.warn;
 const ORIGINAL_ERROR = console.error;
-
 const ENV_KEYS = [
     'TOKENS_CLOUDRUN_AUTH_TOKEN',
     'TOKENS_CLOUDRUN_ASSETS_URL',
@@ -23,107 +22,137 @@ const ENV_KEYS = [
     'UPSTASH_REDIS_REST_URL',
     'UPSTASH_REDIS_REST_TOKEN',
 ] as const;
-
 const savedEnv: Partial<Record<(typeof ENV_KEYS)[number], string>> = {};
 
-const CBBTC_MINT = 'cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij';
-const WBTC_MINT = '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh';
+const MINT = 'cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij';
+const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+let quoteArgs: Record<string, unknown> | null = null;
+let tokenExists = true;
+let tokenDecimals: number | null = 8;
+let marketMetadataExists = false;
+let marketDecimals: number | null = 8;
+let jupiterMetadataExists = false;
+let quoteResponder: (() => unknown) | null = null;
 
-function marketRow(mint: string, liquidity: number, volume24hUSD: number) {
+function availableEntry(amount: string, rawAmount: string) {
+    const candidate = {
+        provider: 'jupiter',
+        status: 'available',
+        inAmountRaw: rawAmount,
+        outAmountRaw: '123456789012345678',
+        priceImpactPct: 0.42,
+        route: [
+            {
+                ammKey: 'amm',
+                label: 'Meteora DLMM',
+                percent: 100,
+                inputMint: USDC,
+                outputMint: MINT,
+                inAmountRaw: rawAmount,
+                outAmountRaw: '123456789012345678',
+                feeAmountRaw: '10',
+                feeMint: USDC,
+            },
+        ],
+        contextSlot: 123,
+        quotedAt: '2026-08-22T12:34:56.000Z',
+    } as const;
     return {
-        mint,
-        market: {
-            mint,
-            source: 'birdeye',
-            liquidity,
-            volume24hUSD,
-            trade24h: 5_000,
-            lastFetchedAt: Date.now(),
-        },
+        request: { unit: 'usd', amount, rawAmount },
+        status: 'available',
+        provider: 'jupiter',
+        inAmountRaw: rawAmount,
+        outAmountRaw: '123456789012345678',
+        priceImpactPct: 0.42,
+        route: [
+            {
+                ammKey: 'amm',
+                label: 'Meteora DLMM',
+                percent: 100,
+                inputMint: USDC,
+                outputMint: MINT,
+                inAmountRaw: rawAmount,
+                outAmountRaw: '123456789012345678',
+                feeAmountRaw: '10',
+                feeMint: USDC,
+            },
+        ],
+        contextSlot: 123,
+        quotedAt: '2026-08-22T12:34:56.000Z',
+        candidates: [
+            candidate,
+            {
+                provider: 'titan',
+                status: 'unavailable',
+                reason: 'quote_unavailable',
+                inAmountRaw: null,
+                outAmountRaw: null,
+                priceImpactPct: null,
+                route: [],
+                contextSlot: null,
+                quotedAt: '2026-08-22T12:34:56.000Z',
+            },
+        ],
     };
 }
 
-function fillQualityRow(mint: string, executionScore: number) {
+function defaultQuoteResponse() {
     return {
-        mint,
-        fillQuality: {
-            source: 'clickhouse_fill_quality',
-            quoteMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-            volume24hUSD: 1_000_000,
-            trade24h: 2_000,
-            botVolumeRatio: 0.1,
-            feeBps: 3,
-            flowSourceCount: 5,
-            executionScore,
-            isEligibleForPrimary: true,
-            asOf: Math.floor(Date.now() / 1000),
-            lastComputedAt: Date.now(),
-        },
+        providers: ['jupiter', 'titan'],
+        mint: MINT,
+        side: 'buy',
+        quoteMint: USDC,
+        entries: [availableEntry('10000', '10000000000')],
     };
 }
-
-function depthCurveRow(mint: string, asOfSecondsAgo: number) {
-    const asOf = Math.floor(Date.now() / 1000) - asOfSecondsAgo;
-    return {
-        mint,
-        depthCurve: {
-            mint,
-            quoteMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-            side: 'buy',
-            source: 'titan',
-            ladder: [
-                { sizeUsd: 10_000, inAmount: 1, outAmount: 1, priceImpactBps: 0, effectivePrice: 1, routeVenues: [] },
-                { sizeUsd: 100_000, inAmount: 1, outAmount: 1, priceImpactBps: 10, effectivePrice: 1, routeVenues: [] },
-                { sizeUsd: 1_000_000, inAmount: 1, outAmount: 1, priceImpactBps: 40, effectivePrice: 1, routeVenues: [] },
-                { sizeUsd: 5_000_000, inAmount: 1, outAmount: 1, priceImpactBps: 120, effectivePrice: 1, routeVenues: [] },
-            ],
-            points: 4,
-            failedPoints: 0,
-            asOf,
-            lastComputedAt: asOf * 1000,
-        },
-    };
-}
-
-let depthResponder: (() => unknown) | null = null;
-let liveQuotesResponder: (() => unknown) | null = null;
-let sampleResponder: (() => unknown) | null = null;
 
 function stubCloudRun(): void {
-    globalThis.fetch = (async (input: string | URL | Request) => {
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
         const url = String(input);
-        if (url.includes('/query/listDeletedRefs')) {
-            return new Response(JSON.stringify([]), { status: 200 });
-        }
-        if (url.includes('/query/variantDepthCurvesGetLatestByMints')) {
-            if (!depthResponder) throw new Error('depth query not stubbed');
-            return new Response(JSON.stringify(depthResponder()), { status: 200 });
-        }
-        if (url.includes('/query/executionQuotesLive')) {
-            if (!liveQuotesResponder) throw new Error('live quotes query not stubbed');
-            return new Response(JSON.stringify(liveQuotesResponder()), { status: 200 });
-        }
-        if (url.includes('/mutation/depthSampleMints')) {
-            if (!sampleResponder) throw new Error('sample mutation not stubbed');
-            return new Response(JSON.stringify(sampleResponder()), { status: 200 });
+        if (url.includes('/query/listDeletedRefs')) return Response.json([]);
+        if (url.includes('/query/tokensGetByAddress')) {
+            return Response.json(
+                tokenExists
+                    ? {
+                          _id: 'token',
+                          _creationTime: 1,
+                          address: MINT,
+                          symbol: 'cbBTC',
+                          name: 'Coinbase Wrapped BTC',
+                          decimals: tokenDecimals,
+                          lastFetchedAt: 1,
+                      }
+                    : null,
+            );
         }
         if (url.includes('/query/variantMarketsGetLatestByMints')) {
-            return new Response(
-                JSON.stringify([marketRow(CBBTC_MINT, 40_000_000, 9_000_000), marketRow(WBTC_MINT, 5_000_000, 800_000)]),
-                { status: 200 },
+            return Response.json([
+                {
+                    mint: MINT,
+                    market: marketMetadataExists
+                        ? {
+                              mint: MINT,
+                              source: 'birdeye',
+                              symbol: 'cbBTC',
+                              name: 'Coinbase Wrapped BTC',
+                              decimals: marketDecimals,
+                              lastFetchedAt: 1,
+                          }
+                        : null,
+                },
+            ]);
+        }
+        if (url.includes('/query/executionQuoteTokenMetadata')) {
+            return Response.json(
+                jupiterMetadataExists
+                    ? { mint: MINT, symbol: 'cbBTC', name: 'Coinbase Wrapped BTC', decimals: 8 }
+                    : null,
             );
         }
-        if (url.includes('/query/variantFillQualityGetLatestByMints')) {
-            return new Response(
-                JSON.stringify([fillQualityRow(CBBTC_MINT, 80), fillQualityRow(WBTC_MINT, 55)]),
-                { status: 200 },
-            );
-        }
-        if (url.includes('/query/sanctumResolveRef')) {
-            return new Response('null', { status: 200 });
-        }
-        if (url.includes('/query/resolveAssetRefForApi')) {
-            return new Response('null', { status: 200 });
+        if (url.includes('/query/executionQuotesLive')) {
+            const rawBody = init?.body ?? (input instanceof Request ? await input.clone().text() : null);
+            quoteArgs = rawBody ? (JSON.parse(String(rawBody)) as Record<string, unknown>) : null;
+            return Response.json(quoteResponder?.() ?? defaultQuoteResponse());
         }
         throw new Error(`Unexpected fetch: ${url}`);
     }) as typeof fetch;
@@ -144,11 +173,14 @@ beforeEach(() => {
     process.env.TOKENS_USAGE_LOG_MODE = 'off';
     resetEnvForTests();
     __resetCloudRunClientForTesting();
-    depthResponder = null;
-    liveQuotesResponder = null;
-    sampleResponder = null;
+    quoteArgs = null;
+    tokenExists = true;
+    tokenDecimals = 8;
+    marketMetadataExists = false;
+    marketDecimals = 8;
+    jupiterMetadataExists = false;
+    quoteResponder = null;
     stubCloudRun();
-
     console.log = () => undefined;
     console.warn = () => undefined;
     console.error = () => undefined;
@@ -159,7 +191,6 @@ afterEach(() => {
     console.log = ORIGINAL_LOG;
     console.warn = ORIGINAL_WARN;
     console.error = ORIGINAL_ERROR;
-
     for (const key of ENV_KEYS) {
         const value = savedEnv[key];
         if (value === undefined) delete process.env[key];
@@ -187,320 +218,227 @@ async function request(path: string, scopes: string[] = ['execution:read']): Pro
 }
 
 describe('GET /api/v2/execution/evaluate', () => {
-    it('ranks bitcoin variants and recommends the top candidate as primary', async () => {
-        const response = await request('/api/v2/execution/evaluate?asset=bitcoin');
+    it('returns exact Jupiter data for the selected mint with no-store caching', async () => {
+        const response = await request(`/api/v2/execution/evaluate?mint=${MINT}&amountUsd=10000`);
         expect(response.status).toBe(200);
-        expect(response.headers.get('cache-control')).toBe('private, max-age=60');
+        expect(response.headers.get('cache-control')).toBe('no-store');
+        expect(quoteArgs).toEqual({ mint: MINT, side: 'buy', amounts: ['10000'], tokenDecimals: 8 });
 
         const body = await response.json();
-        expect(body.asset.assetId).toBe('bitcoin');
-        expect(body.side).toBe('buy');
-        expect(body.amountUsd).toBeNull();
-        expect(body.primary?.mint).toBe(CBBTC_MINT);
-        expect(body.variants.length).toBeGreaterThan(1);
-        expect(body.variants[0].mint).toBe(CBBTC_MINT);
-        expect(body.variants[0].rank).toBe(1);
-        expect(Array.isArray(body.variants[0].reasons)).toBe(true);
-        expect(body.variants[0].liquidityUsd).toBe(40_000_000);
-        expect(body.variants[0].executionScore).toBe(80);
-        expect(body.variants[0].isFillQualityEligible).toBe(true);
-        expect(body.variants[0].estimatedImpactBps).toBeNull();
-        expect(body.variants[0].sizeAwareScore).toBeNull();
-        expect(body.meta.scoringVersion).toBe('fill-quality-24h-5s-v1');
-        expect(body.meta.strategy).toBe('execution_quality');
-        expect(body.meta.sizeAwareScoringVersion).toBeNull();
-        expect(body.meta.gradingVersion).toBe('impact-grade-v1');
-        // Depth coverage is reported even without amountUsd (scorecard call);
-        // nothing is stubbed here, so no variant has a curve.
-        expect(body.meta.depthSource).toBeNull();
-        expect(body.meta.depthCoverage).toEqual({ withCurves: 0, total: body.variants.length });
-        expect(body.variants[0].ladder).toBeNull();
-        expect(body.variants[0].executionGrade).toBeNull();
-        expect(body.variants[0].reasons).toContain('depth_unavailable');
-
-        // Ranks are contiguous and every variant appears exactly once.
-        const mints = body.variants.map((entry: { mint: string }) => entry.mint);
-        expect(new Set(mints).size).toBe(mints.length);
-        expect(body.variants.map((entry: { rank: number }) => entry.rank)).toEqual(
-            body.variants.map((_: unknown, index: number) => index + 1),
-        );
-    });
-
-    it('returns a graded ladder scorecard without amountUsd', async () => {
-        depthResponder = () => [depthCurveRow(CBBTC_MINT, 60)];
-        const response = await request('/api/v2/execution/evaluate?asset=bitcoin');
-        expect(response.status).toBe(200);
-        const body = await response.json();
-
-        const top = body.variants[0];
-        expect(top.mint).toBe(CBBTC_MINT);
-        // Ladder is graded and sorted ascending by size.
-        expect(top.ladder).toEqual([
-            { sizeUsd: 10_000, impactBps: 0, grade: 'excellent' },
-            { sizeUsd: 100_000, impactBps: 10, grade: 'excellent' },
-            { sizeUsd: 1_000_000, impactBps: 40, grade: 'good' },
-            { sizeUsd: 5_000_000, impactBps: 120, grade: 'fair' },
-        ]);
-        // Amount-gated fields stay null on the scorecard call.
-        expect(top.executionGrade).toBeNull();
-        expect(top.estimatedImpactBps).toBeNull();
-        expect(top.sizeAwareScore).toBeNull();
-        expect(top.reasons).not.toContain('depth_unavailable');
-
-        expect(body.meta.depthSource).toBe('titan');
-        expect(body.meta.sizeLadderUsd).toEqual([10_000, 100_000, 1_000_000, 5_000_000]);
-        expect(body.meta.depthCoverage.withCurves).toBe(1);
-        expect(body.meta.gradingVersion).toBe('impact-grade-v1');
-    });
-
-    it('grades the interpolated amount consistently with the impact reading', async () => {
-        depthResponder = () => [depthCurveRow(CBBTC_MINT, 60)];
-        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000');
-        const body = await response.json();
-        const top = body.variants[0];
-        expect(top.estimatedImpactBps).toBe(40);
-        expect(top.executionGrade).toBe('good');
-
-        const beyond = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=20000000');
-        const beyondTop = (await beyond.json()).variants[0];
-        expect(beyondTop.estimatedImpactBps).toBe(120);
-        expect(beyondTop.executionGrade).toBe('fair');
-        expect(beyondTop.reasons).toContain('beyond_sampled_depth');
-    });
-
-    it('uses live quotes for impact when quotes=live', async () => {
-        depthResponder = () => [depthCurveRow(CBBTC_MINT, 60)];
-        liveQuotesResponder = () => ({
-            source: 'jupiter_lite',
-            quoteMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-            amountUsd: 1_000_000,
-            baselineSizeUsd: 10_000,
-            asOf: 1_800_000_000,
-            entries: [{ mint: CBBTC_MINT, impactBps: 275 }],
-        });
-        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000&quotes=live');
-        expect(response.status).toBe(200);
-        const body = await response.json();
-        const top = body.variants[0];
-        // Live impact (275bps → poor) overrides the sampled interpolation (40bps).
-        expect(top.estimatedImpactBps).toBe(275);
-        expect(top.executionGrade).toBe('poor');
-        expect(top.depthAsOf).toBe(1_800_000_000);
-        expect(top.reasons).not.toContain('live_quote_unavailable');
-        expect(body.meta.quoteMode).toBe('live');
-    });
-
-    it('falls back to sampled per variant when a live quote is missing', async () => {
-        depthResponder = () => [depthCurveRow(CBBTC_MINT, 60)];
-        liveQuotesResponder = () => ({
-            source: 'jupiter_lite',
-            quoteMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-            amountUsd: 1_000_000,
-            baselineSizeUsd: 10_000,
-            asOf: 1_800_000_000,
-            entries: [{ mint: CBBTC_MINT, impactBps: null }],
-        });
-        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000&quotes=live');
-        const body = await response.json();
-        const top = body.variants[0];
-        expect(top.estimatedImpactBps).toBe(40); // sampled interpolation
-        expect(top.reasons).toContain('live_quote_unavailable');
-        expect(body.meta.quoteMode).toBe('sampled'); // no live quote actually used
-    });
-
-    it('degrades to sampled when the live query fails entirely', async () => {
-        depthResponder = () => [depthCurveRow(CBBTC_MINT, 60)];
-        liveQuotesResponder = () => {
-            throw new Error('live quotes down');
-        };
-        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000&quotes=live');
-        expect(response.status).toBe(200);
-        const body = await response.json();
-        expect(body.variants[0].estimatedImpactBps).toBe(40);
-        expect(body.meta.quoteMode).toBe('sampled');
-    });
-
-    it('rejects an unknown quotes mode and ignores live without an amount', async () => {
-        const bad = await request('/api/v2/execution/evaluate?asset=bitcoin&quotes=instant');
-        expect(bad.status).toBe(400);
-
-        depthResponder = () => [depthCurveRow(CBBTC_MINT, 60)];
-        const noAmount = await request('/api/v2/execution/evaluate?asset=bitcoin&quotes=live');
-        expect(noAmount.status).toBe(200);
-        expect((await noAmount.json()).meta.quoteMode).toBe('sampled');
-    });
-
-    it('reports no_route for a sampled variant with an empty ladder', async () => {
-        depthResponder = () => [
-            {
-                mint: CBBTC_MINT,
-                depthCurve: {
-                    mint: CBBTC_MINT,
-                    quoteMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-                    side: 'buy',
-                    source: 'titan',
-                    ladder: [],
-                    points: 0,
-                    failedPoints: 4,
-                    asOf: Math.floor(Date.now() / 1000) - 60,
-                    lastComputedAt: Date.now(),
-                },
+        expect({ mint: body.mint, side: body.side, providers: body.providers, token: body.token, meta: body.meta }).toEqual({
+            mint: MINT,
+            side: 'buy',
+            providers: ['jupiter', 'titan'],
+            token: { mint: MINT, symbol: 'cbBTC', name: 'Coinbase Wrapped BTC', decimals: 8 },
+            meta: {
+                requested: 1,
+                available: 1,
+                unavailable: 0,
+                providerStats: { jupiter: { available: 1, wins: 1 }, titan: { available: 0, wins: 0 } },
             },
-        ];
-        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000');
-        const body = await response.json();
-        const top = body.variants[0];
-        expect(top.reasons).toContain('no_route');
-        expect(top.reasons).not.toContain('depth_unavailable');
-        expect(top.ladder).toEqual([]);
-        expect(top.estimatedImpactBps).toBeNull();
-        // Sampled-but-untradable counts as coverage; the ladder meta comes only
-        // from curves that actually have rungs.
-        expect(body.meta.depthCoverage.withCurves).toBe(1);
-        expect(body.meta.sizeLadderUsd).toBeNull();
+        });
+        expect({
+            request: body.quotes[0].request,
+            provider: body.quotes[0].provider,
+            input: body.quotes[0].input,
+            output: body.quotes[0].output,
+            priceImpactPct: body.quotes[0].priceImpactPct,
+            contextSlot: body.quotes[0].contextSlot,
+            quotedAt: body.quotes[0].quotedAt,
+        }).toEqual({
+            request: { unit: 'usd', amount: '10000', rawAmount: '10000000000' },
+            provider: 'jupiter',
+            input: { mint: USDC, symbol: 'USDC', decimals: 6, amount: '10000', rawAmount: '10000000000' },
+            output: {
+                mint: MINT,
+                symbol: 'cbBTC',
+                decimals: 8,
+                amount: '1234567890.12345678',
+                rawAmount: '123456789012345678',
+            },
+            priceImpactPct: 0.42,
+            contextSlot: 123,
+            quotedAt: '2026-08-22T12:34:56.000Z',
+        });
+        expect(body.quotes[0].candidates.map((candidate: { provider: string; status: string }) => ({
+            provider: candidate.provider,
+            status: candidate.status,
+        }))).toEqual([
+            { provider: 'jupiter', status: 'available' },
+            { provider: 'titan', status: 'unavailable' },
+        ]);
     });
 
-    it('samples uncovered mints on demand with sample=missing', async () => {
-        let depthCalls = 0;
-        depthResponder = () => {
-            depthCalls += 1;
-            // First fetch: nothing stored. Refetch after sampling: cbBTC covered.
-            return depthCalls === 1 ? [] : [depthCurveRow(CBBTC_MINT, 5)];
-        };
-        let sampledMints: unknown = null;
-        sampleResponder = () => {
-            sampledMints = true;
-            return { source: 'jupiter_lite', sampled: [CBBTC_MINT], skippedFresh: [], failed: [] };
-        };
-        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&sample=missing');
+    it('serializes a Titan winner and mixed-provider statistics', async () => {
+        const entry = availableEntry('25000', '25000000000');
+        const titan = {
+            ...entry.candidates[0],
+            provider: 'titan',
+            outAmountRaw: '123456789012345679',
+            priceImpactPct: null,
+            quotedAt: '2026-08-22T12:34:56.100Z',
+        } as const;
+        quoteResponder = () => ({
+            providers: ['jupiter', 'titan'],
+            mint: MINT,
+            side: 'buy',
+            quoteMint: USDC,
+            entries: [
+                {
+                    ...entry,
+                    provider: 'titan',
+                    outAmountRaw: titan.outAmountRaw,
+                    priceImpactPct: null,
+                    quotedAt: titan.quotedAt,
+                    candidates: [entry.candidates[0], titan],
+                },
+            ],
+        });
+
+        const body = await (await request(`/api/v2/execution/evaluate?mint=${MINT}&amountUsd=25000`)).json();
+        expect({ provider: body.quotes[0].provider, priceImpactPct: body.quotes[0].priceImpactPct }).toEqual({
+            provider: 'titan',
+            priceImpactPct: null,
+        });
+        expect(body.quotes[0].output.rawAmount).toBe('123456789012345679');
+        expect(body.quotes[0].candidates.map((candidate: { provider: string }) => candidate.provider)).toEqual([
+            'jupiter',
+            'titan',
+        ]);
+        expect(body.meta.providerStats).toEqual({
+            jupiter: { available: 1, wins: 0 },
+            titan: { available: 1, wins: 1 },
+        });
+    });
+
+    it('accepts repeated buy amounts, normalizes and dedupes them', async () => {
+        const response = await request(
+            `/api/v2/execution/evaluate?mint=${MINT}&side=buy&amountUsd=10000&amountUsd=25000&amountUsd=10000.0`,
+        );
         expect(response.status).toBe(200);
-        const body = await response.json();
-        expect(sampledMints).toBe(true);
-        expect(depthCalls).toBe(2);
-        expect(body.meta.depthCoverage.withCurves).toBe(1);
-        expect(body.variants[0].ladder?.length).toBe(4);
+        expect(quoteArgs?.amounts).toEqual(['10000', '25000']);
     });
 
-    it('degrades gracefully when on-demand sampling fails', async () => {
-        depthResponder = () => [];
-        sampleResponder = () => {
-            throw new Error('sampler down');
-        };
-        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&sample=missing');
+    it('supports exact token sells and reverses the formatted pair', async () => {
+        quoteResponder = () => ({
+            providers: ['jupiter', 'titan'],
+            mint: MINT,
+            side: 'sell',
+            quoteMint: USDC,
+            entries: [
+                {
+                    ...availableEntry('12.5', '1250000000'),
+                    request: { unit: 'token', amount: '12.5', rawAmount: '1250000000' },
+                    inAmountRaw: '1250000000',
+                    outAmountRaw: '987654321',
+                },
+            ],
+        });
+        const response = await request(`/api/v2/execution/evaluate?mint=${MINT}&side=sell&tokenAmount=12.5`);
         expect(response.status).toBe(200);
+        expect(quoteArgs).toEqual({ mint: MINT, side: 'sell', amounts: ['12.5'], tokenDecimals: 8 });
         const body = await response.json();
-        expect(body.meta.depthCoverage.withCurves).toBe(0);
+        expect({ mint: body.quotes[0].input.mint, symbol: body.quotes[0].input.symbol, amount: body.quotes[0].input.amount }).toEqual({ mint: MINT, symbol: 'cbBTC', amount: '12.5' });
+        expect({ mint: body.quotes[0].output.mint, symbol: body.quotes[0].output.symbol, amount: body.quotes[0].output.amount }).toEqual({ mint: USDC, symbol: 'USDC', amount: '987.654321' });
     });
 
-    it('nulls the ladder for stale curves even without amountUsd', async () => {
-        depthResponder = () => [depthCurveRow(CBBTC_MINT, 7 * 60 * 60)];
-        const response = await request('/api/v2/execution/evaluate?asset=bitcoin');
+    it('preserves unavailable rows without substituting a quote', async () => {
+        quoteResponder = () => ({
+            providers: ['jupiter', 'titan'],
+            mint: MINT,
+            side: 'buy',
+            quoteMint: USDC,
+            entries: [
+                {
+                    request: { unit: 'usd', amount: '5000000', rawAmount: '5000000000000' },
+                    status: 'unavailable',
+                    reason: 'quote_unavailable',
+                    provider: null,
+                    inAmountRaw: null,
+                    outAmountRaw: null,
+                    priceImpactPct: null,
+                    route: [],
+                    contextSlot: null,
+                    quotedAt: '2026-08-22T12:34:56.000Z',
+                    candidates: [
+                        {
+                            provider: 'jupiter',
+                            status: 'unavailable',
+                            reason: 'quote_unavailable',
+                            inAmountRaw: null,
+                            outAmountRaw: null,
+                            priceImpactPct: null,
+                            route: [],
+                            contextSlot: null,
+                            quotedAt: '2026-08-22T12:34:56.000Z',
+                        },
+                        {
+                            provider: 'titan',
+                            status: 'unavailable',
+                            reason: 'quote_unavailable',
+                            inAmountRaw: null,
+                            outAmountRaw: null,
+                            priceImpactPct: null,
+                            route: [],
+                            contextSlot: null,
+                            quotedAt: '2026-08-22T12:34:56.000Z',
+                        },
+                    ],
+                },
+            ],
+        });
+        const response = await request(`/api/v2/execution/evaluate?mint=${MINT}&amountUsd=5000000`);
         const body = await response.json();
-        expect(body.variants[0].ladder).toBeNull();
-        expect(body.variants[0].reasons).toContain('depth_unavailable');
-        expect(body.meta.depthCoverage.withCurves).toBe(0);
+        expect({ status: body.quotes[0].status, input: body.quotes[0].input, output: body.quotes[0].output }).toEqual({ status: 'unavailable', input: null, output: null });
+        expect(body.meta).toEqual({
+            requested: 1,
+            available: 0,
+            unavailable: 1,
+            providerStats: { jupiter: { available: 0, wins: 0 }, titan: { available: 0, wins: 0 } },
+        });
     });
 
-    it('populates informational depth fields from a fresh curve without reordering', async () => {
-        depthResponder = () => [depthCurveRow(CBBTC_MINT, 60)];
-        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000');
-        expect(response.status).toBe(200);
-        const body = await response.json();
-
-        const top = body.variants[0];
-        expect(top.mint).toBe(CBBTC_MINT); // ordering unchanged (informational-only)
-        expect(top.estimatedImpactBps).toBe(40);
-        expect(top.estimatedOutUsd).toBe(996_000);
-        expect(top.sizeAwareScore).not.toBeNull();
-        expect(top.depthAsOf).toBeGreaterThan(0);
-        expect(top.reasons).not.toContain('depth_unavailable');
-
-        const second = body.variants[1];
-        expect(second.estimatedImpactBps).toBeNull();
-        expect(second.reasons).toContain('depth_unavailable');
-
-        expect(body.meta.depthSource).toBe('titan');
-        expect(body.meta.sizeLadderUsd).toEqual([10_000, 100_000, 1_000_000, 5_000_000]);
-        expect(body.meta.depthCoverage.withCurves).toBe(1);
-        expect(body.meta.sizeAwareScoringVersion).toBeNull(); // informational phase
-        expect(body.meta.strategy).toBe('execution_quality');
+    it('validates mint, side-specific amounts, precision, range, and batch size', async () => {
+        expect((await request('/api/v2/execution/evaluate')).status).toBe(400);
+        expect((await request('/api/v2/execution/evaluate?mint=bad&amountUsd=10')).status).toBe(400);
+        expect((await request(`/api/v2/execution/evaluate?mint=${MINT}`)).status).toBe(400);
+        expect((await request(`/api/v2/execution/evaluate?mint=${MINT}&side=buy&tokenAmount=1`)).status).toBe(400);
+        expect((await request(`/api/v2/execution/evaluate?mint=${MINT}&side=sell&amountUsd=1`)).status).toBe(400);
+        expect((await request(`/api/v2/execution/evaluate?mint=${MINT}&amountUsd=0.5`)).status).toBe(400);
+        expect((await request(`/api/v2/execution/evaluate?mint=${MINT}&amountUsd=50000001`)).status).toBe(400);
+        expect((await request(`/api/v2/execution/evaluate?mint=${MINT}&side=sell&tokenAmount=1.000000001`)).status).toBe(
+            400,
+        );
+        const ten = Array.from({ length: 10 }, (_, index) => `amountUsd=${index + 1}`).join('&');
+        expect((await request(`/api/v2/execution/evaluate?mint=${MINT}&${ten}`)).status).toBe(400);
     });
 
-    it('flags extrapolation above the sampled ladder', async () => {
-        depthResponder = () => [depthCurveRow(CBBTC_MINT, 60)];
-        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=20000000');
-        const body = await response.json();
-        const top = body.variants[0];
-        expect(top.estimatedImpactBps).toBe(120);
-        expect(top.reasons).toContain('beyond_sampled_depth');
-    });
-
-    it('treats stale curves as absent', async () => {
-        depthResponder = () => [depthCurveRow(CBBTC_MINT, 7 * 60 * 60)];
-        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000');
-        const body = await response.json();
-        expect(body.variants[0].estimatedImpactBps).toBeNull();
-        expect(body.variants[0].reasons).toContain('depth_unavailable');
-        expect(body.meta.depthCoverage.withCurves).toBe(0);
-        expect(body.meta.depthSource).toBeNull();
-    });
-
-    it('degrades to depth_unavailable when the depth read fails', async () => {
-        depthResponder = () => {
-            throw new Error('depth read down');
-        };
-        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000');
-        expect(response.status).toBe(200);
-        const body = await response.json();
-        expect(body.variants[0].estimatedImpactBps).toBeNull();
-        expect(body.variants[0].reasons).toContain('depth_unavailable');
-    });
-
-    it('marks every variant depth_unavailable when amountUsd is given (Phase A)', async () => {
-        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000');
-        expect(response.status).toBe(200);
-        const body = await response.json();
-        expect(body.amountUsd).toBe(1_000_000);
-        expect(body.meta.depthCoverage).toEqual({ withCurves: 0, total: body.variants.length });
-        for (const entry of body.variants) {
-            expect(entry.reasons).toContain('depth_unavailable');
-            expect(entry.estimatedImpactBps).toBeNull();
-        }
-    });
-
-    it('clamps amountUsd to the supported range', async () => {
-        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=999999999');
-        const body = await response.json();
-        expect(body.amountUsd).toBe(50_000_000);
-    });
-
-    it('accepts side=sell and defaults side to buy', async () => {
-        const sell = await request('/api/v2/execution/evaluate?asset=bitcoin&side=sell');
-        expect((await sell.json()).side).toBe('sell');
-
-        const invalid = await request('/api/v2/execution/evaluate?asset=bitcoin&side=hold');
-        expect(invalid.status).toBe(400);
-    });
-
-    it('rejects a non-positive amountUsd', async () => {
-        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=-5');
-        expect(response.status).toBe(400);
-    });
-
-    it('requires the asset param', async () => {
-        const response = await request('/api/v2/execution/evaluate');
-        expect(response.status).toBe(400);
-    });
-
-    it('404s for an unknown asset', async () => {
-        const response = await request('/api/v2/execution/evaluate?asset=not-a-real-asset');
+    it('returns 404 for unsupported token metadata', async () => {
+        tokenExists = false;
+        const response = await request(`/api/v2/execution/evaluate?mint=${MINT}&amountUsd=10000`);
         expect(response.status).toBe(404);
-        const body = await response.json();
-        expect(body.error._tag).toBe('NotFoundError');
     });
 
-    it('403s without the execution:read scope', async () => {
-        const response = await request('/api/v2/execution/evaluate?asset=bitcoin', ['assets:read']);
+    it('uses authoritative variant-market decimals when the token row is absent', async () => {
+        tokenExists = false;
+        marketMetadataExists = true;
+        const response = await request(`/api/v2/execution/evaluate?mint=${MINT}&amountUsd=10000`);
+        expect(response.status).toBe(200);
+        expect(quoteArgs).toEqual({ mint: MINT, side: 'buy', amounts: ['10000'], tokenDecimals: 8 });
+    });
+
+    it('falls back to Jupiter token metadata when local rows omit decimals', async () => {
+        tokenExists = false;
+        marketMetadataExists = true;
+        marketDecimals = null;
+        jupiterMetadataExists = true;
+        const response = await request(`/api/v2/execution/evaluate?mint=${MINT}&amountUsd=10000`);
+        expect(response.status).toBe(200);
+        expect(quoteArgs).toEqual({ mint: MINT, side: 'buy', amounts: ['10000'], tokenDecimals: 8 });
+    });
+
+    it('retains the execution:read scope', async () => {
+        const response = await request(`/api/v2/execution/evaluate?mint=${MINT}&amountUsd=10000`, ['assets:read']);
         expect(response.status).toBe(403);
     });
 });

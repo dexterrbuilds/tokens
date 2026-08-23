@@ -6,6 +6,7 @@ import {
     makeBirdeyeOhlcvClient,
     makeClickhouseClient,
     makeCoingeckoClient,
+    makeJupiterExactQuoteClient,
     makeJupiterQuoteClient,
     makePreStocksClient,
     makeRwaXyzClient,
@@ -13,6 +14,7 @@ import {
     makeTitanQuoteClient,
     makeWebacyClient,
 } from './clients';
+import { makeTitanRestQuoteClient } from './titanRestClient';
 import { parseAdminClerkUserIds, parseAdminEmails } from './adminAuth';
 import {
     getSql,
@@ -254,18 +256,33 @@ if (titanWsUrl && titanApiKey) {
     console.warn('[cloudrun-assets] TITAN_WS_URL/TITAN_API_KEY not set — depth /jobs/* disabled');
 }
 
-// Live quote reads (executionQuotesLive): Titan when configured, otherwise
-// Jupiter — which works keyless on the lite tier, so this is always available.
+const jupiterApiKey = process.env.JUPITER_API_KEY?.trim();
+
+let titanRestQuoteSource: ReturnType<typeof makeTitanRestQuoteClient> | undefined;
+if (titanApiKey) {
+    try {
+        titanRestQuoteSource = makeTitanRestQuoteClient({
+            authToken: titanApiKey,
+            ...(process.env.TITAN_REST_BASE_URL?.trim()
+                ? { baseUrl: process.env.TITAN_REST_BASE_URL.trim() }
+                : {}),
+            ...(process.env.TITAN_QUOTE_USER_PUBLIC_KEY?.trim()
+                ? { userPublicKey: process.env.TITAN_QUOTE_USER_PUBLIC_KEY.trim() }
+                : {}),
+        });
+    } catch (error) {
+        console.warn('[cloudrun-assets] Titan REST comparison disabled:', error);
+    }
+}
+
+// Live comparison is separate from the sampled depth source and its WebSocket.
 const liveQuoteDeps: LiveQuoteDeps = {
-    quoteSource: depthCronDeps
-        ? depthCronDeps.quoteSource
-        : makeJupiterQuoteClient(
-              process.env.JUPITER_API_KEY?.trim() ? { apiKey: process.env.JUPITER_API_KEY.trim() } : {},
-          ),
+    jupiterQuoteSource: makeJupiterExactQuoteClient(jupiterApiKey ? { apiKey: jupiterApiKey } : {}),
+    ...(titanRestQuoteSource ? { titanQuoteSource: titanRestQuoteSource } : {}),
     now: () => Date.now(),
 };
 const depthSampleDeps: DepthSampleDeps = {
-    quoteSource: liveQuoteDeps.quoteSource,
+    quoteSource: depthCronDeps?.quoteSource ?? makeJupiterQuoteClient(jupiterApiKey ? { apiKey: jupiterApiKey } : {}),
     curvesRepo: makePostgresDepthCurvesRepo(sql),
     readsRepo: makePostgresDepthCurveReadsRepo(sql),
     now: () => Date.now(),

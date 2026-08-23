@@ -141,6 +141,7 @@
       "name": "@tokens/cloudrun-assets",
       "version": "0.0.0",
       "dependencies": {
+        "@msgpack/msgpack": "3.1.3",
         "@titanexchange/sdk-ts": "0.1.5",
         "@tokens/asset-registry": "workspace:*",
         "@tokens/cloudrun-shutdown": "workspace:*",

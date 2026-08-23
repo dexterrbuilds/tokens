@@ -5,6 +5,7 @@ import { fetchJsonWithRetry } from '@tokens/effect';
 import { decodeUpstreamOrWarn } from '@tokens/effect/schema';
 import { withExternalTiming } from './externalTiming';
 import type { DepthQuote, DepthQuoteClient } from './handlers/crons.depth';
+import type { ExactQuote, ExecutionRouteStep, JupiterExactQuoteClient } from './handlers/liveQuotes';
 import type {
     BirdeyeClient,
     BirdeyeInterval,
@@ -269,7 +270,7 @@ export function makeWebacyClient(opts: MakeWebacyOptions): WebacyClient {
     };
 }
 
-function toFiniteNumberOrNull(value: unknown): number | null {
+function jupiterFiniteNumber(value: unknown): number | null {
     if (typeof value === 'number' && Number.isFinite(value)) return value;
     if (typeof value === 'string') {
         const parsed = Number(value);
@@ -1191,6 +1192,8 @@ const JupiterQuoteEnvelopeSchema = Schema.Struct({
     errorCode: Schema.optionalKey(Schema.Unknown),
 });
 
+const JupiterTokenSearchEnvelopeSchema = Schema.Array(Schema.Unknown);
+
 function toFinitePositiveNumber(value: unknown): number | null {
     const parsed =
         typeof value === 'number'
@@ -1201,6 +1204,50 @@ function toFinitePositiveNumber(value: unknown): number | null {
                 ? Number(value)
                 : NaN;
     return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function toFiniteNumberOrNull(value: unknown): number | null {
+    const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toPositiveIntegerString(value: unknown): string | null {
+    if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'bigint') return null;
+    const raw = String(value);
+    return /^\d+$/.test(raw) && BigInt(raw) > 0n ? raw : null;
+}
+
+function toNonNegativeIntegerString(value: unknown): string | null {
+    if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'bigint') return null;
+    const raw = String(value);
+    return /^\d+$/.test(raw) ? raw : null;
+}
+
+function toStringOrNull(value: unknown): string | null {
+    return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function parseJupiterRoutePlan(value: unknown): ExecutionRouteStep[] {
+    if (!Array.isArray(value)) return [];
+    return value.map(step => {
+        const record = step !== null && typeof step === 'object' ? (step as Record<string, unknown>) : {};
+        const swapInfoRaw = record.swapInfo;
+        const swapInfo =
+            swapInfoRaw !== null && typeof swapInfoRaw === 'object'
+                ? (swapInfoRaw as Record<string, unknown>)
+                : {};
+        return {
+            ammKey: toStringOrNull(swapInfo.ammKey),
+            label: toStringOrNull(swapInfo.label),
+            percent: jupiterFiniteNumber(record.percent),
+            inputMint: toStringOrNull(swapInfo.inputMint),
+            outputMint: toStringOrNull(swapInfo.outputMint),
+            inAmountRaw: toPositiveIntegerString(swapInfo.inAmount),
+            outAmountRaw: toPositiveIntegerString(swapInfo.outAmount),
+            feeAmountRaw: toNonNegativeIntegerString(swapInfo.feeAmount),
+            feeMint: toStringOrNull(swapInfo.feeMint),
+        };
+    });
 }
 
 interface MakeJupiterQuoteOptions {
@@ -1266,6 +1313,76 @@ export function makeJupiterQuoteClient(opts: MakeJupiterQuoteOptions = {}): Dept
         },
         async close(): Promise<void> {
             // HTTP client: nothing to release.
+        },
+    };
+}
+
+/** Jupiter-only exact quote transport for the uncached execution evaluator. */
+export function makeJupiterExactQuoteClient(opts: MakeJupiterQuoteOptions = {}): JupiterExactQuoteClient {
+    const baseUrl = (opts.baseUrl ?? (opts.apiKey ? 'https://api.jup.ag' : 'https://lite-api.jup.ag')).replace(
+        /\/+$/,
+        '',
+    );
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (opts.apiKey) headers['x-api-key'] = opts.apiKey;
+
+    return {
+        id: 'jupiter',
+        async fetchTokenMetadata(mint) {
+            const url = `${baseUrl}/tokens/v2/search?query=${encodeURIComponent(mint)}`;
+            const json = await Effect.runPromise(
+                fetchJsonWithRetry<unknown[]>({
+                    url,
+                    service: 'jupiter',
+                    init: { headers },
+                    maxRetries: 2,
+                    timeout: '15 seconds',
+                    schema: JupiterTokenSearchEnvelopeSchema,
+                }),
+            );
+            const match = json.find(item => {
+                if (item === null || typeof item !== 'object') return false;
+                return (item as Record<string, unknown>).id === mint;
+            });
+            if (match === null || typeof match !== 'object') return null;
+            const fields = match as Record<string, unknown>;
+            const decimals = toFiniteNumberOrNull(fields.decimals);
+            if (decimals === null || !Number.isInteger(decimals) || decimals < 0 || decimals > 255) return null;
+            return {
+                mint,
+                symbol: toStringOrNull(fields.symbol) ?? mint.slice(0, 4),
+                name: toStringOrNull(fields.name) ?? toStringOrNull(fields.symbol) ?? mint,
+                decimals,
+            };
+        },
+        async fetchQuote(args): Promise<ExactQuote | null> {
+            const url =
+                `${baseUrl}/swap/v1/quote?inputMint=${encodeURIComponent(args.inputMint)}` +
+                `&outputMint=${encodeURIComponent(args.outputMint)}` +
+                `&amount=${encodeURIComponent(args.amountRaw)}` +
+                '&slippageBps=50';
+            const json = await Effect.runPromise(
+                fetchJsonWithRetry<Record<string, unknown> | null>({
+                    url,
+                    service: 'jupiter',
+                    init: { headers },
+                    maxRetries: 2,
+                    timeout: '15 seconds',
+                    schema: JupiterQuoteEnvelopeSchema,
+                }).pipe(Effect.catchTag('UpstreamHttpError', () => Effect.succeed(null))),
+            );
+            if (!json) return null;
+            const inAmountRaw = toPositiveIntegerString(json.inAmount);
+            const outAmountRaw = toPositiveIntegerString(json.outAmount);
+            if (!inAmountRaw || !outAmountRaw) return null;
+            const contextSlot = toFinitePositiveNumber(json.contextSlot);
+            return {
+                inAmountRaw,
+                outAmountRaw,
+                priceImpactPct: jupiterFiniteNumber(json.priceImpactPct),
+                route: parseJupiterRoutePlan(json.routePlan),
+                contextSlot,
+            };
         },
     };
 }

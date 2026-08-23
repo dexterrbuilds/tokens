@@ -131,6 +131,7 @@ import {
 } from './handlers/depthCurveReads';
 import {
     depthSampleMints,
+    executionQuoteTokenMetadata,
     executionQuotesLive,
     type DepthSampleDeps,
     type LiveQuoteDeps,
@@ -444,6 +445,11 @@ export function createApp(deps: ServerDeps) {
         const liveQuoteDeps = deps.liveQuoteDeps;
         if (!liveQuoteDeps) throw new InvalidArgsError('live quotes are not configured on this service');
         return executionQuotesLive(liveQuoteDeps, args);
+    };
+    queries.executionQuoteTokenMetadata = args => {
+        const liveQuoteDeps = deps.liveQuoteDeps;
+        if (!liveQuoteDeps) throw new InvalidArgsError('live quotes are not configured on this service');
+        return executionQuoteTokenMetadata(liveQuoteDeps, args);
     };
     queries.assetCollectionsGetMembers = args => assetCollectionsGetMembers(deps.assetCollectionsReadsRepo, args);
     queries.assetCollectionsGetMemberMints = args =>

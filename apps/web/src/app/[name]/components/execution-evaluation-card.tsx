@@ -1,394 +1,294 @@
 'use client';
 
 import * as React from 'react';
-import { Info } from 'lucide-react';
+import { ChevronDown, Info } from 'lucide-react';
 
-import { Input } from '@tokens/ui/input';
 import { Tooltip } from '@solana/design-system/tooltip';
+import { Alert, AlertDescription, AlertTitle } from '@tokens/ui/alert';
 
-import { trackEvent } from '@/lib/posthog-client';
-import {
-    bucketAmountUsd,
-    clampAmountUsd,
-    useExecutionEvaluation,
-    type ExecutionEvaluationVariant,
-    type ImpactGrade,
+import type {
+    ExecutionEvaluationResponse,
+    ExecutionQuoteCandidate,
+    ExecutionQuoteProvider,
+    ExecutionQuoteRouteStep,
+    ExecutionQuoteSide,
 } from '@/hooks/queries/use-execution-evaluation';
+import { formatJupiterPriceImpact, fullJupiterPriceImpact } from '@/lib/execution-quote-format';
 
-const GRADE_LETTER: Record<ImpactGrade, string> = {
-    excellent: 'A',
-    good: 'B',
-    fair: 'C',
-    poor: 'D',
-    avoid: 'F',
-};
-
-// Mirrors the token page's badge tones (asset-stats-section BADGE_TONE_CLASSES).
-const GRADE_CLASSES: Record<ImpactGrade, string> = {
-    excellent: 'bg-green-50 text-green-800',
-    good: 'bg-green-50 text-green-800',
-    fair: 'bg-[#F2F3F5] text-text-medium',
-    poor: 'bg-red-50 text-red-800',
-    avoid: 'bg-red-50 text-red-800',
-};
-
-const STALE_AFTER_SECONDS = 30 * 60;
-const AMOUNT_DEBOUNCE_MS = 400;
-
-function formatSizeLabel(sizeUsd: number): string {
-    if (sizeUsd >= 1_000_000) {
-        const millions = sizeUsd / 1_000_000;
-        return `$${Number.isInteger(millions) ? millions : millions.toFixed(1)}M`;
+function formatRequestedAmount(amount: string, side: ExecutionQuoteSide): string {
+    const numeric = Number(amount);
+    if (side === 'sell') return amount;
+    if (!Number.isFinite(numeric)) return `$${amount}`;
+    if (numeric >= 1_000_000) {
+        const millions = numeric / 1_000_000;
+        return `$${Number.isInteger(millions) ? millions : millions.toFixed(2)}M`;
     }
-    return `$${Math.round(sizeUsd / 1_000)}K`;
+    if (numeric >= 1_000) return `$${numeric / 1_000}K`;
+    return `$${numeric.toLocaleString('en-US')}`;
 }
 
-function formatImpact(bps: number): string {
-    const percent = bps / 100;
-    if (percent >= 10) return `${Math.round(percent)}%`;
-    if (percent >= 1) return `${percent.toFixed(1)}%`;
-    return `${percent.toFixed(2)}%`;
+function formatTokenAmount(amount: string): string {
+    const numeric = Number(amount);
+    if (!Number.isFinite(numeric)) return amount;
+    return new Intl.NumberFormat('en-US', {
+        maximumFractionDigits: numeric < 1 ? 8 : numeric < 1_000 ? 6 : 2,
+    }).format(numeric);
 }
 
-/** Impact expressed as what it costs in dollars at a given trade size. */
-function formatImpactCost(sizeUsd: number, impactBps: number): string {
-    const cost = (sizeUsd * impactBps) / 10_000;
-    if (cost < 1) return '<$1';
-    if (cost < 1_000) return `−$${Math.round(cost)}`;
-    if (cost < 1_000_000) return `−$${(cost / 1_000).toFixed(cost < 10_000 ? 1 : 0)}K`;
-    return `−$${(cost / 1_000_000).toFixed(2)}M`;
+function providerLabel(provider: ExecutionQuoteProvider): string {
+    return provider === 'titan' ? 'Titan' : 'Jupiter';
 }
 
-function formatUsdCompact(value: number): string {
-    return value.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
-}
-
-function parseAmountInput(raw: string): number | null {
-    const digits = raw.replace(/[^0-9.]/g, '');
-    if (!digits) return null;
-    const parsed = Number(digits);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
-
-function GradeChip({ grade, label }: { grade: ImpactGrade; label?: string }) {
+function ProviderBadge({ provider }: { provider: ExecutionQuoteProvider }) {
+    const color =
+        provider === 'titan'
+            ? 'border-violet-200 bg-violet-50 text-violet-800'
+            : 'border-emerald-200 bg-emerald-50 text-emerald-800';
     return (
-        <span
-            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold leading-none tabular-nums ${GRADE_CLASSES[grade]}`}
-        >
-            <span>{GRADE_LETTER[grade]}</span>
-            {label ? <span className="font-normal opacity-70">{label}</span> : null}
+        <span className={`inline-flex shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${color}`}>
+            {providerLabel(provider)}
         </span>
     );
 }
 
-function variantLabel(variant: ExecutionEvaluationVariant): string {
-    return variant.symbol ?? variant.name ?? `${variant.mint.slice(0, 4)}…`;
+function routeLabel(route: ExecutionQuoteRouteStep[], provider: ExecutionQuoteProvider): string {
+    const labels = route.map(step => step.label).filter((label): label is string => Boolean(label));
+    return labels.length > 0 ? labels.join(' → ') : `${providerLabel(provider)} route`;
 }
 
-/**
- * Pre-trade depth evaluation for the active asset, backed by
- * `GET /v2/execution/evaluate`.
- *
- * Two modes, both visible at once: a scorecard grading every sampled size
- * rung on page load, and an amount input that evaluates an arbitrary size.
- * The card renders nothing until a response with real depth coverage arrives,
- * so pages for unsampled assets are unchanged (progressive enhancement).
- */
-export function ExecutionEvaluationCard({
-    assetId,
-    activeMint,
-    verbose = false,
-}: {
-    assetId: string;
-    activeMint?: string | null;
-    /** Standalone use (e.g. /evaluation): show loading and error states instead of rendering nothing. */
-    verbose?: boolean;
-}) {
-    const [amountInput, setAmountInput] = React.useState('');
-    const [debouncedAmount, setDebouncedAmount] = React.useState<number | null>(null);
-
-    React.useEffect(() => {
-        const parsed = parseAmountInput(amountInput);
-        const timer = setTimeout(() => {
-            setDebouncedAmount(parsed === null ? null : bucketAmountUsd(clampAmountUsd(parsed)));
-        }, AMOUNT_DEBOUNCE_MS);
-        return () => clearTimeout(timer);
-    }, [amountInput]);
-
-    const scorecard = useExecutionEvaluation(assetId);
-    // First visit to an unsampled asset: ask the API to sample it on demand
-    // (persisted server-side, so only the first visitor waits).
-    const needsSample = scorecard.data
-        ? scorecard.data.meta.depthCoverage.withCurves === 0 && scorecard.data.variants.length > 0
-        : false;
-    const sampledScorecard = useExecutionEvaluation(assetId, { sample: true, enabled: needsSample });
-    const sized = useExecutionEvaluation(assetId, {
-        amountUsd: debouncedAmount,
-        live: true,
-        enabled: debouncedAmount !== null,
+function routeDetails(route: ExecutionQuoteRouteStep[], contextSlot: number | null): string {
+    const steps = route.map((step, index) => {
+        const percent = step.percent === null ? '' : ` (${step.percent}%)`;
+        return `${index + 1}. ${step.label ?? 'Unknown venue'}${percent}\n${step.inputMint ?? '—'} → ${step.outputMint ?? '—'}`;
     });
+    if (contextSlot !== null) steps.push(`Context slot: ${contextSlot}`);
+    return steps.join('\n\n');
+}
 
-    const data = needsSample && sampledScorecard.data ? sampledScorecard.data : scorecard.data;
-    const hasDepth = (data?.meta.depthCoverage.withCurves ?? 0) > 0;
-    const isSampling = needsSample && sampledScorecard.isPending;
+function formatQuoteTime(value: string): string {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' }).format(date);
+}
 
-    const trackedRef = React.useRef(false);
-    React.useEffect(() => {
-        if (!data || !hasDepth || trackedRef.current) return;
-        trackedRef.current = true;
-        trackEvent('execution_eval_viewed', {
-            asset_id: data.asset.assetId,
-            depth_coverage: data.meta.depthCoverage.withCurves,
-            variant_count: data.meta.depthCoverage.total,
-            depth_source: data.meta.depthSource,
-        });
-    }, [data, hasDepth]);
-
-    const lastTrackedAmount = React.useRef<number | null>(null);
-    const sizedVariants = sized.data?.variants;
-    React.useEffect(() => {
-        if (debouncedAmount === null || !sizedVariants) return;
-        if (lastTrackedAmount.current === debouncedAmount) return;
-        lastTrackedAmount.current = debouncedAmount;
-        const graded = sizedVariants.find(variant => variant.executionGrade !== null);
-        trackEvent('execution_eval_amount_submitted', {
-            asset_id: assetId,
-            amount_bucket: debouncedAmount,
-            grade: graded?.executionGrade ?? null,
-        });
-    }, [assetId, debouncedAmount, sizedVariants]);
-
-    if (!data) {
-        if (!verbose) return null;
+function ImpactValue({ provider, value }: { provider: ExecutionQuoteProvider; value: number | null }) {
+    if (provider === 'titan') {
         return (
-            <section className="rounded-2xl border border-border-light bg-white p-4 shadow-[0_8px_40px_rgba(0,0,0,0.03)]">
-                <h2 className="text-title-sm text-text-extra-high">Execution quality</h2>
-                <p className="mt-2 text-body-md text-text-medium">
-                    {scorecard.isError
-                        ? `Couldn't evaluate “${assetId}” — unknown asset, or the API is unreachable.`
-                        : `Loading ${assetId}…`}
-                </p>
-            </section>
+            <Tooltip content="Titan does not provide price impact for this quote." side="top" align="end">
+                <span className="cursor-help">—</span>
+            </Tooltip>
         );
     }
-    // Nothing evaluable at all (no on-chain variants).
-    if (data.variants.length === 0) {
-        if (!verbose) return null;
-        return (
-            <section className="rounded-2xl border border-border-light bg-white p-4 shadow-[0_8px_40px_rgba(0,0,0,0.03)]">
-                <h2 className="text-title-sm text-text-extra-high">Execution quality</h2>
-                <p className="mt-2 text-body-md text-text-medium">
-                    “{assetId}” has no on-chain variants to evaluate.
-                </p>
-            </section>
-        );
-    }
+    return <span title={fullJupiterPriceImpact(value)}>{formatJupiterPriceImpact(value)}</span>;
+}
 
-    if (isSampling) {
-        return (
-            <section className="rounded-2xl border border-border-light bg-white p-4 shadow-[0_8px_40px_rgba(0,0,0,0.03)]">
-                <h2 className="text-title-sm text-text-extra-high">Execution quality</h2>
-                <p className="mt-2 text-body-md text-text-medium">
-                    Sampling market depth… first visit to this asset takes a few seconds.
-                </p>
-            </section>
-        );
-    }
-
-    if (!hasDepth) {
-        return (
-            <section className="rounded-2xl border border-border-light bg-white p-4 shadow-[0_8px_40px_rgba(0,0,0,0.03)]">
-                <h2 className="text-title-sm text-text-extra-high">Execution quality</h2>
-                <p className="mt-2 text-body-md text-text-medium">
-                    No routable on-chain depth found for this asset right now.
-                </p>
-            </section>
-        );
-    }
-
-    const ladderSizes = data.meta.sizeLadderUsd ?? [];
-    const withCurves = data.variants.filter(variant => variant.ladder && variant.ladder.length > 0);
-    const noRouteVariants = data.variants.filter(variant => variant.reasons.includes('no_route'));
-    const unsampledCount = data.variants.length - withCurves.length - noRouteVariants.length;
-
-    // In a variant view, lead with the mint the user is looking at.
-    const orderedVariants = activeMint
-        ? [...withCurves].sort((a, b) => Number(b.mint === activeMint) - Number(a.mint === activeMint))
-        : withCurves;
-
-    const freshestAsOf = Math.max(...withCurves.map(variant => variant.depthAsOf ?? 0));
-    const ageSeconds = Math.max(0, Math.floor(Date.now() / 1000) - freshestAsOf);
-    const isStale = ageSeconds > STALE_AFTER_SECONDS;
-
-    const sizedRows = sized.data?.variants.filter(variant => variant.executionGrade !== null) ?? [];
-    const sizedIsLive = sized.data?.meta.quoteMode === 'live';
-
+function LoadingRow({ amount, side }: { amount: string; side: ExecutionQuoteSide }) {
     return (
-        <section className="rounded-2xl border border-border-light bg-white p-4 shadow-[0_8px_40px_rgba(0,0,0,0.03)]">
-            <div className="mb-3 flex items-center gap-1.5">
-                <h2 className="text-title-sm text-text-extra-high">Execution quality</h2>
-                <Tooltip
-                    content="What price impact would cost you at each trade size, from recent aggregator quotes. A means near-zero cost; F means most of the trade is lost to slippage."
-                    side="top"
-                    align="center"
-                >
-                    <button
-                        type="button"
-                        aria-label="More info about execution quality"
-                        className="text-text-extra-low transition-colors hover:text-text-low"
-                    >
-                        <Info className="h-3 w-3" />
-                    </button>
-                </Tooltip>
-                {isStale ? (
-                    <span className="ml-auto text-[11px] text-text-extra-low tabular-nums">
-                        sampled {Math.round(ageSeconds / 60)}m ago
-                    </span>
-                ) : null}
-            </div>
+        <tr>
+            <td className="py-3 pl-4 pr-3 text-[14px] font-medium text-text-high tabular-nums">
+                {formatRequestedAmount(amount, side)}
+            </td>
+            {Array.from({ length: 5 }, (_, index) => (
+                <td key={index} className="px-3 py-3 last:pr-4">
+                    <span className="ml-auto block h-3 w-20 animate-pulse rounded bg-gray-100 motion-reduce:animate-none" />
+                </td>
+            ))}
+        </tr>
+    );
+}
 
-            {/* Scorecard: grade per sampled size rung. */}
-            <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-left">
+function CandidateComparison({ candidates, winner }: { candidates: ExecutionQuoteCandidate[]; winner: ExecutionQuoteProvider }) {
+    return (
+        <div
+            className="px-4 py-4"
+            style={{
+                backgroundImage: `repeating-linear-gradient(
+                    45deg,
+                    transparent,
+                    transparent 10px,
+                    rgba(233, 231, 222, 0.5) 10px,
+                    rgba(233, 231, 222, 0.5) 11px
+                )`,
+            }}
+        >
+            <div className="overflow-x-auto rounded-xl border border-border-medium bg-white">
+                <table className="w-full min-w-[760px] border-collapse text-left">
                     <thead>
-                        <tr>
-                            <th className="pb-2 text-[11px] font-normal text-text-medium">Size</th>
-                            {orderedVariants.map(variant => (
-                                <th
-                                    key={variant.mint}
-                                    className="pb-2 text-right text-[11px] font-normal text-text-medium"
-                                >
-                                    {variantLabel(variant)}
-                                    {data.primary?.mint === variant.mint ? (
-                                        <span className="ml-1 text-text-extra-low" title="Our recommendation">
-                                            ★
-                                        </span>
-                                    ) : null}
-                                </th>
-                            ))}
+                        <tr className="border-b border-border-extra-light bg-gray-50/70">
+                            {['Provider', 'Status', 'Quoted output', 'Impact', 'Route', 'Context slot', 'Time'].map(
+                                (label, index) => (
+                                    <th key={label} className={`px-3 py-2 text-[10px] font-medium text-text-extra-low ${index >= 2 ? 'text-right' : ''}`}>
+                                        {label}
+                                    </th>
+                                ),
+                            )}
                         </tr>
                     </thead>
-                    <tbody>
-                        {ladderSizes.map(sizeUsd => (
-                            <tr key={sizeUsd} className="border-t border-border-light">
-                                <td className="py-2 text-body-md text-text-high tabular-nums">
-                                    {formatSizeLabel(sizeUsd)}
-                                </td>
-                                {orderedVariants.map(variant => {
-                                    const rung = variant.ladder?.find(entry => entry.sizeUsd === sizeUsd);
-                                    return (
-                                        <td key={variant.mint} className="py-2 text-right">
-                                            {rung ? (
-                                                <span title={`${formatImpact(rung.impactBps)} price impact`}>
-                                                    <GradeChip
-                                                        grade={rung.grade}
-                                                        label={formatImpactCost(sizeUsd, rung.impactBps)}
-                                                    />
-                                                </span>
-                                            ) : (
-                                                <span className="text-[11px] text-text-extra-low">—</span>
-                                            )}
-                                        </td>
-                                    );
-                                })}
-                            </tr>
-                        ))}
+                    <tbody className="divide-y divide-border-light">
+                        {candidates.map(candidate => {
+                            const isWinner = candidate.status === 'available' && candidate.provider === winner;
+                            return (
+                                <tr key={candidate.provider}>
+                                    <td className="px-3 py-3"><ProviderBadge provider={candidate.provider} /></td>
+                                    <td className="px-3 py-3 text-[11px] text-text-medium">
+                                        {candidate.status === 'available' ? (
+                                            isWinner ? (
+                                                <span className="rounded-full bg-gray-900 px-1.5 py-0.5 text-[9px] font-medium text-white">Best quote</span>
+                                            ) : 'Available'
+                                        ) : (
+                                            <span className="font-medium text-text-high">Quote unavailable</span>
+                                        )}
+                                    </td>
+                                    {candidate.status === 'available' ? (
+                                        <>
+                                            <td className="px-3 py-3 text-right text-[11px] font-medium text-text-high tabular-nums" title={`${candidate.output.amount} ${candidate.output.symbol}`}>
+                                                {formatTokenAmount(candidate.output.amount)} {candidate.output.symbol}
+                                            </td>
+                                            <td className="px-3 py-3 text-right text-[11px] text-text-medium tabular-nums">
+                                                <ImpactValue provider={candidate.provider} value={candidate.priceImpactPct} />
+                                            </td>
+                                            <td className="max-w-[190px] px-3 py-3 text-right text-[11px] text-text-medium">
+                                                <Tooltip content={routeDetails(candidate.route, candidate.contextSlot)} side="top" align="end">
+                                                    <span className="inline-block max-w-[180px] cursor-help truncate align-bottom">
+                                                        {routeLabel(candidate.route, candidate.provider)}
+                                                    </span>
+                                                </Tooltip>
+                                            </td>
+                                            <td className="px-3 py-3 text-right text-[11px] text-text-medium tabular-nums">{candidate.contextSlot ?? '—'}</td>
+                                            <td className="px-3 py-3 text-right text-[11px] text-text-extra-low tabular-nums" title={candidate.quotedAt}>
+                                                {formatQuoteTime(candidate.quotedAt)}
+                                            </td>
+                                        </>
+                                    ) : (
+                                        <td colSpan={5} className="px-3 py-3 text-right text-[11px] text-text-extra-low">This provider could not return a fresh quote.</td>
+                                    )}
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+}
+
+export function ExecutionEvaluationCard({
+    data,
+    isPending,
+    isError,
+    requestedAmounts,
+    customAmount,
+    side,
+}: {
+    data: ExecutionEvaluationResponse | null;
+    isPending: boolean;
+    isError: boolean;
+    requestedAmounts: string[];
+    customAmount: string | null;
+    side: ExecutionQuoteSide;
+}) {
+    const [expandedRawAmount, setExpandedRawAmount] = React.useState<string | null>(null);
+    React.useEffect(() => setExpandedRawAmount(null), [data, isPending, side]);
+
+    const unavailable = data?.quotes.filter(quote => quote.status === 'unavailable') ?? [];
+    const titanUnavailable = data?.quotes.filter(
+        quote => quote.status === 'available' && quote.candidates.some(candidate => candidate.provider === 'titan' && candidate.status === 'unavailable'),
+    ) ?? [];
+    const allUnavailable = Boolean(data && data.meta.available === 0);
+
+    return (
+        <section className="overflow-hidden rounded-[24px] border border-border-medium bg-white shadow-[0_8px_40px_rgba(0,0,0,0.03)]">
+            <div className="flex items-center border-b border-border-extra-light px-4 py-3">
+                <div>
+                    <h2 className="text-title-sm text-text-extra-high">Live execution quotes</h2>
+                    <p className="mt-0.5 text-[11px] text-text-extra-low">{side === 'buy' ? 'USDC into the selected mint' : 'Selected token into USDC'}</p>
+                </div>
+                <span className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-green-50 px-2 py-1 text-[11px] font-medium text-green-800">
+                    <span className="size-1.5 rounded-full bg-green-600" aria-hidden />
+                    Titan + Jupiter · Live comparison
+                </span>
+            </div>
+
+            <div className="overflow-x-auto">
+                <table className="w-full min-w-[920px] border-collapse text-left">
+                    <thead>
+                        <tr className="border-b border-border-light bg-gray-50/80">
+                            <th className="py-3 pl-4 pr-3 text-[11px] font-medium text-text-extra-low">Requested</th>
+                            <th className="px-3 py-3 text-right text-[11px] font-medium text-text-extra-low">You pay</th>
+                            <th className="px-3 py-3 text-right text-[11px] font-medium text-text-extra-low">Best quoted output</th>
+                            <th className="px-3 py-3 text-right text-[11px] font-medium text-text-extra-low">Impact</th>
+                            <th className="px-3 py-3 text-right text-[11px] font-medium text-text-extra-low">Winning route</th>
+                            <th className="px-3 py-3 pr-4 text-right text-[11px] font-medium text-text-extra-low">Quoted</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border-extra-light">
+                        {isPending
+                            ? requestedAmounts.map(amount => <LoadingRow key={amount} amount={amount} side={side} />)
+                            : data?.quotes.map(row => {
+                                  const isCustom = customAmount !== null && row.request.amount === customAmount;
+                                  const isExpanded = expandedRawAmount === row.request.rawAmount;
+                                  const detailsId = `quote-comparison-${row.request.rawAmount}`;
+                                  return (
+                                      <React.Fragment key={row.request.rawAmount}>
+                                          <tr>
+                                              <td className="py-3 pl-4 pr-3 align-middle">
+                                                  <span className="text-[14px] font-medium text-text-high tabular-nums">{formatRequestedAmount(row.request.amount, side)}</span>
+                                                  {isCustom ? <span className="ml-2 rounded-full bg-[#F2F3F5] px-1.5 py-0.5 text-[10px] font-medium text-text-medium">Your amount</span> : null}
+                                              </td>
+                                              {row.status === 'available' ? (
+                                                  <>
+                                                      <td className="px-3 py-3 text-right text-[13px] text-text-high tabular-nums" title={`${row.input.amount} ${row.input.symbol}`}>{formatTokenAmount(row.input.amount)} {row.input.symbol}</td>
+                                                      <td className="px-3 py-3 text-right text-[13px] font-medium text-text-extra-high tabular-nums" title={`${row.output.amount} ${row.output.symbol}`}>{formatTokenAmount(row.output.amount)} {row.output.symbol}</td>
+                                                      <td className="px-3 py-3 text-right text-[13px] text-text-high tabular-nums"><ImpactValue provider={row.provider} value={row.priceImpactPct} /></td>
+                                                      <td className="max-w-[250px] px-3 py-3 text-right text-[12px] text-text-medium">
+                                                          <div className="flex items-center justify-end gap-2">
+                                                              <ProviderBadge provider={row.provider} />
+                                                              <Tooltip content={routeDetails(row.route, row.contextSlot)} side="top" align="end">
+                                                                  <span className="inline-block max-w-[150px] cursor-help truncate align-bottom">{routeLabel(row.route, row.provider)}</span>
+                                                              </Tooltip>
+                                                          </div>
+                                                          <button
+                                                              type="button"
+                                                              className="mt-1 inline-flex items-center gap-1 rounded text-[10px] font-medium text-text-low outline-none transition-colors hover:text-text-high focus-visible:ring-2 focus-visible:ring-blue-500 active:scale-[0.98]"
+                                                              aria-expanded={isExpanded}
+                                                              aria-controls={detailsId}
+                                                              onClick={() => setExpandedRawAmount(isExpanded ? null : row.request.rawAmount)}
+                                                          >
+                                                              {isExpanded ? 'Hide comparison' : 'View comparison'}
+                                                              <ChevronDown className={`size-3 ${isExpanded ? 'rotate-180' : ''}`} aria-hidden />
+                                                          </button>
+                                                      </td>
+                                                      <td className="px-3 py-3 pr-4 text-right text-[11px] text-text-extra-low tabular-nums" title={row.quotedAt}>{formatQuoteTime(row.quotedAt)}</td>
+                                                  </>
+                                              ) : (
+                                                  <td colSpan={5} className="px-3 py-3 pr-4 text-right">
+                                                      <span className="block text-[12px] font-medium text-text-high">Quote unavailable</span>
+                                                      <span className="block text-[10px] text-text-extra-low">Neither Titan nor Jupiter could provide this route right now.</span>
+                                                  </td>
+                                              )}
+                                          </tr>
+                                          {row.status === 'available' && isExpanded ? (
+                                              <tr id={detailsId}><td colSpan={6}><CandidateComparison candidates={row.candidates} winner={row.provider} /></td></tr>
+                                          ) : null}
+                                      </React.Fragment>
+                                  );
+                              })}
                     </tbody>
                 </table>
             </div>
 
-            {noRouteVariants.length > 0 ? (
-                <p className="mt-2 text-[11px] text-text-extra-low">
-                    No route found right now: {noRouteVariants.map(variantLabel).join(', ')}.
-                </p>
-            ) : null}
-            {unsampledCount > 0 ? (
-                <p className="mt-2 text-[11px] text-text-extra-low">
-                    {unsampledCount} other {unsampledCount === 1 ? 'variant' : 'variants'} not sampled yet.
-                </p>
-            ) : null}
-
-            {/* Evaluate an arbitrary size. */}
-            <div className="mt-4 border-t border-border-light pt-4">
-                <label
-                    htmlFor="execution-eval-amount"
-                    className="mb-2 flex items-center gap-2 text-[11px] font-normal text-text-medium"
-                >
-                    Evaluate your size
-                    {debouncedAmount !== null && sizedRows.length > 0 ? (
-                        <span
-                            className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none ${
-                                sizedIsLive ? 'bg-green-50 text-green-800' : 'bg-[#F2F3F5] text-text-medium'
-                            }`}
-                        >
-                            {sizedIsLive ? 'live quotes' : 'sampled'}
-                        </span>
-                    ) : null}
-                </label>
-                <div className="relative">
-                    <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-body-md text-text-medium">
-                        $
-                    </span>
-                    <Input
-                        id="execution-eval-amount"
-                        inputMode="numeric"
-                        placeholder="1,000,000"
-                        className="pl-7 tabular-nums"
-                        value={amountInput}
-                        onChange={event => setAmountInput(event.target.value)}
-                    />
-                </div>
-
-                {debouncedAmount !== null ? (
-                    <div
-                        className={`mt-3 space-y-2 transition-opacity ${sized.isPlaceholderData ? 'opacity-50' : 'opacity-100'}`}
-                    >
-                        {sizedRows.length > 0 ? (
-                            sizedRows.map(variant => {
-                                const extrapolated = variant.reasons.includes('beyond_sampled_depth');
-                                return (
-                                    <div key={variant.mint} className="flex items-center justify-between gap-2">
-                                        <span className="flex items-center gap-1 text-body-md text-text-high">
-                                            {variantLabel(variant)}
-                                            {extrapolated ? (
-                                                <Tooltip
-                                                    content="This size is beyond what we sampled for this variant — the estimate is clamped to its largest sampled size and is likely optimistic."
-                                                    side="top"
-                                                    align="center"
-                                                >
-                                                    <span className="cursor-help text-[11px] text-amber-700">
-                                                        beyond sample
-                                                    </span>
-                                                </Tooltip>
-                                            ) : null}
-                                        </span>
-                                        <span className="flex flex-col items-end gap-0.5">
-                                            <span title={`${formatImpact(variant.estimatedImpactBps ?? 0)} price impact`}>
-                                                <GradeChip
-                                                    grade={variant.executionGrade as ImpactGrade}
-                                                    label={`${formatImpactCost(debouncedAmount ?? 0, variant.estimatedImpactBps ?? 0)} to impact`}
-                                                />
-                                            </span>
-                                            <span className="text-[11px] text-text-extra-low tabular-nums">
-                                                ≈ {formatUsdCompact(variant.estimatedOutUsd ?? 0)} out
-                                            </span>
-                                        </span>
-                                    </div>
-                                );
-                            })
-                        ) : (
-                            <p className="text-[11px] text-text-extra-low">
-                                {sized.isFetching ? 'Evaluating…' : 'No depth samples for this size.'}
-                            </p>
-                        )}
-                    </div>
-                ) : null}
+            <div className="border-t border-border-extra-light p-4">
+                <Alert className="rounded-xl border-border-light bg-gray-50/80 px-4 py-3 text-text-medium">
+                    <Info className="size-4 text-text-low" aria-hidden />
+                    <AlertTitle className="text-[12px] font-medium text-text-high">{isError || allUnavailable ? 'Quotes unavailable' : 'Live comparison details'}</AlertTitle>
+                    <AlertDescription className="space-y-1 text-[11px] text-text-low">
+                        {isError ? <p>Titan and Jupiter could not provide fresh quotes. No previous quote was substituted.</p> : null}
+                        {unavailable.length > 0 ? <p>No quote found right now for: <span className="font-medium text-text-high">{unavailable.map(row => formatRequestedAmount(row.request.amount, side)).join(', ')}</span>.</p> : null}
+                        {titanUnavailable.length > 0 ? <p>Titan could not provide quotes for: <span className="font-medium text-text-high">{titanUnavailable.map(row => formatRequestedAmount(row.request.amount, side)).join(', ')}</span>. Jupiter results are shown without substitution.</p> : null}
+                        <p>Live quotes from Titan and Jupiter for the selected mint. The highest quoted output is shown for each amount. Outputs and routes can change before execution. These are quotes, not an execution guarantee.</p>
+                    </AlertDescription>
+                </Alert>
             </div>
-
-            <p className="mt-3 text-[11px] text-text-extra-low">
-                Scorecard from sampled {data.meta.depthSource ?? 'aggregator'} quotes; typed amounts fetch live quotes
-                when available. Not an execution guarantee.
-            </p>
         </section>
     );
 }

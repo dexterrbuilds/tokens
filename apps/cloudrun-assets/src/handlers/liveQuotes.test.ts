@@ -1,90 +1,246 @@
 import { describe, expect, it } from 'bun:test';
 
-import { depthSampleMints, executionQuotesLive, type LiveQuoteDeps } from './liveQuotes';
+import {
+    depthSampleMints,
+    executionQuoteTokenMetadata,
+    executionQuotesLive,
+    formatRawAmount,
+    type ExactQuote,
+    type ExactQuoteClient,
+    type JupiterExactQuoteClient,
+    type LiveQuoteDeps,
+} from './liveQuotes';
 import type { DepthQuote, DepthQuoteClient } from './crons.depth';
 
-const MINT_A = 'cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij';
-const MINT_B = '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh';
+const MINT = 'cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij';
+const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 
-function deps(handler: (args: { outputMint: string; amount: number }) => Promise<DepthQuote | null>): LiveQuoteDeps {
-    const quoteSource: DepthQuoteClient = {
-        id: 'jupiter_lite',
-        async fetchQuote(args) {
-            return handler({ outputMint: args.outputMint, amount: args.amount });
-        },
-        async close() {},
+function exactQuote(amountRaw: string, outAmountRaw = '123456789012345678'): ExactQuote {
+    return {
+        inAmountRaw: amountRaw,
+        outAmountRaw,
+        priceImpactPct: 0.42,
+        route: [
+            {
+                ammKey: 'amm',
+                label: 'Meteora DLMM',
+                percent: 100,
+                inputMint: USDC,
+                outputMint: MINT,
+                inAmountRaw: amountRaw,
+                outAmountRaw,
+                feeAmountRaw: '10',
+                feeMint: USDC,
+            },
+        ],
+        contextSlot: 123,
     };
-    return { quoteSource, now: () => 1_700_000_000_000 };
 }
 
-// 1% worse effective price per extra $1M of size.
-function syntheticQuote(amount: number): DepthQuote {
-    const sizeUsd = amount / 1_000_000;
-    return { inAmount: amount, outAmount: amount * (1 - 0.01 * (sizeUsd / 1_000_000)), routeVenues: [] };
+function deps(
+    handler: JupiterExactQuoteClient['fetchQuote'],
+    now: () => number = () => 1_700_000_000_000,
+    titanHandler?: ExactQuoteClient['fetchQuote'],
+): LiveQuoteDeps {
+    return {
+        jupiterQuoteSource: {
+            id: 'jupiter',
+            fetchQuote: handler,
+            async fetchTokenMetadata(mint) {
+                return { mint, symbol: 'cbBTC', name: 'Coinbase Wrapped BTC', decimals: 8 };
+            },
+        },
+        ...(titanHandler ? { titanQuoteSource: { id: 'titan' as const, fetchQuote: titanHandler } } : {}),
+        now,
+    };
 }
+
+describe('executionQuoteTokenMetadata', () => {
+    it('returns Jupiter metadata for the exact mint', async () => {
+        await expect(executionQuoteTokenMetadata(deps(async () => null), { mint: MINT })).resolves.toEqual({
+            mint: MINT,
+            symbol: 'cbBTC',
+            name: 'Coinbase Wrapped BTC',
+            decimals: 8,
+        });
+    });
+});
 
 describe('executionQuotesLive', () => {
-    it('validates args', async () => {
+    it('validates the exact-mint batch contract', async () => {
         const d = deps(async () => null);
         await expect(executionQuotesLive(d, null)).rejects.toThrow('args must be an object');
-        await expect(executionQuotesLive(d, { mints: 'x' })).rejects.toThrow('mints must be an array');
-        await expect(executionQuotesLive(d, { mints: [MINT_A], amountUsd: 'x' })).rejects.toThrow(
-            'amountUsd must be a finite number',
+        await expect(executionQuotesLive(d, { mint: MINT, side: 'hold', amounts: [], tokenDecimals: 8 })).rejects.toThrow(
+            'side must be buy or sell',
         );
+        await expect(executionQuotesLive(d, { mint: MINT, side: 'buy', amounts: [], tokenDecimals: 8 })).rejects.toThrow(
+            'at least one amount is required',
+        );
+        await expect(
+            executionQuotesLive(d, { mint: MINT, side: 'buy', amounts: ['0.5'], tokenDecimals: 8 }),
+        ).rejects.toThrow('amountUsd must be between 1 and 50000000');
     });
 
-    it('measures impact against a same-instant baseline quote', async () => {
-        const d = deps(async ({ amount }) => syntheticQuote(amount));
-        const result = await executionQuotesLive(d, { mints: [MINT_A, MINT_B], amountUsd: 1_000_000 });
-        expect(result.source).toBe('jupiter_lite');
-        expect(result.baselineSizeUsd).toBe(10_000);
-        expect(result.asOf).toBe(1_700_000_000);
+    it('quotes buys from USDC into the exact selected mint and preserves raw data', async () => {
+        const calls: Array<{ inputMint: string; outputMint: string; amountRaw: string }> = [];
+        const result = await executionQuotesLive(
+            deps(async args => {
+                calls.push(args);
+                return exactQuote(args.amountRaw);
+            }),
+            { mint: MINT, side: 'buy', amounts: ['10000', '25000'], tokenDecimals: 8 },
+        );
+
+        expect(result).toMatchObject({ providers: ['jupiter', 'titan'], mint: MINT, side: 'buy', quoteMint: USDC });
+        expect(calls).toEqual([
+            { inputMint: USDC, outputMint: MINT, amountRaw: '10000000000' },
+            { inputMint: USDC, outputMint: MINT, amountRaw: '25000000000' },
+        ]);
+        expect(result.entries[0]).toMatchObject({
+            status: 'available',
+            provider: 'jupiter',
+            request: { unit: 'usd', amount: '10000', rawAmount: '10000000000' },
+            outAmountRaw: '123456789012345678',
+            priceImpactPct: 0.42,
+            contextSlot: 123,
+            quotedAt: '2023-11-14T22:13:20.000Z',
+        });
+        expect(result.entries[0]?.candidates.map(candidate => candidate.provider)).toEqual(['jupiter', 'titan']);
+    });
+
+    it('reverses the pair for exact token sells and respects token decimals', async () => {
+        const calls: Array<{ inputMint: string; outputMint: string; amountRaw: string }> = [];
+        const result = await executionQuotesLive(
+            deps(async args => {
+                calls.push(args);
+                return exactQuote(args.amountRaw);
+            }),
+            { mint: MINT, side: 'sell', amounts: ['12.50000001'], tokenDecimals: 8 },
+        );
+        expect(calls[0]).toEqual({ inputMint: MINT, outputMint: USDC, amountRaw: '1250000001' });
+        expect(result.entries[0]?.request).toEqual({ unit: 'token', amount: '12.50000001', rawAmount: '1250000001' });
+        await expect(
+            executionQuotesLive(deps(async () => null), {
+                mint: MINT,
+                side: 'sell',
+                amounts: ['1.000000001'],
+                tokenDecimals: 8,
+            }),
+        ).rejects.toThrow('more than 8 decimal places');
+    });
+
+    it('dedupes equivalent amounts, preserves order, and caps the batch at nine', async () => {
+        const d = deps(async args => exactQuote(args.amountRaw));
+        const result = await executionQuotesLive(d, {
+            mint: MINT,
+            side: 'buy',
+            amounts: ['10.0', '25', '10.00'],
+            tokenDecimals: 8,
+        });
+        expect(result.entries.map(entry => entry.request.amount)).toEqual(['10', '25']);
+
+        await expect(
+            executionQuotesLive(d, {
+                mint: MINT,
+                side: 'buy',
+                amounts: Array.from({ length: 10 }, (_, index) => String(index + 1)),
+                tokenDecimals: 8,
+            }),
+        ).rejects.toThrow('at most 9 unique amounts');
+    });
+
+    it('limits quote concurrency to two', async () => {
+        let active = 0;
+        let maxActive = 0;
+        const d = deps(async args => {
+            active += 1;
+            maxActive = Math.max(maxActive, active);
+            await Promise.resolve();
+            active -= 1;
+            return exactQuote(args.amountRaw);
+        });
+        await executionQuotesLive(d, {
+            mint: MINT,
+            side: 'buy',
+            amounts: ['10', '20', '30', '40', '50'],
+            tokenDecimals: 8,
+        });
+        expect(maxActive).toBe(2);
+    });
+
+    it('returns explicit unavailable rows for nulls and transport failures', async () => {
+        const result = await executionQuotesLive(
+            deps(async args => {
+                if (args.amountRaw === '10000000') return null;
+                throw new Error('rate limited');
+            }),
+            { mint: MINT, side: 'buy', amounts: ['10', '25'], tokenDecimals: 8 },
+        );
         expect(result.entries).toHaveLength(2);
-        // Synthetic curve: ~1% at $1M vs ~0.01% at $10k baseline → ~99bps.
         for (const entry of result.entries) {
-            expect(entry.impactBps).toBeGreaterThan(90);
-            expect(entry.impactBps).toBeLessThan(105);
+            expect(entry).toMatchObject({
+                status: 'unavailable',
+                reason: 'quote_unavailable',
+                inAmountRaw: null,
+                outAmountRaw: null,
+                route: [],
+            });
         }
     });
 
-    it('reads ~zero impact at or below the baseline size', async () => {
-        const d = deps(async ({ amount }) => syntheticQuote(amount));
-        const result = await executionQuotesLive(d, { mints: [MINT_A], amountUsd: 5_000 });
-        expect(result.entries[0]?.impactBps).toBe(0);
+    it('selects Titan only when its raw output is greater and Jupiter on ties', async () => {
+        const titanWins = await executionQuotesLive(
+            deps(
+                async args => exactQuote(args.amountRaw, '100'),
+                () => 1_700_000_000_000,
+                async args => ({ ...exactQuote(args.amountRaw, '101'), priceImpactPct: null }),
+            ),
+            { mint: MINT, side: 'buy', amounts: ['10'], tokenDecimals: 8 },
+        );
+        expect(titanWins.entries[0]).toMatchObject({ status: 'available', provider: 'titan', outAmountRaw: '101' });
+
+        const tie = await executionQuotesLive(
+            deps(
+                async args => exactQuote(args.amountRaw, '100'),
+                () => 1_700_000_000_000,
+                async args => ({ ...exactQuote(args.amountRaw, '100'), priceImpactPct: null }),
+            ),
+            { mint: MINT, side: 'buy', amounts: ['10'], tokenDecimals: 8 },
+        );
+        expect(tie.entries[0]).toMatchObject({ status: 'available', provider: 'jupiter' });
     });
 
-    it('degrades per mint on failure without failing the batch', async () => {
-        const d = deps(async ({ outputMint, amount }) => {
-            if (outputMint === MINT_A) throw new Error('connection reset');
-            return syntheticQuote(amount);
+    it('uses either provider independently and preserves candidate order', async () => {
+        const onlyTitan = await executionQuotesLive(
+            deps(
+                async () => null,
+                () => 1_700_000_000_000,
+                async args => ({ ...exactQuote(args.amountRaw, '9007199254740993'), priceImpactPct: null }),
+            ),
+            { mint: MINT, side: 'sell', amounts: ['12.5'], tokenDecimals: 8 },
+        );
+        expect(onlyTitan.entries[0]).toMatchObject({
+            status: 'available',
+            provider: 'titan',
+            outAmountRaw: '9007199254740993',
+            priceImpactPct: null,
         });
-        const result = await executionQuotesLive(d, { mints: [MINT_A, MINT_B], amountUsd: 1_000_000 });
-        expect(result.entries.find(e => e.mint === MINT_A)?.impactBps).toBeNull();
-        expect(result.entries.find(e => e.mint === MINT_B)?.impactBps).not.toBeNull();
+        expect(onlyTitan.entries[0]?.candidates.map(candidate => [candidate.provider, candidate.status])).toEqual([
+            ['jupiter', 'unavailable'],
+            ['titan', 'available'],
+        ]);
     });
 
-    it('nulls impact when the pair is untradable (null quote)', async () => {
-        const d = deps(async () => null);
-        const result = await executionQuotesLive(d, { mints: [MINT_A], amountUsd: 1_000_000 });
-        expect(result.entries[0]?.impactBps).toBeNull();
-    });
-
-    it('caps and dedupes mints, and clamps the amount', async () => {
-        const seen = new Set<string>();
-        const d = deps(async ({ outputMint, amount }) => {
-            seen.add(outputMint);
-            expect(amount).toBeLessThanOrEqual(50_000_000 * 1_000_000);
-            return syntheticQuote(amount);
-        });
-        const mints = Array.from({ length: 12 }, (_, i) => `${MINT_A.slice(0, -2)}${String(i).padStart(2, '0')}`);
-        const result = await executionQuotesLive(d, { mints: [...mints, mints[0]!], amountUsd: 99_000_000 });
-        expect(result.entries).toHaveLength(8);
-        expect(result.amountUsd).toBe(50_000_000);
-        expect(seen.size).toBe(8);
+    it('formats integer strings without precision loss', () => {
+        expect(formatRawAmount('123456789012345678', 8)).toBe('1234567890.12345678');
     });
 });
 
 describe('depthSampleMints', () => {
+    function syntheticQuote(amount: number): DepthQuote {
+        return { inAmount: amount, outAmount: amount * 0.99, routeVenues: [] };
+    }
+
     function sampleDeps(args: {
         handler: (a: { outputMint: string; amount: number }) => Promise<DepthQuote | null>;
         existing?: Array<{ mint: string; lastComputedAt: number }>;
@@ -97,7 +253,7 @@ describe('depthSampleMints', () => {
             },
             async close() {},
         };
-        const deps = {
+        const sampleDependencies = {
             quoteSource,
             curvesRepo: {
                 async selectStalestDepthMints() {
@@ -111,7 +267,7 @@ describe('depthSampleMints', () => {
                 async findLatestByMints() {
                     return (args.existing ?? []).map(row => ({
                         mint: row.mint,
-                        quote_mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+                        quote_mint: USDC,
                         side: 'buy',
                         source: 'jupiter_lite',
                         ladder: [],
@@ -124,46 +280,25 @@ describe('depthSampleMints', () => {
             },
             now: () => 1_700_000_000_000,
         };
-        return { deps: deps as never, upserts };
+        return { deps: sampleDependencies as never, upserts };
     }
 
-    it('samples uncovered mints and persists curves', async () => {
+    it('keeps the stored depth sampler independent', async () => {
         const { deps, upserts } = sampleDeps({ handler: async ({ amount }) => syntheticQuote(amount) });
-        const result = await depthSampleMints(deps, { mints: [MINT_A, MINT_B] });
-        expect(result.sampled.sort()).toEqual([MINT_A, MINT_B].sort());
-        expect(upserts).toHaveLength(2);
-        expect(upserts[0]?.points).toBe(4);
+        const result = await depthSampleMints(deps, { mints: [MINT] });
+        expect(result.sampled).toEqual([MINT]);
+        expect(upserts).toEqual([{ mint: MINT, points: 4 }]);
     });
 
-    it('skips mints sampled within the min-age window', async () => {
-        const { deps, upserts } = sampleDeps({
+    it('preserves depth freshness and failure behavior', async () => {
+        const fresh = sampleDeps({
             handler: async ({ amount }) => syntheticQuote(amount),
-            existing: [{ mint: MINT_A, lastComputedAt: 1_700_000_000_000 - 60_000 }],
+            existing: [{ mint: MINT, lastComputedAt: 1_700_000_000_000 - 60_000 }],
         });
-        const result = await depthSampleMints(deps, { mints: [MINT_A, MINT_B] });
-        expect(result.skippedFresh).toEqual([MINT_A]);
-        expect(result.sampled).toEqual([MINT_B]);
-        expect(upserts).toHaveLength(1);
-    });
+        expect(await depthSampleMints(fresh.deps, { mints: [MINT] })).toMatchObject({ skippedFresh: [MINT] });
 
-    it('persists an empty ladder for untradable mints and caps at 4', async () => {
-        const { deps, upserts } = sampleDeps({ handler: async () => null });
-        const mints = Array.from({ length: 6 }, (_, i) => `${MINT_A.slice(0, -2)}${String(i).padStart(2, '0')}`);
-        const result = await depthSampleMints(deps, { mints });
-        expect(result.sampled).toHaveLength(4);
-        expect(upserts.every(row => row.points === 0)).toBe(true);
-    });
-
-    it('reports transport failures per mint without failing the batch', async () => {
-        const { deps, upserts } = sampleDeps({
-            handler: async ({ outputMint, amount }) => {
-                if (outputMint === MINT_A) throw new Error('connection reset');
-                return syntheticQuote(amount);
-            },
-        });
-        const result = await depthSampleMints(deps, { mints: [MINT_A, MINT_B] });
-        expect(result.failed).toEqual([MINT_A]);
-        expect(result.sampled).toEqual([MINT_B]);
-        expect(upserts).toHaveLength(1);
+        const failed = sampleDeps({ handler: async () => null });
+        expect(await depthSampleMints(failed.deps, { mints: [MINT] })).toMatchObject({ sampled: [MINT] });
+        expect(failed.upserts).toEqual([{ mint: MINT, points: 0 }]);
     });
 });

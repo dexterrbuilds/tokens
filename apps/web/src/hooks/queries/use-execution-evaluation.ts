@@ -1,105 +1,163 @@
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+'use client';
+
+import * as React from 'react';
 import { Effect } from 'effect';
 
 import { apiJson } from '@/effect/api-client';
-import { shouldRetryApiQuery } from '@/effect/query-retry';
 
-export const EXECUTION_AMOUNT_MIN_USD = 1;
-export const EXECUTION_AMOUNT_MAX_USD = 50_000_000;
+export type ExecutionQuoteSide = 'buy' | 'sell';
+export type ExecutionQuoteProvider = 'jupiter' | 'titan';
 
-export type ImpactGrade = 'excellent' | 'good' | 'fair' | 'poor' | 'avoid';
-
-export interface ExecutionLadderRung {
-    sizeUsd: number;
-    impactBps: number;
-    grade: ImpactGrade;
+export interface ExecutionQuoteRouteStep {
+    ammKey: string | null;
+    label: string | null;
+    percent: number | null;
+    inputMint: string | null;
+    outputMint: string | null;
+    inAmountRaw: string | null;
+    outAmountRaw: string | null;
+    feeAmountRaw: string | null;
+    feeMint: string | null;
 }
 
-export interface ExecutionEvaluationVariant {
-    rank: number;
+export interface ExecutionQuoteAmount {
     mint: string;
-    variantId: string;
-    kind: string;
-    issuer: string | null;
-    trustTier: string;
-    symbol: string | null;
-    name: string | null;
-    liquidityUsd: number | null;
-    volume24hUSD: number | null;
-    executionScore: number | null;
-    feeBps: number | null;
-    isFillQualityEligible: boolean;
-    ladder: ExecutionLadderRung[] | null;
-    estimatedImpactBps: number | null;
-    estimatedOutUsd: number | null;
-    sizeAwareScore: number | null;
-    executionGrade: ImpactGrade | null;
-    depthAsOf: number | null;
-    reasons: string[];
+    symbol: string;
+    decimals: number;
+    amount: string;
+    rawAmount: string;
 }
+
+interface ExecutionQuoteRequest {
+    unit: 'usd' | 'token';
+    amount: string;
+    rawAmount: string;
+}
+
+export type ExecutionQuoteCandidate =
+    | {
+          provider: ExecutionQuoteProvider;
+          status: 'available';
+          input: ExecutionQuoteAmount;
+          output: ExecutionQuoteAmount;
+          priceImpactPct: number | null;
+          route: ExecutionQuoteRouteStep[];
+          contextSlot: number | null;
+          quotedAt: string;
+      }
+    | {
+          provider: ExecutionQuoteProvider;
+          status: 'unavailable';
+          reason: 'quote_unavailable';
+          input: null;
+          output: null;
+          priceImpactPct: null;
+          route: [];
+          contextSlot: null;
+          quotedAt: string;
+      };
+
+export type ExecutionQuoteRow =
+    | {
+          request: ExecutionQuoteRequest;
+          status: 'available';
+          provider: ExecutionQuoteProvider;
+          input: ExecutionQuoteAmount;
+          output: ExecutionQuoteAmount;
+          priceImpactPct: number | null;
+          route: ExecutionQuoteRouteStep[];
+          contextSlot: number | null;
+          quotedAt: string;
+          candidates: ExecutionQuoteCandidate[];
+      }
+    | {
+          request: ExecutionQuoteRequest;
+          status: 'unavailable';
+          reason: 'quote_unavailable';
+          provider: null;
+          input: null;
+          output: null;
+          priceImpactPct: null;
+          route: [];
+          contextSlot: null;
+          quotedAt: string;
+          candidates: ExecutionQuoteCandidate[];
+      };
 
 export interface ExecutionEvaluationResponse {
-    asset: { assetId: string; name: string | null; symbol: string | null; category: string | null };
-    side: 'buy' | 'sell';
-    amountUsd: number | null;
-    primary: { mint: string; variantId: string; reason: string } | null;
-    variants: ExecutionEvaluationVariant[];
+    mint: string;
+    side: ExecutionQuoteSide;
+    providers: ['jupiter', 'titan'];
+    token: { mint: string; symbol: string; name: string; decimals: number };
+    quotes: ExecutionQuoteRow[];
     meta: {
-        asOf: number;
-        scoringVersion: string;
-        sizeAwareScoringVersion: string | null;
-        gradingVersion: string;
-        quoteMode: 'sampled' | 'live';
-        strategy: string;
-        sizeLadderUsd: number[] | null;
-        depthSource: string | null;
-        depthCoverage: { withCurves: number; total: number };
+        requested: number;
+        available: number;
+        unavailable: number;
+        providerStats: Record<ExecutionQuoteProvider, { available: number; wins: number }>;
     };
 }
 
-/**
- * Round to 2 significant figures so query keys line up with the API's
- * stale-cache amount bucketing instead of fanning out per keystroke.
- */
-export function bucketAmountUsd(amountUsd: number): number {
-    return Number(amountUsd.toPrecision(2));
+export interface ExecutionQuoteRequestArgs {
+    mint: string;
+    side: ExecutionQuoteSide;
+    amounts: string[];
 }
 
-export function clampAmountUsd(amountUsd: number): number {
-    return Math.min(EXECUTION_AMOUNT_MAX_USD, Math.max(EXECUTION_AMOUNT_MIN_USD, amountUsd));
-}
+export function useExecutionEvaluation() {
+    const [data, setData] = React.useState<ExecutionEvaluationResponse | null>(null);
+    const [error, setError] = React.useState<unknown>(null);
+    const [isPending, setIsPending] = React.useState(false);
+    const abortRef = React.useRef<AbortController | null>(null);
+    const requestIdRef = React.useRef(0);
 
-interface UseExecutionEvaluationOptions {
-    /** Omit for the scorecard call (graded ladder per variant). */
-    amountUsd?: number | null;
-    /** Fetch live quotes at the requested amount instead of interpolating stored curves. */
-    live?: boolean;
-    /** Ask the API to sample uncovered mints on demand (slow first call, then persisted). */
-    sample?: boolean;
-    enabled?: boolean;
-}
+    const reset = React.useCallback(() => {
+        requestIdRef.current += 1;
+        abortRef.current?.abort();
+        abortRef.current = null;
+        setData(null);
+        setError(null);
+        setIsPending(false);
+    }, []);
 
-export function useExecutionEvaluation(assetId: string, options: UseExecutionEvaluationOptions = {}) {
-    const { amountUsd = null, live = false, sample = false, enabled = true } = options;
+    const execute = React.useCallback(async (args: ExecutionQuoteRequestArgs) => {
+        const requestId = requestIdRef.current + 1;
+        requestIdRef.current = requestId;
+        abortRef.current?.abort();
+        const controller = new AbortController();
+        abortRef.current = controller;
+        setData(null);
+        setError(null);
+        setIsPending(true);
 
-    return useQuery<ExecutionEvaluationResponse>({
-        queryKey: ['execution', 'evaluate', assetId, amountUsd, live, sample],
-        queryFn: async ({ signal }) => {
-            const params = new URLSearchParams({ asset: assetId });
-            if (amountUsd !== null) params.set('amountUsd', String(amountUsd));
-            if (live && amountUsd !== null) params.set('quotes', 'live');
-            if (sample) params.set('sample', 'missing');
+        const params = new URLSearchParams({ mint: args.mint, side: args.side });
+        const key = args.side === 'buy' ? 'amountUsd' : 'tokenAmount';
+        for (const amount of args.amounts) params.append(key, amount);
 
-            return Effect.runPromise(
-                apiJson<ExecutionEvaluationResponse>({ url: `/api/v2/execution/evaluate?${params.toString()}` }),
-                { signal },
+        try {
+            const response = await Effect.runPromise(
+                apiJson<ExecutionEvaluationResponse>({
+                    url: `/api/v2/execution/evaluate?${params.toString()}`,
+                    init: { cache: 'no-store' },
+                    signal: controller.signal,
+                }),
             );
-        },
-        enabled: enabled && assetId.trim().length > 0,
-        retry: shouldRetryApiQuery,
-        // Live quotes go stale fast; sampled data follows the provider default.
-        ...(live ? { staleTime: 15_000 } : {}),
-        // Keeps the previous evaluation on screen while a new amount loads.
-        placeholderData: keepPreviousData,
-    });
+            if (requestIdRef.current === requestId) {
+                setData(response);
+                setIsPending(false);
+            }
+            return response;
+        } catch (requestError) {
+            if (requestIdRef.current === requestId && !controller.signal.aborted) {
+                setError(requestError);
+                setIsPending(false);
+            }
+            if (!controller.signal.aborted) throw requestError;
+            return null;
+        }
+    }, []);
+
+    React.useEffect(() => () => abortRef.current?.abort(), []);
+
+    return { data, error, isError: error !== null, isPending, execute, reset };
 }
