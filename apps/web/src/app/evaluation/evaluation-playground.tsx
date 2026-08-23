@@ -270,17 +270,16 @@ export function EvaluationPlayground() {
         [execute, selectedMint, side],
     );
 
+    // Changing the mint or side clears the table but does NOT auto-fetch: each
+    // request is amounts x providers real upstream quotes, so it waits for a
+    // deliberate submit rather than firing on every dropdown change.
     React.useEffect(() => {
         setAmountInput('');
         setAmountError(null);
         setSubmittedCustom(null);
-        if (side === 'buy') {
-            void requestQuotes([...BUY_TIERS], false);
-        } else {
-            setRequestedAmounts([]);
-            reset();
-        }
-    }, [selectedMint, side, requestQuotes, reset]);
+        setRequestedAmounts([]);
+        reset();
+    }, [selectedMint, side, reset]);
 
     const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();

@@ -478,8 +478,9 @@ export function createApp(deps: ServerDeps) {
     queries.ohlcvList = args => listOhlcv(deps.ohlcvReadsRepo, args);
 
     const mutations: Record<string, Handler> = Object.create(null);
-    // Persists curves, so it lives with the mutations even though callers treat
-    // it as a read-through warm for /v2/execution/evaluate?sample=missing.
+    // Persists curves, so it lives with the mutations. Currently uncalled: the
+    // read-through warm it backed (sample=missing) went away with the graded
+    // evaluate contract. Kept alongside the parked depth cron.
     mutations.depthSampleMints = args => {
         const depthSampleDeps = deps.depthSampleDeps;
         if (!depthSampleDeps) throw new InvalidArgsError('depth sampling is not configured on this service');

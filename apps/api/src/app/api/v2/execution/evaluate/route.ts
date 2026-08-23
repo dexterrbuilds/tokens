@@ -88,6 +88,13 @@ function validateAmounts(args: {
     });
 }
 
+/**
+ * Serverless ceiling for this route. Sits above the transport timeout (14s),
+ * which sits above the fan-out budget (12s), so the innermost layer is the one
+ * that gives up and can still answer with partial results.
+ */
+export const maxDuration = 30;
+
 /** GET /api/v2/execution/evaluate — uncached, exact-mint Titan and Jupiter quotes. */
 export const GET = route(
     (request: Request) =>

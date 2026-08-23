@@ -9,6 +9,7 @@ import {
     type ExactQuoteClient,
     type JupiterExactQuoteClient,
     type LiveQuoteDeps,
+    type QuoteUnavailableReason,
 } from './liveQuotes';
 import type { DepthQuote, DepthQuoteClient } from './crons.depth';
 
@@ -82,7 +83,7 @@ describe('executionQuotesLive', () => {
     });
 
     it('quotes buys from USDC into the exact selected mint and preserves raw data', async () => {
-        const calls: Array<{ inputMint: string; outputMint: string; amountRaw: string }> = [];
+        const calls: Array<{ inputMint: string; outputMint: string; amountRaw: string; timeoutMs?: number }> = [];
         const result = await executionQuotesLive(
             deps(async args => {
                 calls.push(args);
@@ -92,7 +93,8 @@ describe('executionQuotesLive', () => {
         );
 
         expect(result).toMatchObject({ providers: ['jupiter', 'titan'], mint: MINT, side: 'buy', quoteMint: USDC });
-        expect(calls).toEqual([
+        // Provider calls also carry a per-call timeout derived from the budget.
+        expect(calls.map(({ inputMint, outputMint, amountRaw }) => ({ inputMint, outputMint, amountRaw }))).toEqual([
             { inputMint: USDC, outputMint: MINT, amountRaw: '10000000000' },
             { inputMint: USDC, outputMint: MINT, amountRaw: '25000000000' },
         ]);
@@ -117,7 +119,7 @@ describe('executionQuotesLive', () => {
             }),
             { mint: MINT, side: 'sell', amounts: ['12.50000001'], tokenDecimals: 8 },
         );
-        expect(calls[0]).toEqual({ inputMint: MINT, outputMint: USDC, amountRaw: '1250000001' });
+        expect(calls[0]).toMatchObject({ inputMint: MINT, outputMint: USDC, amountRaw: '1250000001' });
         expect(result.entries[0]?.request).toEqual({ unit: 'token', amount: '12.50000001', rawAmount: '1250000001' });
         await expect(
             executionQuotesLive(deps(async () => null), {
@@ -180,12 +182,20 @@ describe('executionQuotesLive', () => {
         for (const entry of result.entries) {
             expect(entry).toMatchObject({
                 status: 'unavailable',
-                reason: 'quote_unavailable',
                 inAmountRaw: null,
                 outAmountRaw: null,
                 route: [],
             });
+            // Both rungs end unavailable, but for reasons the caller can act on:
+            // a null quote is a market answer, a thrown error is not.
+            if (entry.status !== 'unavailable') throw new Error('expected an unavailable entry');
+            expect(entry.reason).toBe('no_route');
         }
+        const jupiterReasons = result.entries.map(entry => {
+            const candidate = entry.candidates.find(c => c.provider === 'jupiter')!;
+            return candidate.status === 'unavailable' ? candidate.reason : 'available';
+        });
+        expect(jupiterReasons).toEqual(['no_route', 'error']);
     });
 
     it('selects Titan only when its raw output is greater and Jupiter on ties', async () => {
@@ -300,5 +310,90 @@ describe('depthSampleMints', () => {
         const failed = sampleDeps({ handler: async () => null });
         expect(await depthSampleMints(failed.deps, { mints: [MINT] })).toMatchObject({ sampled: [MINT] });
         expect(failed.upserts).toEqual([{ mint: MINT, points: 0 }]);
+    });
+});
+
+describe('executionQuotesLive failure classification', () => {
+    it('reports no_route when a provider has no route, distinct from an operational failure', async () => {
+        const result = await executionQuotesLive(deps(async () => null), {
+            mint: MINT,
+            side: 'buy',
+            amounts: ['10000'],
+            tokenDecimals: 8,
+        });
+        const jupiter = result.entries[0]!.candidates.find(c => c.provider === 'jupiter')!;
+        const titan = result.entries[0]!.candidates.find(c => c.provider === 'titan')!;
+        if (jupiter.status !== 'unavailable' || titan.status !== 'unavailable') {
+            throw new Error('expected both candidates to be unavailable');
+        }
+        expect(jupiter.reason).toBe('no_route');
+        // No Titan client configured at all is a config gap, not a market answer.
+        expect(titan.reason).toBe('error');
+        const entry = result.entries[0]!;
+        if (entry.status !== 'unavailable') throw new Error('expected an unavailable entry');
+        expect(entry.reason).toBe('no_route');
+    });
+
+    it('maps carried and inferred error shapes to their reasons', async () => {
+        const cases: Array<{ thrown: unknown; expected: QuoteUnavailableReason }> = [
+            { thrown: Object.assign(new Error('nope'), { quoteReason: 'auth' }), expected: 'auth' },
+            { thrown: Object.assign(new Error('bad bytes'), { quoteReason: 'malformed' }), expected: 'malformed' },
+            { thrown: new DOMException('too slow', 'TimeoutError'), expected: 'timeout' },
+            { thrown: { _tag: 'UpstreamHttpError', status: 403 }, expected: 'auth' },
+            { thrown: { _tag: 'UpstreamDataError' }, expected: 'malformed' },
+            { thrown: new Error('who knows'), expected: 'error' },
+        ];
+
+        for (const { thrown, expected } of cases) {
+            const result = await executionQuotesLive(
+                deps(async () => {
+                    throw thrown;
+                }),
+                { mint: MINT, side: 'buy', amounts: ['10000'], tokenDecimals: 8 },
+            );
+            const jupiter = result.entries[0]!.candidates.find(c => c.provider === 'jupiter')!;
+            if (jupiter.status !== 'unavailable') throw new Error('expected an unavailable candidate');
+            expect(jupiter.reason).toBe(expected);
+        }
+    });
+
+    it('returns partial results instead of failing when the budget runs out', async () => {
+        // Clock jumps past the budget after the first batch resolves.
+        let calls = 0;
+        let clock = 1_700_000_000_000;
+        const result = await executionQuotesLive(
+            deps(
+                async () => {
+                    calls += 1;
+                    clock += 9_000;
+                    return exactQuote('10000000000');
+                },
+                () => clock,
+            ),
+            { mint: MINT, side: 'buy', amounts: ['10000', '100000', '1000000'], tokenDecimals: 8, timeoutMs: 2_000 },
+        );
+
+        expect(result.entries).toHaveLength(3);
+        // First batch quoted; the rest are reported as timed out, not dropped.
+        expect(result.entries[0]!.status).toBe('available');
+        const timedOut = result.entries.filter(
+            entry => entry.status === 'unavailable' && entry.reason === 'timeout',
+        );
+        expect(timedOut.length).toBeGreaterThan(0);
+        // Timed-out rungs never reach the providers.
+        expect(calls).toBeLessThan(3);
+    });
+
+    it('passes a per-call timeout down to the providers', async () => {
+        const seen: Array<number | undefined> = [];
+        await executionQuotesLive(
+            deps(async args => {
+                seen.push(args.timeoutMs);
+                return exactQuote(args.amountRaw);
+            }),
+            { mint: MINT, side: 'buy', amounts: ['10000'], tokenDecimals: 8, timeoutMs: 6_000 },
+        );
+        expect(seen[0]).toBeGreaterThan(0);
+        expect(seen[0]).toBeLessThanOrEqual(6_000);
     });
 });

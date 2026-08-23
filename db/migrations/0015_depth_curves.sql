@@ -1,6 +1,8 @@
 -- Price-impact curves per variant mint, sampled from an aggregator quote API
 -- at a ladder of USD sizes (see refresh-depth-curves in cloudrun-assets).
--- Backs the size-aware fields of GET /v2/execution/route. Impact is derived
+-- Fed the graded depth surface. Currently parked: the sampler cron is disabled
+-- and /v2/execution/evaluate serves live quote comparison instead, so nothing
+-- reads this table today. Kept so the graded view can return without a rebuild. Impact is derived
 -- from the ladder itself (effective price per rung vs. the smallest rung),
 -- so rows are comparable across sources.
 

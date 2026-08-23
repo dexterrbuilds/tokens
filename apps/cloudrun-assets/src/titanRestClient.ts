@@ -2,7 +2,13 @@ import { decode } from '@msgpack/msgpack';
 import bs58 from 'bs58';
 
 import { withExternalTiming } from './externalTiming';
-import type { ExactQuote, ExactQuoteClient, ExecutionRouteStep } from './handlers/liveQuotes';
+import type {
+    ExactQuote,
+    ExactQuoteClient,
+    ExecutionRouteStep,
+    QuoteReasonCarrier,
+    QuoteUnavailableReason,
+} from './handlers/liveQuotes';
 
 export const TITAN_DEMO_BASE_URL = 'https://us1.api.demo.titan.exchange';
 export const TITAN_DEFAULT_QUOTE_USER_PUBLIC_KEY = 'Fake111111111111111111111111111111111111111';
@@ -11,7 +17,11 @@ const QUOTE_PATH = '/api/v1/quote/swap';
 
 export interface TitanRestClientOptions {
     authToken: string;
-    baseUrl?: string;
+    /**
+     * Required: TITAN_DEMO_BASE_URL points at Titan's demo cluster, so silently
+     * defaulting to it would quote demo liquidity in production.
+     */
+    baseUrl: string;
     userPublicKey?: string;
     fetch?: typeof globalThis.fetch;
     maxRetries?: number;
@@ -19,17 +29,22 @@ export interface TitanRestClientOptions {
     sleep?: (ms: number) => Promise<void>;
 }
 
-export class TitanRestHttpError extends Error {
+export class TitanRestHttpError extends Error implements QuoteReasonCarrier {
+    readonly quoteReason: QuoteUnavailableReason;
+
     constructor(
         readonly status: number,
         readonly responseBody: string,
     ) {
         super(`Titan REST quote failed with HTTP ${status}`);
         this.name = 'TitanRestHttpError';
+        this.quoteReason = status === 401 || status === 403 ? 'auth' : 'error';
     }
 }
 
-export class TitanRestMalformedResponseError extends Error {
+export class TitanRestMalformedResponseError extends Error implements QuoteReasonCarrier {
+    readonly quoteReason: QuoteUnavailableReason = 'malformed';
+
     constructor(cause: unknown) {
         super('Titan REST returned malformed MessagePack', { cause });
         this.name = 'TitanRestMalformedResponseError';
@@ -97,7 +112,31 @@ function routeSteps(value: unknown): ExecutionRouteStep[] {
     });
 }
 
-function normalizeQuote(value: unknown): ExactQuote | null {
+/**
+ * Pick the best quote for the pair/amount we actually requested. Titan echoes
+ * the trade it priced, so an exact-out or otherwise mismatched response is
+ * dropped rather than allowed to win the comparison.
+ */
+/**
+ * The route's declared endpoints must match the requested pair when Titan
+ * reports them. Steps that omit mints are tolerated (the field is optional).
+ */
+function routeMatchesPair(
+    steps: ExecutionRouteStep[],
+    expected: { inputMint: string; outputMint: string },
+): boolean {
+    if (steps.length === 0) return true;
+    const first = steps[0]!;
+    const last = steps[steps.length - 1]!;
+    if (first.inputMint !== null && first.inputMint !== expected.inputMint) return false;
+    if (last.outputMint !== null && last.outputMint !== expected.outputMint) return false;
+    return true;
+}
+
+function normalizeQuote(
+    value: unknown,
+    expected: { inputMint: string; outputMint: string; amountRaw: string },
+): ExactQuote | null {
     const root = asRecord(value);
     const quotes = asRecord(root?.quotes);
     if (!quotes) return null;
@@ -109,12 +148,18 @@ function normalizeQuote(value: unknown): ExactQuote | null {
         const inAmountRaw = integerString(quote.inAmount);
         const outAmountRaw = integerString(quote.outAmount);
         if (!inAmountRaw || !outAmountRaw) continue;
+        // Exact-in: the priced input must be exactly what we asked for.
+        if (inAmountRaw !== expected.amountRaw) continue;
+        const steps = routeSteps(quote.steps);
+        if (!routeMatchesPair(steps, expected)) continue;
         const contextSlotRaw = finiteNumber(quote.contextSlot);
         const candidate: ExactQuote = {
             inAmountRaw,
             outAmountRaw,
+            // Titan's quote payload carries no price-impact field; the caller
+            // derives a comparable impact from a reference quote instead.
             priceImpactPct: null,
-            route: routeSteps(quote.steps),
+            route: steps,
             contextSlot:
                 contextSlotRaw !== null && Number.isSafeInteger(contextSlotRaw) && contextSlotRaw > 0
                     ? contextSlotRaw
@@ -130,17 +175,24 @@ function shouldRetryStatus(status: number): boolean {
 }
 
 export function makeTitanRestQuoteClient(options: TitanRestClientOptions): ExactQuoteClient {
-    const baseUrl = normalizeBaseUrl(options.baseUrl ?? TITAN_DEMO_BASE_URL);
+    const baseUrl = normalizeBaseUrl(options.baseUrl);
     const userPublicKey = (options.userPublicKey ?? TITAN_DEFAULT_QUOTE_USER_PUBLIC_KEY).trim();
     if (!isValidTitanQuotePublicKey(userPublicKey)) throw new Error('Invalid TITAN_QUOTE_USER_PUBLIC_KEY');
+    const authToken = options.authToken.trim();
     const fetchImpl = options.fetch ?? globalThis.fetch;
-    const maxRetries = options.maxRetries ?? 2;
-    const timeoutMs = options.timeoutMs ?? 15_000;
+    // One retry by default: this sits on an interactive request path, where a
+    // second retry costs more latency than the attempt is worth.
+    const maxRetries = options.maxRetries ?? 1;
+    const defaultTimeoutMs = options.timeoutMs ?? 8_000;
     const sleep = options.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
 
     return {
         id: 'titan',
         async fetchQuote(args): Promise<ExactQuote | null> {
+            // Split the caller's budget across attempts so retries can't
+            // overshoot the deadline it gave us.
+            const budgetMs = args.timeoutMs ?? defaultTimeoutMs;
+            const attemptTimeoutMs = Math.max(1_000, Math.floor(budgetMs / (maxRetries + 1)));
             const params = new URLSearchParams({
                 inputMint: args.inputMint,
                 outputMint: args.outputMint,
@@ -154,8 +206,8 @@ export function makeTitanRestQuoteClient(options: TitanRestClientOptions): Exact
                 try {
                     const response = await withExternalTiming('titan', url, () =>
                         fetchImpl(url, {
-                            headers: { Authorization: `Bearer ${options.authToken}` },
-                            signal: AbortSignal.timeout(timeoutMs),
+                            headers: { Authorization: `Bearer ${authToken}` },
+                            signal: AbortSignal.timeout(attemptTimeoutMs),
                         }),
                     );
                     if (!response.ok) {
@@ -174,7 +226,11 @@ export function makeTitanRestQuoteClient(options: TitanRestClientOptions): Exact
                     } catch (error) {
                         throw new TitanRestMalformedResponseError(error);
                     }
-                    return normalizeQuote(decoded);
+                    return normalizeQuote(decoded, {
+                        inputMint: args.inputMint,
+                        outputMint: args.outputMint,
+                        amountRaw: args.amountRaw,
+                    });
                 } catch (error) {
                     if (
                         error instanceof TitanRestHttpError ||
@@ -186,9 +242,8 @@ export function makeTitanRestQuoteClient(options: TitanRestClientOptions): Exact
                     await sleep(150 * 2 ** attempt);
                 }
             }
-            return null;
+            // The loop either returns or throws on its final attempt.
+            throw new Error('Titan REST quote exhausted retries without a result');
         },
     };
 }
-
-export const __testing = { normalizeQuote, routeSteps };

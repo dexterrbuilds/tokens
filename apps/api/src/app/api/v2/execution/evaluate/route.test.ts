@@ -222,7 +222,19 @@ describe('GET /api/v2/execution/evaluate', () => {
         const response = await request(`/api/v2/execution/evaluate?mint=${MINT}&amountUsd=10000`);
         expect(response.status).toBe(200);
         expect(response.headers.get('cache-control')).toBe('no-store');
-        expect(quoteArgs).toEqual({ mint: MINT, side: 'buy', amounts: ['10000'], tokenDecimals: 8 });
+        expect(
+            (({ mint, side, amounts, tokenDecimals }) => ({ mint, side, amounts, tokenDecimals }))(
+                quoteArgs as {
+                    mint: string;
+                    side: string;
+                    amounts: string[];
+                    tokenDecimals: number;
+                },
+            ),
+        ).toEqual({ mint: MINT, side: 'buy', amounts: ['10000'], tokenDecimals: 8 });
+        // The fan-out budget is sent explicitly so the handler, not the
+        // transport, is the layer that gives up first.
+        expect((quoteArgs as { timeoutMs?: number }).timeoutMs).toBe(12_000);
 
         const body = await response.json();
         expect({ mint: body.mint, side: body.side, providers: body.providers, token: body.token, meta: body.meta }).toEqual({
@@ -336,7 +348,16 @@ describe('GET /api/v2/execution/evaluate', () => {
         });
         const response = await request(`/api/v2/execution/evaluate?mint=${MINT}&side=sell&tokenAmount=12.5`);
         expect(response.status).toBe(200);
-        expect(quoteArgs).toEqual({ mint: MINT, side: 'sell', amounts: ['12.5'], tokenDecimals: 8 });
+        expect(
+            (({ mint, side, amounts, tokenDecimals }) => ({ mint, side, amounts, tokenDecimals }))(
+                quoteArgs as {
+                    mint: string;
+                    side: string;
+                    amounts: string[];
+                    tokenDecimals: number;
+                },
+            ),
+        ).toEqual({ mint: MINT, side: 'sell', amounts: ['12.5'], tokenDecimals: 8 });
         const body = await response.json();
         expect({ mint: body.quotes[0].input.mint, symbol: body.quotes[0].input.symbol, amount: body.quotes[0].input.amount }).toEqual({ mint: MINT, symbol: 'cbBTC', amount: '12.5' });
         expect({ mint: body.quotes[0].output.mint, symbol: body.quotes[0].output.symbol, amount: body.quotes[0].output.amount }).toEqual({ mint: USDC, symbol: 'USDC', amount: '987.654321' });
@@ -424,7 +445,16 @@ describe('GET /api/v2/execution/evaluate', () => {
         marketMetadataExists = true;
         const response = await request(`/api/v2/execution/evaluate?mint=${MINT}&amountUsd=10000`);
         expect(response.status).toBe(200);
-        expect(quoteArgs).toEqual({ mint: MINT, side: 'buy', amounts: ['10000'], tokenDecimals: 8 });
+        expect(
+            (({ mint, side, amounts, tokenDecimals }) => ({ mint, side, amounts, tokenDecimals }))(
+                quoteArgs as {
+                    mint: string;
+                    side: string;
+                    amounts: string[];
+                    tokenDecimals: number;
+                },
+            ),
+        ).toEqual({ mint: MINT, side: 'buy', amounts: ['10000'], tokenDecimals: 8 });
     });
 
     it('falls back to Jupiter token metadata when local rows omit decimals', async () => {
@@ -434,7 +464,16 @@ describe('GET /api/v2/execution/evaluate', () => {
         jupiterMetadataExists = true;
         const response = await request(`/api/v2/execution/evaluate?mint=${MINT}&amountUsd=10000`);
         expect(response.status).toBe(200);
-        expect(quoteArgs).toEqual({ mint: MINT, side: 'buy', amounts: ['10000'], tokenDecimals: 8 });
+        expect(
+            (({ mint, side, amounts, tokenDecimals }) => ({ mint, side, amounts, tokenDecimals }))(
+                quoteArgs as {
+                    mint: string;
+                    side: string;
+                    amounts: string[];
+                    tokenDecimals: number;
+                },
+            ),
+        ).toEqual({ mint: MINT, side: 'buy', amounts: ['10000'], tokenDecimals: 8 });
     });
 
     it('retains the execution:read scope', async () => {

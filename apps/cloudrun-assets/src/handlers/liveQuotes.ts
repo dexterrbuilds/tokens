@@ -13,6 +13,16 @@ const MIN_BUY_RAW_AMOUNT = 1_000_000n;
 const MAX_BUY_RAW_AMOUNT = 50_000_000n * 1_000_000n;
 const MAX_U64 = 18_446_744_073_709_551_615n;
 const QUOTE_CONCURRENCY = 2;
+/**
+ * Total wall-clock budget for one fan-out. Sits under the API's cloudRunQuery
+ * timeout (15s) which sits under the web proxy's (20s), so the innermost layer
+ * gives up first and we can return partial results instead of a blanket 500.
+ */
+const DEFAULT_FANOUT_BUDGET_MS = 12_000;
+const MIN_FANOUT_BUDGET_MS = 2_000;
+const MAX_FANOUT_BUDGET_MS = 20_000;
+/** Floor for a single provider call, so the last batch is never starved. */
+const MIN_PROVIDER_TIMEOUT_MS = 1_500;
 const USDC_DECIMALS = 6;
 
 export type ExecutionQuoteSide = 'buy' | 'sell';
@@ -47,7 +57,13 @@ export interface JupiterTokenMetadata {
 
 export interface ExactQuoteClient {
     id: ExecutionQuoteProvider;
-    fetchQuote(args: { inputMint: string; outputMint: string; amountRaw: string }): Promise<ExactQuote | null>;
+    fetchQuote(args: {
+        inputMint: string;
+        outputMint: string;
+        amountRaw: string;
+        /** Per-call deadline so the caller can enforce its own budget. */
+        timeoutMs?: number;
+    }): Promise<ExactQuote | null>;
 }
 
 export interface JupiterExactQuoteClient extends ExactQuoteClient {
@@ -59,6 +75,36 @@ export interface LiveQuoteDeps {
     jupiterQuoteSource: JupiterExactQuoteClient;
     titanQuoteSource?: ExactQuoteClient;
     now: () => number;
+}
+
+/**
+ * Why a provider produced no usable quote. `no_route` is a real market answer;
+ * everything else is an operational failure we should be able to see.
+ */
+export const QUOTE_UNAVAILABLE_REASONS = ['no_route', 'timeout', 'auth', 'malformed', 'error'] as const;
+export type QuoteUnavailableReason = (typeof QUOTE_UNAVAILABLE_REASONS)[number];
+
+/** Errors may carry a reason so callers classify without importing each client. */
+export interface QuoteReasonCarrier {
+    quoteReason: QuoteUnavailableReason;
+}
+
+export function quoteReasonOf(error: unknown): QuoteUnavailableReason {
+    if (typeof error === 'object' && error !== null) {
+        const carried = (error as Partial<QuoteReasonCarrier>).quoteReason;
+        if (carried && QUOTE_UNAVAILABLE_REASONS.includes(carried)) return carried;
+
+        const tag = (error as { _tag?: unknown })._tag;
+        if (tag === 'UpstreamDataError') return 'malformed';
+        if (tag === 'RequestTimeoutError' || tag === 'TimeoutException') return 'timeout';
+        if (tag === 'UpstreamHttpError') {
+            const status = (error as { status?: unknown }).status;
+            if (status === 401 || status === 403) return 'auth';
+        }
+        const name = (error as { name?: unknown }).name;
+        if (name === 'AbortError' || name === 'TimeoutError') return 'timeout';
+    }
+    return 'error';
 }
 
 export interface ExecutionQuoteRequest {
@@ -81,7 +127,7 @@ export type ExecutionQuoteCandidate =
     | {
           provider: ExecutionQuoteProvider;
           status: 'unavailable';
-          reason: 'quote_unavailable';
+          reason: QuoteUnavailableReason;
           inAmountRaw: null;
           outAmountRaw: null;
           priceImpactPct: null;
@@ -106,7 +152,7 @@ export type ExecutionQuoteEntry =
     | {
           request: ExecutionQuoteRequest;
           status: 'unavailable';
-          reason: 'quote_unavailable';
+          reason: QuoteUnavailableReason;
           provider: null;
           inAmountRaw: null;
           outAmountRaw: null;
@@ -162,11 +208,12 @@ export function parseDecimalAmount(raw: string, decimals: number): ExecutionQuot
 function unavailableCandidate(
     provider: ExecutionQuoteProvider,
     quotedAt: string,
+    reason: QuoteUnavailableReason = 'no_route',
 ): Extract<ExecutionQuoteCandidate, { status: 'unavailable' }> {
     return {
         provider,
         status: 'unavailable',
-        reason: 'quote_unavailable',
+        reason,
         inAmountRaw: null,
         outAmountRaw: null,
         priceImpactPct: null,
@@ -180,13 +227,14 @@ async function fetchCandidate(
     deps: LiveQuoteDeps,
     client: ExactQuoteClient | undefined,
     provider: ExecutionQuoteProvider,
-    args: { inputMint: string; outputMint: string; amountRaw: string },
+    args: { inputMint: string; outputMint: string; amountRaw: string; timeoutMs?: number },
 ): Promise<ExecutionQuoteCandidate> {
-    if (!client) return unavailableCandidate(provider, new Date(deps.now()).toISOString());
+    // No client configured is an operational gap, not a market answer.
+    if (!client) return unavailableCandidate(provider, new Date(deps.now()).toISOString(), 'error');
     try {
         const quote = await client.fetchQuote(args);
         const quotedAt = new Date(deps.now()).toISOString();
-        if (!quote) return unavailableCandidate(provider, quotedAt);
+        if (!quote) return unavailableCandidate(provider, quotedAt, 'no_route');
         return {
             provider,
             status: 'available',
@@ -197,8 +245,20 @@ async function fetchCandidate(
             contextSlot: quote.contextSlot,
             quotedAt,
         };
-    } catch {
-        return unavailableCandidate(provider, new Date(deps.now()).toISOString());
+    } catch (error) {
+        const reason = quoteReasonOf(error);
+        // Market conditions are expected; misconfiguration and schema drift are not.
+        if (reason === 'auth' || reason === 'malformed') {
+            console.warn(
+                JSON.stringify({
+                    event: 'execution_quote_failed',
+                    provider,
+                    reason,
+                    message: error instanceof Error ? error.message : String(error),
+                }),
+            );
+        }
+        return unavailableCandidate(provider, new Date(deps.now()).toISOString(), reason);
     }
 }
 
@@ -207,7 +267,13 @@ export async function executionQuotesLive(deps: LiveQuoteDeps, args: unknown): P
     if (typeof args !== 'object' || args === null) {
         throw new InvalidArgsError('args must be an object');
     }
-    const a = args as { mint?: unknown; side?: unknown; amounts?: unknown; tokenDecimals?: unknown };
+    const a = args as {
+        mint?: unknown;
+        side?: unknown;
+        amounts?: unknown;
+        tokenDecimals?: unknown;
+        timeoutMs?: unknown;
+    };
     if (typeof a.mint !== 'string' || !a.mint.trim()) throw new InvalidArgsError('mint must be a string');
     const side = parseSide(a.side);
     if (!Array.isArray(a.amounts) || a.amounts.some(item => typeof item !== 'string')) {
@@ -239,9 +305,49 @@ export async function executionQuotesLive(deps: LiveQuoteDeps, args: unknown): P
     const mint = a.mint.trim();
     const inputMint = side === 'buy' ? DEPTH_USDC_QUOTE_MINT : mint;
     const outputMint = side === 'buy' ? mint : DEPTH_USDC_QUOTE_MINT;
+
+    const budgetMs =
+        typeof a.timeoutMs === 'number' && Number.isFinite(a.timeoutMs)
+            ? Math.min(MAX_FANOUT_BUDGET_MS, Math.max(MIN_FANOUT_BUDGET_MS, Math.floor(a.timeoutMs)))
+            : DEFAULT_FANOUT_BUDGET_MS;
+    const startedAt = deps.now();
+    const deadline = startedAt + budgetMs;
+    const batchCount = Math.ceil(requests.length / QUOTE_CONCURRENCY);
+
     const entries: ExecutionQuoteEntry[] = [];
     for (let i = 0; i < requests.length; i += QUOTE_CONCURRENCY) {
         const batch = requests.slice(i, i + QUOTE_CONCURRENCY);
+        const remainingMs = deadline - deps.now();
+
+        // Out of budget: report the rest as timed out rather than throwing away
+        // the quotes we already have.
+        if (remainingMs < MIN_PROVIDER_TIMEOUT_MS) {
+            const quotedAt = new Date(deps.now()).toISOString();
+            for (const request of batch) {
+                entries.push({
+                    request,
+                    status: 'unavailable' as const,
+                    reason: 'timeout' as const,
+                    provider: null,
+                    inAmountRaw: null,
+                    outAmountRaw: null,
+                    priceImpactPct: null,
+                    route: [] as [],
+                    contextSlot: null,
+                    quotedAt,
+                    candidates: [
+                        unavailableCandidate('jupiter', quotedAt, 'timeout'),
+                        unavailableCandidate('titan', quotedAt, 'timeout'),
+                    ],
+                });
+            }
+            continue;
+        }
+
+        // Spread what's left over the batches still to run.
+        const batchesLeft = Math.max(1, batchCount - Math.floor(i / QUOTE_CONCURRENCY));
+        const providerTimeoutMs = Math.max(MIN_PROVIDER_TIMEOUT_MS, Math.floor(remainingMs / batchesLeft));
+
         entries.push(
             ...(await Promise.all(
                 batch.map(async request => {
@@ -249,6 +355,7 @@ export async function executionQuotesLive(deps: LiveQuoteDeps, args: unknown): P
                         inputMint,
                         outputMint,
                         amountRaw: request.rawAmount,
+                        timeoutMs: providerTimeoutMs,
                     };
                     const candidates = await Promise.all([
                         fetchCandidate(deps, deps.jupiterQuoteSource, 'jupiter', quoteArgs),
@@ -268,7 +375,8 @@ export async function executionQuotesLive(deps: LiveQuoteDeps, args: unknown): P
                         return {
                             request,
                             status: 'unavailable' as const,
-                            reason: 'quote_unavailable' as const,
+                            // Both providers answered; neither had a route.
+                            reason: 'no_route' as const,
                             provider: null,
                             inAmountRaw: null,
                             outAmountRaw: null,
@@ -325,8 +433,10 @@ export interface DepthSampleResult {
 }
 
 /**
- * On-demand depth sampling for mints the cron hasn't covered yet — the
- * read-through path behind `sample=missing` on /v2/execution/evaluate. The
+ * On-demand depth sampling for mints the cron hasn't covered yet. Currently
+ * uncalled: the `sample=missing` param it served went away with the graded
+ * evaluate contract, and the depth cron is parked. Kept working so the graded
+ * surface can return without a rebuild. The
  * first visitor to an unsampled asset pays a few seconds once; the result is
  * persisted, so every later view reads the stored curve. Bounded hard:
  * ≤ SAMPLE_MAX_MINTS per call, and mints sampled within SAMPLE_MIN_AGE_MS are

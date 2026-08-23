@@ -20,6 +20,7 @@ describe('makeTitanRestQuoteClient', () => {
         let url = '';
         let authorization = '';
         const client = makeTitanRestQuoteClient({
+            baseUrl: TITAN_DEMO_BASE_URL,
             authToken: 'secret',
             fetch: (async (input, init) => {
                 url = String(input);
@@ -97,20 +98,22 @@ describe('makeTitanRestQuoteClient', () => {
     it('retries transient failures and degrades deterministic no-route responses', async () => {
         let calls = 0;
         const client = makeTitanRestQuoteClient({
+            baseUrl: TITAN_DEMO_BASE_URL,
             authToken: 'secret',
             sleep: async () => undefined,
             fetch: (async () => {
                 calls += 1;
-                if (calls < 3) return new Response('temporary', { status: 500 });
+                if (calls < 2) return new Response('temporary', { status: 500 });
                 return messagePackResponse({ quotes: { Titan: { inAmount: 100, outAmount: 95, steps: [] } } });
             }) as unknown as typeof fetch,
         });
         expect((await client.fetchQuote({ inputMint: INPUT, outputMint: OUTPUT, amountRaw: '100' }))?.outAmountRaw).toBe(
             '95',
         );
-        expect(calls).toBe(3);
+        expect(calls).toBe(2);
 
         const unavailable = makeTitanRestQuoteClient({
+            baseUrl: TITAN_DEMO_BASE_URL,
             authToken: 'secret',
             fetch: (async () => new Response('no routes', { status: 404 })) as unknown as typeof fetch,
         });
@@ -118,11 +121,14 @@ describe('makeTitanRestQuoteClient', () => {
     });
 
     it('rejects invalid quote keys and malformed MessagePack', async () => {
-        expect(() => makeTitanRestQuoteClient({ authToken: 'secret', userPublicKey: 'bad' })).toThrow(
+        expect(() => makeTitanRestQuoteClient({
+            baseUrl: TITAN_DEMO_BASE_URL,
+            authToken: 'secret', userPublicKey: 'bad' })).toThrow(
             'Invalid TITAN_QUOTE_USER_PUBLIC_KEY',
         );
         let malformedCalls = 0;
         const client = makeTitanRestQuoteClient({
+            baseUrl: TITAN_DEMO_BASE_URL,
             authToken: 'secret',
             fetch: (async () => {
                 malformedCalls += 1;
@@ -136,6 +142,7 @@ describe('makeTitanRestQuoteClient', () => {
     it('does not retry authentication failures and exhausts rate-limit and transport retries', async () => {
         let authCalls = 0;
         const authFailure = makeTitanRestQuoteClient({
+            baseUrl: TITAN_DEMO_BASE_URL,
             authToken: 'bad',
             fetch: (async () => {
                 authCalls += 1;
@@ -148,7 +155,8 @@ describe('makeTitanRestQuoteClient', () => {
         for (const mode of ['rate-limit', 'transport'] as const) {
             let calls = 0;
             const client = makeTitanRestQuoteClient({
-                authToken: 'secret',
+            baseUrl: TITAN_DEMO_BASE_URL,
+            authToken: 'secret',
                 sleep: async () => undefined,
                 fetch: (async () => {
                     calls += 1;
@@ -157,7 +165,74 @@ describe('makeTitanRestQuoteClient', () => {
                 }) as unknown as typeof fetch,
             });
             await expect(client.fetchQuote({ inputMint: INPUT, outputMint: OUTPUT, amountRaw: '100' })).rejects.toThrow();
-            expect(calls).toBe(3);
+            // Default is one retry: two attempts total on the interactive path.
+            expect(calls).toBe(2);
         }
+    });
+});
+
+describe('makeTitanRestQuoteClient response validation', () => {
+    it('rejects a quote priced for a different input amount', async () => {
+        const client = makeTitanRestQuoteClient({
+            baseUrl: TITAN_DEMO_BASE_URL,
+            authToken: 'secret',
+            fetch: (async () =>
+                // Exact-out style response: Titan priced 99, we asked for 100.
+                messagePackResponse({
+                    quotes: { Titan: { inAmount: 99, outAmount: 500, steps: [] } },
+                })) as unknown as typeof fetch,
+        });
+        await expect(
+            client.fetchQuote({ inputMint: INPUT, outputMint: OUTPUT, amountRaw: '100' }),
+        ).resolves.toBeNull();
+    });
+
+    it('rejects a quote whose route endpoints do not match the requested pair', async () => {
+        const client = makeTitanRestQuoteClient({
+            baseUrl: TITAN_DEMO_BASE_URL,
+            authToken: 'secret',
+            fetch: (async () =>
+                messagePackResponse({
+                    quotes: {
+                        Titan: {
+                            inAmount: 100,
+                            outAmount: 500,
+                            steps: [{ inputMint: OUTPUT, outputMint: INPUT, allocPpb: 1_000_000_000 }],
+                        },
+                    },
+                })) as unknown as typeof fetch,
+        });
+        await expect(
+            client.fetchQuote({ inputMint: INPUT, outputMint: OUTPUT, amountRaw: '100' }),
+        ).resolves.toBeNull();
+    });
+
+    it('accepts a matching quote and keeps a route that omits mints', async () => {
+        const client = makeTitanRestQuoteClient({
+            baseUrl: TITAN_DEMO_BASE_URL,
+            authToken: 'secret',
+            fetch: (async () =>
+                messagePackResponse({
+                    quotes: { Titan: { inAmount: 100, outAmount: 500, steps: [{ allocPpb: 1_000_000_000 }] } },
+                })) as unknown as typeof fetch,
+        });
+        const quote = await client.fetchQuote({ inputMint: INPUT, outputMint: OUTPUT, amountRaw: '100' });
+        expect(quote?.outAmountRaw).toBe('500');
+    });
+
+    it('splits the caller budget across attempts', async () => {
+        const timeouts: number[] = [];
+        const client = makeTitanRestQuoteClient({
+            baseUrl: TITAN_DEMO_BASE_URL,
+            authToken: 'secret',
+            fetch: (async (_input: unknown, init?: RequestInit) => {
+                // AbortSignal.timeout exposes no deadline, so assert indirectly:
+                // the signal must already exist and not be aborted at call time.
+                timeouts.push(init?.signal ? 1 : 0);
+                return messagePackResponse({ quotes: { Titan: { inAmount: 100, outAmount: 500, steps: [] } } });
+            }) as unknown as typeof fetch,
+        });
+        await client.fetchQuote({ inputMint: INPUT, outputMint: OUTPUT, amountRaw: '100', timeoutMs: 4_000 });
+        expect(timeouts).toEqual([1]);
     });
 });

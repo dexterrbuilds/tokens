@@ -14,7 +14,7 @@ import {
     makeTitanQuoteClient,
     makeWebacyClient,
 } from './clients';
-import { makeTitanRestQuoteClient } from './titanRestClient';
+import { makeTitanRestQuoteClient, TITAN_DEMO_BASE_URL } from './titanRestClient';
 import { parseAdminClerkUserIds, parseAdminEmails } from './adminAuth';
 import {
     getSql,
@@ -258,14 +258,32 @@ if (titanWsUrl && titanApiKey) {
 
 const jupiterApiKey = process.env.JUPITER_API_KEY?.trim();
 
+// Titan REST (live quote comparison) is configured independently of the
+// WebSocket depth client: different transport, different auth mechanism.
+// TITAN_REST_API_KEY falls back to TITAN_API_KEY so a single credential still
+// works, but the base URL must be explicit — TITAN_DEMO_BASE_URL is Titan's
+// demo cluster, and defaulting to it would quote demo liquidity in production.
+const titanRestApiKey = process.env.TITAN_REST_API_KEY?.trim() || titanApiKey;
+const titanRestBaseUrl = process.env.TITAN_REST_BASE_URL?.trim();
+const titanRestAllowDemo = process.env.TITAN_REST_ALLOW_DEMO?.trim().toLowerCase() === 'true';
+
 let titanRestQuoteSource: ReturnType<typeof makeTitanRestQuoteClient> | undefined;
-if (titanApiKey) {
+if (!titanRestApiKey) {
+    console.warn('[cloudrun-assets] TITAN_REST_API_KEY/TITAN_API_KEY not set — Titan quote comparison disabled');
+} else if (!titanRestBaseUrl && !titanRestAllowDemo) {
+    console.warn(
+        '[cloudrun-assets] TITAN_REST_BASE_URL not set — Titan quote comparison disabled ' +
+            '(set TITAN_REST_ALLOW_DEMO=true to quote Titan’s demo cluster in local dev)',
+    );
+} else {
+    const baseUrl = titanRestBaseUrl ?? TITAN_DEMO_BASE_URL;
+    if (!titanRestBaseUrl) {
+        console.warn(`[cloudrun-assets] Titan quote comparison using the DEMO cluster (${baseUrl})`);
+    }
     try {
         titanRestQuoteSource = makeTitanRestQuoteClient({
-            authToken: titanApiKey,
-            ...(process.env.TITAN_REST_BASE_URL?.trim()
-                ? { baseUrl: process.env.TITAN_REST_BASE_URL.trim() }
-                : {}),
+            authToken: titanRestApiKey,
+            baseUrl,
             ...(process.env.TITAN_QUOTE_USER_PUBLIC_KEY?.trim()
                 ? { userPublicKey: process.env.TITAN_QUOTE_USER_PUBLIC_KEY.trim() }
                 : {}),
