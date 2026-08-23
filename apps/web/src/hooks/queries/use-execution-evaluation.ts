@@ -40,21 +40,34 @@ export interface ExecutionQuoteRequestArgs {
     amounts: string[];
 }
 
+export const EVALUATE_ENDPOINT_PATH = '/api/v2/execution/evaluate';
+
+/**
+ * The request path for one evaluation.
+ *
+ * Exported because the page shows callers the exact request it is making: a
+ * snippet built by separate string-assembly would drift from the real call the
+ * first time a param changed, which is worse than showing no snippet at all.
+ * Both the fetch below and the displayed code come from here.
+ */
+export function buildEvaluateRequestPath(args: ExecutionQuoteRequestArgs): string {
+    const params = new URLSearchParams({ mint: args.mint, side: args.side });
+    const key = args.side === 'buy' ? 'amountUsd' : 'tokenAmount';
+    for (const amount of args.amounts) params.append(key, amount);
+    return `${EVALUATE_ENDPOINT_PATH}?${params.toString()}`;
+}
+
 export function useExecutionEvaluation() {
     const mutation = useMutation<ExecutionEvaluationResponse, unknown, ExecutionQuoteRequestArgs>({
         mutationKey: ['execution', 'evaluate'],
         retry: false,
-        mutationFn: async args => {
-            const params = new URLSearchParams({ mint: args.mint, side: args.side });
-            const key = args.side === 'buy' ? 'amountUsd' : 'tokenAmount';
-            for (const amount of args.amounts) params.append(key, amount);
-            return Effect.runPromise(
+        mutationFn: async args =>
+            Effect.runPromise(
                 apiJson<ExecutionEvaluationResponse>({
-                    url: `/api/v2/execution/evaluate?${params.toString()}`,
+                    url: buildEvaluateRequestPath(args),
                     init: { cache: 'no-store' },
                 }),
-            );
-        },
+            ),
     });
 
     return {

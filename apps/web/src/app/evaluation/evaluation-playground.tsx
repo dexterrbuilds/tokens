@@ -21,11 +21,13 @@ import {
 } from '@tokens/ui/select';
 
 import { QuoteComparisonTable } from './quote-comparison-table';
-import { useExecutionEvaluation, type ExecutionQuoteSide } from '@/hooks/queries/use-execution-evaluation';
 import {
-    CURATED_LIST_ORDER_WITHOUT_LSTS,
-    type CuratedTokenListIdWithoutLsts,
-} from '@/lib/curated-token-lists';
+    buildEvaluateRequestPath,
+    useExecutionEvaluation,
+    type ExecutionQuoteSide,
+} from '@/hooks/queries/use-execution-evaluation';
+import { EndpointRequestPanel, type EndpointRequestState } from './endpoint-request-panel';
+import { CURATED_LIST_ORDER_WITHOUT_LSTS, type CuratedTokenListIdWithoutLsts } from '@/lib/curated-token-lists';
 import { cleanTokenName } from '@/lib/logo-overrides';
 import { trackEvent } from '@/lib/posthog-client';
 
@@ -218,6 +220,7 @@ export function EvaluationPlayground() {
     const [requestedAmounts, setRequestedAmounts] = React.useState<string[]>([]);
     const [submittedCustom, setSubmittedCustom] = React.useState<string | null>(null);
     const { data, execute, isError, isPending, reset } = useExecutionEvaluation();
+    const [lastRequest, setLastRequest] = React.useState<EndpointRequestState | null>(null);
     const baseOptionGroups = React.useMemo(buildMintOptionGroups, []);
     const metadataQueries = useQueries({
         queries: CURATED_LIST_ORDER_WITHOUT_LSTS.map(listId => ({
@@ -257,6 +260,10 @@ export function EvaluationPlayground() {
             const startedAt = performance.now();
             try {
                 const response = await execute({ mint: selectedMint, side, amounts });
+                setLastRequest({
+                    durationMs: Math.round(performance.now() - startedAt),
+                    status: response ? 200 : 'error',
+                });
                 if (response) {
                     trackEvent('execution_quotes_completed', {
                         mint: selectedMint,
@@ -289,8 +296,21 @@ export function EvaluationPlayground() {
         setAmountError(null);
         setSubmittedCustom(null);
         setRequestedAmounts([]);
+        setLastRequest(null);
         reset();
     }, [selectedMint, side, reset]);
+
+    // What a submit right now would ask for. Drives both the request and the
+    // snippet beside it, so the code updates live as the form changes.
+    const pendingAmounts = React.useMemo(() => {
+        const custom = normalizeAmountInput(amountInput);
+        if (side === 'sell') return custom ? [custom] : [];
+        // A custom amount joins the curve rather than replacing it, so it can be
+        // read against the neighbouring rungs. Deduped: typing a size that is
+        // already a tier must not spend a second quote on it.
+        return [...new Set([...BUY_TIERS, ...(custom ? [custom] : [])])];
+    }, [amountInput, side]);
+    const requestPath = buildEvaluateRequestPath({ mint: selectedMint, side, amounts: pendingAmounts });
 
     const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -305,16 +325,12 @@ export function EvaluationPlayground() {
         }
         setAmountError(null);
         setSubmittedCustom(custom);
-        // A custom amount joins the curve rather than replacing it, so it can be
-        // read against the neighbouring rungs. Deduped: typing a size that is
-        // already a tier must not spend a second quote on it.
-        const amounts = side === 'buy' ? [...new Set([...BUY_TIERS, ...(custom ? [custom] : [])])] : [custom!];
-        void requestQuotes(amounts, custom !== null);
+        void requestQuotes(pendingAmounts, custom !== null);
     };
 
     return (
         <main className="flex min-h-screen justify-center bg-[#FAFAFA] px-4 py-16">
-            <div className="w-full max-w-5xl space-y-6">
+            <div className="w-full max-w-[1440px] space-y-6">
                 <header className="text-center">
                     <h1 className="text-title-lg text-text-extra-high">Execution evaluation</h1>
                     <p className="mt-2 text-body-md text-text-medium">
@@ -322,108 +338,138 @@ export function EvaluationPlayground() {
                     </p>
                 </header>
 
-                <form
-                    className="rounded-2xl border border-border-light bg-white p-4 shadow-[0_8px_40px_rgba(0,0,0,0.03)]"
-                    onSubmit={onSubmit}
-                >
-                    <fieldset>
-                        <legend className="mb-2 text-[11px] font-normal text-text-medium">Trade side</legend>
-                        <div className="inline-flex rounded-full border border-border-medium bg-gray-50 p-1">
-                            {(['buy', 'sell'] as const).map(value => (
-                                <button
-                                    key={value}
-                                    type="button"
-                                    aria-pressed={side === value}
-                                    className={`min-w-20 rounded-full px-4 py-2 text-[13px] font-medium transition-[background-color,color,box-shadow,transform] duration-150 ease-out active:scale-[0.97] motion-reduce:transition-none ${
-                                        side === value
-                                            ? 'bg-white text-text-extra-high shadow-sm'
-                                            : 'text-text-medium hover:text-text-high'
-                                    }`}
-                                    onClick={() => setSide(value)}
-                                >
-                                    {value === 'buy' ? 'Buy' : 'Sell'}
-                                </button>
-                            ))}
-                        </div>
-                    </fieldset>
-
-                    <label id="evaluation-asset-label" className="mt-4 mb-2 block text-[11px] font-normal text-text-medium">
-                        Token mint
-                    </label>
-                    <Select value={selectedMint} onValueChange={setSelectedMint}>
-                        <SelectTrigger
-                            aria-labelledby="evaluation-asset-label"
-                            className="h-[52px] border-border-medium bg-white text-left text-text-extra-high shadow-none focus:ring-border-medium [&>span]:!flex [&>span]:min-w-0 [&>span]:flex-1 [&>span]:text-left"
+                {/* One column of results, one of the request that produced them.
+                    Splits at xl only: the table needs ~980px, so below that the
+                    two side by side would just make the table scroll. */}
+                <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_380px] xl:items-start">
+                    <div className="min-w-0 space-y-6">
+                        <form
+                            className="rounded-2xl border border-border-light bg-white p-4 shadow-[0_8px_40px_rgba(0,0,0,0.03)]"
+                            onSubmit={onSubmit}
                         >
-                            <SelectValue placeholder="Select a mint">
-                                {selectedOption ? <MintOptionRow option={selectedOption} /> : null}
-                            </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent className="rounded-xl border-border-light [&>[aria-hidden=true]]:py-0 [&>div[data-radix-select-viewport]]:!pt-0">
-                            {optionGroups.map((group, index) => (
-                                <React.Fragment key={group.id}>
-                                    {index > 0 ? <SelectSeparator className="my-0.5 bg-border-extra-light" /> : null}
-                                    <SelectGroup>
-                                        <SelectLabel className="sticky top-0 z-10 block border-b border-border-extra-light bg-white px-2 py-1 text-[11px] font-semibold text-text-medium">
-                                            {group.label}
-                                        </SelectLabel>
-                                        {group.options.map(option => (
-                                            <SelectItem
-                                                key={option.mint}
-                                                value={option.mint}
-                                                textValue={`${option.name} ${option.symbol} ${option.mint}`}
-                                                className="py-2"
-                                            >
-                                                <MintOptionRow option={option} />
-                                            </SelectItem>
-                                        ))}
-                                    </SelectGroup>
-                                </React.Fragment>
-                            ))}
-                        </SelectContent>
-                    </Select>
+                            <fieldset>
+                                <legend className="mb-2 text-[11px] font-normal text-text-medium">Trade side</legend>
+                                <div className="inline-flex rounded-full border border-border-medium bg-gray-50 p-1">
+                                    {(['buy', 'sell'] as const).map(value => (
+                                        <button
+                                            key={value}
+                                            type="button"
+                                            aria-pressed={side === value}
+                                            className={`min-w-20 rounded-full px-4 py-2 text-[13px] font-medium transition-[background-color,color,box-shadow,transform] duration-150 ease-out active:scale-[0.97] motion-reduce:transition-none ${
+                                                side === value
+                                                    ? 'bg-white text-text-extra-high shadow-sm'
+                                                    : 'text-text-medium hover:text-text-high'
+                                            }`}
+                                            onClick={() => setSide(value)}
+                                        >
+                                            {value === 'buy' ? 'Buy' : 'Sell'}
+                                        </button>
+                                    ))}
+                                </div>
+                            </fieldset>
 
-                    <label htmlFor="execution-eval-amount" className="mt-4 mb-2 block text-[11px] font-normal text-text-medium">
-                        {side === 'buy'
-                            ? 'Custom buy amount (USD, optional)'
-                            : `Amount to sell (${selectedOption?.symbol ?? 'tokens'})`}
-                    </label>
-                    <div className="flex flex-col gap-2 sm:flex-row">
-                        <div className="relative flex-1">
-                            {side === 'buy' ? (
-                                <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-body-md text-text-medium">
-                                    $
-                                </span>
-                            ) : null}
-                            <Input
-                                id="execution-eval-amount"
-                                inputMode="decimal"
-                                placeholder={side === 'buy' ? '750,000' : '12.5'}
-                                className={`${side === 'buy' ? 'pl-7' : ''} tabular-nums`}
-                                value={amountInput}
-                                aria-invalid={amountError !== null}
-                                onChange={event => {
-                                    setAmountInput(event.target.value);
-                                    setAmountError(null);
-                                }}
-                            />
-                        </div>
-                        <Button type="submit" className="min-w-36" disabled={isPending || (side === 'sell' && !amountInput.trim())}>
-                            <RefreshCw className={isPending ? 'animate-spin motion-reduce:animate-none' : ''} />
-                            {isPending ? 'Getting quotes…' : data ? 'Refresh quotes' : 'Get quotes'}
-                        </Button>
+                            <label
+                                id="evaluation-asset-label"
+                                className="mt-4 mb-2 block text-[11px] font-normal text-text-medium"
+                            >
+                                Token mint
+                            </label>
+                            <Select value={selectedMint} onValueChange={setSelectedMint}>
+                                <SelectTrigger
+                                    aria-labelledby="evaluation-asset-label"
+                                    className="h-[52px] border-border-medium bg-white text-left text-text-extra-high shadow-none focus:ring-border-medium [&>span]:!flex [&>span]:min-w-0 [&>span]:flex-1 [&>span]:text-left"
+                                >
+                                    <SelectValue placeholder="Select a mint">
+                                        {selectedOption ? <MintOptionRow option={selectedOption} /> : null}
+                                    </SelectValue>
+                                </SelectTrigger>
+                                <SelectContent className="rounded-xl border-border-light [&>[aria-hidden=true]]:py-0 [&>div[data-radix-select-viewport]]:!pt-0">
+                                    {optionGroups.map((group, index) => (
+                                        <React.Fragment key={group.id}>
+                                            {index > 0 ? (
+                                                <SelectSeparator className="my-0.5 bg-border-extra-light" />
+                                            ) : null}
+                                            <SelectGroup>
+                                                <SelectLabel className="sticky top-0 z-10 block border-b border-border-extra-light bg-white px-2 py-1 text-[11px] font-semibold text-text-medium">
+                                                    {group.label}
+                                                </SelectLabel>
+                                                {group.options.map(option => (
+                                                    <SelectItem
+                                                        key={option.mint}
+                                                        value={option.mint}
+                                                        textValue={`${option.name} ${option.symbol} ${option.mint}`}
+                                                        className="py-2"
+                                                    >
+                                                        <MintOptionRow option={option} />
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectGroup>
+                                        </React.Fragment>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+
+                            <label
+                                htmlFor="execution-eval-amount"
+                                className="mt-4 mb-2 block text-[11px] font-normal text-text-medium"
+                            >
+                                {side === 'buy'
+                                    ? 'Custom buy amount (USD, optional)'
+                                    : `Amount to sell (${selectedOption?.symbol ?? 'tokens'})`}
+                            </label>
+                            <div className="flex flex-col gap-2 sm:flex-row">
+                                <div className="relative flex-1">
+                                    {side === 'buy' ? (
+                                        <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-body-md text-text-medium">
+                                            $
+                                        </span>
+                                    ) : null}
+                                    <Input
+                                        id="execution-eval-amount"
+                                        inputMode="decimal"
+                                        placeholder={side === 'buy' ? '750,000' : '12.5'}
+                                        className={`${side === 'buy' ? 'pl-7' : ''} tabular-nums`}
+                                        value={amountInput}
+                                        aria-invalid={amountError !== null}
+                                        onChange={event => {
+                                            setAmountInput(event.target.value);
+                                            setAmountError(null);
+                                        }}
+                                    />
+                                </div>
+                                <Button
+                                    type="submit"
+                                    className="min-w-36"
+                                    disabled={isPending || (side === 'sell' && !amountInput.trim())}
+                                >
+                                    <RefreshCw className={isPending ? 'animate-spin motion-reduce:animate-none' : ''} />
+                                    {isPending ? 'Getting quotes…' : data ? 'Refresh quotes' : 'Get quotes'}
+                                </Button>
+                            </div>
+                            {amountError ? <p className="mt-2 text-[11px] text-red-700">{amountError}</p> : null}
+                        </form>
+
+                        <QuoteComparisonTable
+                            data={data}
+                            isPending={isPending}
+                            isError={isError}
+                            requestedAmounts={requestedAmounts}
+                            customAmount={submittedCustom}
+                            side={side}
+                        />
                     </div>
-                    {amountError ? <p className="mt-2 text-[11px] text-red-700">{amountError}</p> : null}
-                </form>
 
-                <QuoteComparisonTable
-                    data={data}
-                    isPending={isPending}
-                    isError={isError}
-                    requestedAmounts={requestedAmounts}
-                    customAmount={submittedCustom}
-                    side={side}
-                />
+                    {/* Sticky so the request stays in view while the curve scrolls. */}
+                    <div className="min-w-0 xl:sticky xl:top-8">
+                        <EndpointRequestPanel
+                            requestPath={requestPath}
+                            data={data}
+                            isPending={isPending}
+                            isError={isError}
+                            lastRequest={lastRequest}
+                        />
+                    </div>
+                </div>
             </div>
         </main>
     );
