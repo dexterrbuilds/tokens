@@ -97,9 +97,12 @@ function variantLabel(variant: ExecutionEvaluationVariant): string {
 export function ExecutionEvaluationCard({
     assetId,
     activeMint,
+    verbose = false,
 }: {
     assetId: string;
     activeMint?: string | null;
+    /** Standalone use (e.g. /evaluation): show loading and error states instead of rendering nothing. */
+    verbose?: boolean;
 }) {
     const [amountInput, setAmountInput] = React.useState('');
     const [debouncedAmount, setDebouncedAmount] = React.useState<number | null>(null);
@@ -155,9 +158,31 @@ export function ExecutionEvaluationCard({
         });
     }, [assetId, debouncedAmount, sizedVariants]);
 
-    if (!data) return null;
-    // Nothing evaluable at all (no on-chain variants): keep the page unchanged.
-    if (data.variants.length === 0) return null;
+    if (!data) {
+        if (!verbose) return null;
+        return (
+            <section className="rounded-2xl border border-border-light bg-white p-4 shadow-[0_8px_40px_rgba(0,0,0,0.03)]">
+                <h2 className="text-title-sm text-text-extra-high">Execution quality</h2>
+                <p className="mt-2 text-body-md text-text-medium">
+                    {scorecard.isError
+                        ? `Couldn't evaluate “${assetId}” — unknown asset, or the API is unreachable.`
+                        : `Loading ${assetId}…`}
+                </p>
+            </section>
+        );
+    }
+    // Nothing evaluable at all (no on-chain variants).
+    if (data.variants.length === 0) {
+        if (!verbose) return null;
+        return (
+            <section className="rounded-2xl border border-border-light bg-white p-4 shadow-[0_8px_40px_rgba(0,0,0,0.03)]">
+                <h2 className="text-title-sm text-text-extra-high">Execution quality</h2>
+                <p className="mt-2 text-body-md text-text-medium">
+                    “{assetId}” has no on-chain variants to evaluate.
+                </p>
+            </section>
+        );
+    }
 
     if (isSampling) {
         return (
