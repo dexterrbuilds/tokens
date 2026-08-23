@@ -129,6 +129,7 @@ import {
     getLatestByMints as variantDepthCurvesGetLatestByMints,
     type DepthCurveReadsRepo,
 } from './handlers/depthCurveReads';
+import { executionQuotesLive, type LiveQuoteDeps } from './handlers/liveQuotes';
 import { trendingJobs, type TrendingCronDeps, type TrendingJobHandler } from './handlers/crons.trending';
 import {
     clickhouseExtrasJobs,
@@ -197,6 +198,7 @@ export interface ServerDeps {
     clickhouseExtrasCronDeps?: ClickhouseExtrasCronDeps;
     prestocksCronDeps?: PrestocksCronDeps;
     depthCronDeps?: DepthCronDeps;
+    liveQuoteDeps?: LiveQuoteDeps;
     cacheWarmDeps?: CacheWarmDeps;
     adminActionsDeps?: AdminActionsDeps;
     verifyOidc?: VerifyOidc;
@@ -432,6 +434,11 @@ export function createApp(deps: ServerDeps) {
         variantFillQualityGetLatestByMints(deps.fillQualityReadsRepo, args);
     queries.variantDepthCurvesGetLatestByMints = args =>
         variantDepthCurvesGetLatestByMints(deps.depthCurveReadsRepo, args);
+    queries.executionQuotesLive = args => {
+        const liveQuoteDeps = deps.liveQuoteDeps;
+        if (!liveQuoteDeps) throw new InvalidArgsError('live quotes are not configured on this service');
+        return executionQuotesLive(liveQuoteDeps, args);
+    };
     queries.assetCollectionsGetMembers = args => assetCollectionsGetMembers(deps.assetCollectionsReadsRepo, args);
     queries.assetCollectionsGetMemberMints = args =>
         assetCollectionsGetMemberMints(deps.assetCollectionsReadsRepo, args);

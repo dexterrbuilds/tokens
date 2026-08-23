@@ -49,6 +49,7 @@ export interface ExecutionEvaluationResponse {
         scoringVersion: string;
         sizeAwareScoringVersion: string | null;
         gradingVersion: string;
+        quoteMode: 'sampled' | 'live';
         strategy: string;
         sizeLadderUsd: number[] | null;
         depthSource: string | null;
@@ -71,17 +72,20 @@ export function clampAmountUsd(amountUsd: number): number {
 interface UseExecutionEvaluationOptions {
     /** Omit for the scorecard call (graded ladder per variant). */
     amountUsd?: number | null;
+    /** Fetch live quotes at the requested amount instead of interpolating stored curves. */
+    live?: boolean;
     enabled?: boolean;
 }
 
 export function useExecutionEvaluation(assetId: string, options: UseExecutionEvaluationOptions = {}) {
-    const { amountUsd = null, enabled = true } = options;
+    const { amountUsd = null, live = false, enabled = true } = options;
 
     return useQuery<ExecutionEvaluationResponse>({
-        queryKey: ['execution', 'evaluate', assetId, amountUsd],
+        queryKey: ['execution', 'evaluate', assetId, amountUsd, live],
         queryFn: async ({ signal }) => {
             const params = new URLSearchParams({ asset: assetId });
             if (amountUsd !== null) params.set('amountUsd', String(amountUsd));
+            if (live && amountUsd !== null) params.set('quotes', 'live');
 
             return Effect.runPromise(
                 apiJson<ExecutionEvaluationResponse>({ url: `/api/v2/execution/evaluate?${params.toString()}` }),
@@ -90,6 +94,8 @@ export function useExecutionEvaluation(assetId: string, options: UseExecutionEva
         },
         enabled: enabled && assetId.trim().length > 0,
         retry: shouldRetryApiQuery,
+        // Live quotes go stale fast; sampled data follows the provider default.
+        ...(live ? { staleTime: 15_000 } : {}),
         // Keeps the previous evaluation on screen while a new amount loads.
         placeholderData: keepPreviousData,
     });

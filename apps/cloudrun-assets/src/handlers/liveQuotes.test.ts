@@ -1,0 +1,85 @@
+import { describe, expect, it } from 'bun:test';
+
+import { executionQuotesLive, type LiveQuoteDeps } from './liveQuotes';
+import type { DepthQuote, DepthQuoteClient } from './crons.depth';
+
+const MINT_A = 'cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij';
+const MINT_B = '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh';
+
+function deps(handler: (args: { outputMint: string; amount: number }) => Promise<DepthQuote | null>): LiveQuoteDeps {
+    const quoteSource: DepthQuoteClient = {
+        id: 'jupiter_lite',
+        async fetchQuote(args) {
+            return handler({ outputMint: args.outputMint, amount: args.amount });
+        },
+        async close() {},
+    };
+    return { quoteSource, now: () => 1_700_000_000_000 };
+}
+
+// 1% worse effective price per extra $1M of size.
+function syntheticQuote(amount: number): DepthQuote {
+    const sizeUsd = amount / 1_000_000;
+    return { inAmount: amount, outAmount: amount * (1 - 0.01 * (sizeUsd / 1_000_000)), routeVenues: [] };
+}
+
+describe('executionQuotesLive', () => {
+    it('validates args', async () => {
+        const d = deps(async () => null);
+        await expect(executionQuotesLive(d, null)).rejects.toThrow('args must be an object');
+        await expect(executionQuotesLive(d, { mints: 'x' })).rejects.toThrow('mints must be an array');
+        await expect(executionQuotesLive(d, { mints: [MINT_A], amountUsd: 'x' })).rejects.toThrow(
+            'amountUsd must be a finite number',
+        );
+    });
+
+    it('measures impact against a same-instant baseline quote', async () => {
+        const d = deps(async ({ amount }) => syntheticQuote(amount));
+        const result = await executionQuotesLive(d, { mints: [MINT_A, MINT_B], amountUsd: 1_000_000 });
+        expect(result.source).toBe('jupiter_lite');
+        expect(result.baselineSizeUsd).toBe(10_000);
+        expect(result.asOf).toBe(1_700_000_000);
+        expect(result.entries).toHaveLength(2);
+        // Synthetic curve: ~1% at $1M vs ~0.01% at $10k baseline → ~99bps.
+        for (const entry of result.entries) {
+            expect(entry.impactBps).toBeGreaterThan(90);
+            expect(entry.impactBps).toBeLessThan(105);
+        }
+    });
+
+    it('reads ~zero impact at or below the baseline size', async () => {
+        const d = deps(async ({ amount }) => syntheticQuote(amount));
+        const result = await executionQuotesLive(d, { mints: [MINT_A], amountUsd: 5_000 });
+        expect(result.entries[0]?.impactBps).toBe(0);
+    });
+
+    it('degrades per mint on failure without failing the batch', async () => {
+        const d = deps(async ({ outputMint, amount }) => {
+            if (outputMint === MINT_A) throw new Error('connection reset');
+            return syntheticQuote(amount);
+        });
+        const result = await executionQuotesLive(d, { mints: [MINT_A, MINT_B], amountUsd: 1_000_000 });
+        expect(result.entries.find(e => e.mint === MINT_A)?.impactBps).toBeNull();
+        expect(result.entries.find(e => e.mint === MINT_B)?.impactBps).not.toBeNull();
+    });
+
+    it('nulls impact when the pair is untradable (null quote)', async () => {
+        const d = deps(async () => null);
+        const result = await executionQuotesLive(d, { mints: [MINT_A], amountUsd: 1_000_000 });
+        expect(result.entries[0]?.impactBps).toBeNull();
+    });
+
+    it('caps and dedupes mints, and clamps the amount', async () => {
+        const seen = new Set<string>();
+        const d = deps(async ({ outputMint, amount }) => {
+            seen.add(outputMint);
+            expect(amount).toBeLessThanOrEqual(50_000_000 * 1_000_000);
+            return syntheticQuote(amount);
+        });
+        const mints = Array.from({ length: 12 }, (_, i) => `${MINT_A.slice(0, -2)}${String(i).padStart(2, '0')}`);
+        const result = await executionQuotesLive(d, { mints: [...mints, mints[0]!], amountUsd: 99_000_000 });
+        expect(result.entries).toHaveLength(8);
+        expect(result.amountUsd).toBe(50_000_000);
+        expect(seen.size).toBe(8);
+    });
+});

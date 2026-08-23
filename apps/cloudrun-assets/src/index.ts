@@ -6,6 +6,7 @@ import {
     makeBirdeyeOhlcvClient,
     makeClickhouseClient,
     makeCoingeckoClient,
+    makeJupiterQuoteClient,
     makePreStocksClient,
     makeRwaXyzClient,
     makeSanctumClient,
@@ -58,6 +59,7 @@ import type { TrendingCronDeps } from './handlers/crons.trending';
 import type { ClickhouseExtrasCronDeps } from './handlers/crons.clickhouse.extras';
 import type { PrestocksCronDeps } from './handlers/crons.prestocks';
 import type { DepthCronDeps } from './handlers/crons.depth';
+import type { LiveQuoteDeps } from './handlers/liveQuotes';
 import { makeGoogleOidcVerifier } from './oidc';
 import { createApp, type ServiceRole } from './server';
 
@@ -252,6 +254,17 @@ if (titanWsUrl && titanApiKey) {
     console.warn('[cloudrun-assets] TITAN_WS_URL/TITAN_API_KEY not set — depth /jobs/* disabled');
 }
 
+// Live quote reads (executionQuotesLive): Titan when configured, otherwise
+// Jupiter — which works keyless on the lite tier, so this is always available.
+const liveQuoteDeps: LiveQuoteDeps = {
+    quoteSource: depthCronDeps
+        ? depthCronDeps.quoteSource
+        : makeJupiterQuoteClient(
+              process.env.JUPITER_API_KEY?.trim() ? { apiKey: process.env.JUPITER_API_KEY.trim() } : {},
+          ),
+    now: () => Date.now(),
+};
+
 let cacheWarmDeps: CacheWarmDeps | undefined;
 if (cronDeps && miscCronDeps && seedCronDeps) {
     cacheWarmDeps = {
@@ -341,6 +354,7 @@ const app = createApp({
     ...(clickhouseExtrasCronDeps ? { clickhouseExtrasCronDeps } : {}),
     ...(prestocksCronDeps ? { prestocksCronDeps } : {}),
     ...(depthCronDeps ? { depthCronDeps } : {}),
+    liveQuoteDeps,
     ...(cacheWarmDeps ? { cacheWarmDeps } : {}),
     ...(adminActionsDeps ? { adminActionsDeps } : {}),
 });

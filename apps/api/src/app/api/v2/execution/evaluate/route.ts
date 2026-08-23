@@ -16,6 +16,7 @@ import {
     type VariantMarketRankingSnapshot,
 } from '@tokens/asset-registry';
 import {
+    executionQuotesLive,
     variantDepthCurvesGetLatestByMints,
     variantFillQualityGetLatestByMints,
     variantMarketsGetLatestByMints,
@@ -46,6 +47,16 @@ function depthReadSource(): 'titan' | 'jupiter_lite' {
 const CURATED_MINT_RANK = buildCuratedMintRank();
 
 type Side = 'buy' | 'sell';
+type QuoteMode = 'sampled' | 'live';
+
+function decodeQuoteMode(raw: string | null): Effect.Effect<QuoteMode, BadRequestError> {
+    if (raw == null || raw.trim() === '') return Effect.succeed('sampled');
+    const mode = raw.trim().toLowerCase();
+    if (mode !== 'sampled' && mode !== 'live') {
+        return Effect.fail(new BadRequestError({ message: 'Invalid quotes: expected sampled or live' }));
+    }
+    return Effect.succeed(mode);
+}
 
 function decodeAmountUsd(raw: string | null): Effect.Effect<number | null, BadRequestError> {
     if (raw == null || raw.trim() === '') return Effect.succeed(null);
@@ -92,6 +103,9 @@ export const GET = route(
             }
             const amountUsd = yield* decodeAmountUsd(url.searchParams.get('amountUsd'));
             const side = yield* decodeSide(url.searchParams.get('side'));
+            const quoteMode = yield* decodeQuoteMode(url.searchParams.get('quotes'));
+            // Live quotes only exist for the buy side at a concrete size.
+            const wantsLive = quoteMode === 'live' && amountUsd !== null && side === 'buy';
 
             const resolution = yield* resolveAssetRefContext(assetRef);
 
@@ -154,6 +168,21 @@ export const GET = route(
                     if (nowSeconds - curve.asOf > MAX_DEPTH_AGE_SECONDS) continue;
                     freshCurveByMint.set(row.mint, curve);
                 }
+                const liveByMint = new Map<string, number>();
+                let liveAsOf: number | null = null;
+                if (wantsLive && freshCurveByMint.size > 0 && amountUsd !== null) {
+                    const live = yield* executionQuotesLive({
+                        mints: [...freshCurveByMint.keys()],
+                        amountUsd,
+                    }).pipe(tapErrorAndDefault('v2.execution.evaluate.liveQuotes', null));
+                    if (live) {
+                        liveAsOf = live.asOf;
+                        for (const entry of live.entries) {
+                            if (entry.impactBps !== null) liveByMint.set(entry.mint, entry.impactBps);
+                        }
+                    }
+                }
+
                 const depthSource = freshCurveByMint.values().next().value?.source ?? null;
                 const sizeLadderUsd =
                     freshCurveByMint.size > 0
@@ -192,11 +221,18 @@ export const GET = route(
                         const fillQuality = fillQualityByMint.get(entry.variant.mint) ?? null;
 
                         const curve = freshCurveByMint.get(entry.variant.mint) ?? null;
+                        const liveImpactBps = wantsLive ? (liveByMint.get(entry.variant.mint) ?? null) : null;
                         const impact =
-                            curve && amountUsd !== null ? interpolateImpactBps(curve.ladder, amountUsd) : null;
+                            liveImpactBps !== null
+                                ? { impactBps: liveImpactBps, extrapolated: false }
+                                : curve && amountUsd !== null
+                                  ? interpolateImpactBps(curve.ladder, amountUsd)
+                                  : null;
                         const reasons: string[] = [entry.reason];
                         if (!curve) reasons.push('depth_unavailable');
                         if (impact?.extrapolated) reasons.push('beyond_sampled_depth');
+                        // Live was requested but this variant fell back to the sampled curve.
+                        if (wantsLive && curve && liveImpactBps === null) reasons.push('live_quote_unavailable');
 
                         return {
                             rank: entry.rank,
@@ -225,7 +261,7 @@ export const GET = route(
                                       impactBps: impact.impactBps,
                                   })
                                 : null,
-                            depthAsOf: curve?.asOf ?? null,
+                            depthAsOf: liveImpactBps !== null ? liveAsOf : (curve?.asOf ?? null),
                             // Sampled evaluation points, graded. Internal
                             // sampling fields (outAmount, routeVenues, ...)
                             // are deliberately not surfaced.
@@ -250,6 +286,7 @@ export const GET = route(
                         // informational fields never influence ordering today.
                         sizeAwareScoringVersion: null as string | null,
                         gradingVersion: EXECUTION_GRADING_VERSION,
+                        quoteMode: (wantsLive && liveByMint.size > 0 ? 'live' : 'sampled') as QuoteMode,
                         strategy: 'execution_quality' as const,
                         sizeLadderUsd,
                         depthSource,
@@ -264,7 +301,7 @@ export const GET = route(
             return yield* withStaleFallback(
                 {
                     operation: 'v2.execution.evaluate',
-                    cacheKey: `v2:execution:evaluate:${resolution.assetId}:${side}:${amountCacheBucket(amountUsd)}`,
+                    cacheKey: `v2:execution:evaluate:${resolution.assetId}:${side}:${amountCacheBucket(amountUsd)}:${quoteMode}`,
                     ttlSeconds: STALE_TTL_SECONDS,
                 },
                 main,

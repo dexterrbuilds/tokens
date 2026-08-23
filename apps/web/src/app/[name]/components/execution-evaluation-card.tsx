@@ -104,7 +104,11 @@ export function ExecutionEvaluationCard({
     }, [amountInput]);
 
     const scorecard = useExecutionEvaluation(assetId);
-    const sized = useExecutionEvaluation(assetId, { amountUsd: debouncedAmount, enabled: debouncedAmount !== null });
+    const sized = useExecutionEvaluation(assetId, {
+        amountUsd: debouncedAmount,
+        live: true,
+        enabled: debouncedAmount !== null,
+    });
 
     const data = scorecard.data;
     const hasDepth = (data?.meta.depthCoverage.withCurves ?? 0) > 0;
@@ -152,6 +156,7 @@ export function ExecutionEvaluationCard({
     const isStale = ageSeconds > STALE_AFTER_SECONDS;
 
     const sizedRows = sized.data?.variants.filter(variant => variant.executionGrade !== null) ?? [];
+    const sizedIsLive = sized.data?.meta.quoteMode === 'live';
 
     return (
         <section className="rounded-2xl border border-border-light bg-white p-4 shadow-[0_8px_40px_rgba(0,0,0,0.03)]">
@@ -232,9 +237,18 @@ export function ExecutionEvaluationCard({
             <div className="mt-4 border-t border-border-light pt-4">
                 <label
                     htmlFor="execution-eval-amount"
-                    className="mb-2 block text-[11px] font-normal text-text-medium"
+                    className="mb-2 flex items-center gap-2 text-[11px] font-normal text-text-medium"
                 >
                     Evaluate your size
+                    {debouncedAmount !== null && sizedRows.length > 0 ? (
+                        <span
+                            className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none ${
+                                sizedIsLive ? 'bg-green-50 text-green-800' : 'bg-[#F2F3F5] text-text-medium'
+                            }`}
+                        >
+                            {sizedIsLive ? 'live quotes' : 'sampled'}
+                        </span>
+                    ) : null}
                 </label>
                 <div className="relative">
                     <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-body-md text-text-medium">
@@ -295,8 +309,8 @@ export function ExecutionEvaluationCard({
             </div>
 
             <p className="mt-3 text-[11px] text-text-extra-low">
-                Estimates from recent {data.meta.depthSource ?? 'aggregator'} quotes — not a quote or execution
-                guarantee.
+                Scorecard from sampled {data.meta.depthSource ?? 'aggregator'} quotes; typed amounts fetch live quotes
+                when available. Not an execution guarantee.
             </p>
         </section>
     );

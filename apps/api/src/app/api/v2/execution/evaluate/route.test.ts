@@ -86,6 +86,7 @@ function depthCurveRow(mint: string, asOfSecondsAgo: number) {
 }
 
 let depthResponder: (() => unknown) | null = null;
+let liveQuotesResponder: (() => unknown) | null = null;
 
 function stubCloudRun(): void {
     globalThis.fetch = (async (input: string | URL | Request) => {
@@ -96,6 +97,10 @@ function stubCloudRun(): void {
         if (url.includes('/query/variantDepthCurvesGetLatestByMints')) {
             if (!depthResponder) throw new Error('depth query not stubbed');
             return new Response(JSON.stringify(depthResponder()), { status: 200 });
+        }
+        if (url.includes('/query/executionQuotesLive')) {
+            if (!liveQuotesResponder) throw new Error('live quotes query not stubbed');
+            return new Response(JSON.stringify(liveQuotesResponder()), { status: 200 });
         }
         if (url.includes('/query/variantMarketsGetLatestByMints')) {
             return new Response(
@@ -135,6 +140,7 @@ beforeEach(() => {
     resetEnvForTests();
     __resetCloudRunClientForTesting();
     depthResponder = null;
+    liveQuotesResponder = null;
     stubCloudRun();
 
     console.log = () => undefined;
@@ -254,6 +260,68 @@ describe('GET /api/v2/execution/evaluate', () => {
         expect(beyondTop.estimatedImpactBps).toBe(120);
         expect(beyondTop.executionGrade).toBe('fair');
         expect(beyondTop.reasons).toContain('beyond_sampled_depth');
+    });
+
+    it('uses live quotes for impact when quotes=live', async () => {
+        depthResponder = () => [depthCurveRow(CBBTC_MINT, 60)];
+        liveQuotesResponder = () => ({
+            source: 'jupiter_lite',
+            quoteMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+            amountUsd: 1_000_000,
+            baselineSizeUsd: 10_000,
+            asOf: 1_800_000_000,
+            entries: [{ mint: CBBTC_MINT, impactBps: 275 }],
+        });
+        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000&quotes=live');
+        expect(response.status).toBe(200);
+        const body = await response.json();
+        const top = body.variants[0];
+        // Live impact (275bps → poor) overrides the sampled interpolation (40bps).
+        expect(top.estimatedImpactBps).toBe(275);
+        expect(top.executionGrade).toBe('poor');
+        expect(top.depthAsOf).toBe(1_800_000_000);
+        expect(top.reasons).not.toContain('live_quote_unavailable');
+        expect(body.meta.quoteMode).toBe('live');
+    });
+
+    it('falls back to sampled per variant when a live quote is missing', async () => {
+        depthResponder = () => [depthCurveRow(CBBTC_MINT, 60)];
+        liveQuotesResponder = () => ({
+            source: 'jupiter_lite',
+            quoteMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+            amountUsd: 1_000_000,
+            baselineSizeUsd: 10_000,
+            asOf: 1_800_000_000,
+            entries: [{ mint: CBBTC_MINT, impactBps: null }],
+        });
+        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000&quotes=live');
+        const body = await response.json();
+        const top = body.variants[0];
+        expect(top.estimatedImpactBps).toBe(40); // sampled interpolation
+        expect(top.reasons).toContain('live_quote_unavailable');
+        expect(body.meta.quoteMode).toBe('sampled'); // no live quote actually used
+    });
+
+    it('degrades to sampled when the live query fails entirely', async () => {
+        depthResponder = () => [depthCurveRow(CBBTC_MINT, 60)];
+        liveQuotesResponder = () => {
+            throw new Error('live quotes down');
+        };
+        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000&quotes=live');
+        expect(response.status).toBe(200);
+        const body = await response.json();
+        expect(body.variants[0].estimatedImpactBps).toBe(40);
+        expect(body.meta.quoteMode).toBe('sampled');
+    });
+
+    it('rejects an unknown quotes mode and ignores live without an amount', async () => {
+        const bad = await request('/api/v2/execution/evaluate?asset=bitcoin&quotes=instant');
+        expect(bad.status).toBe(400);
+
+        depthResponder = () => [depthCurveRow(CBBTC_MINT, 60)];
+        const noAmount = await request('/api/v2/execution/evaluate?asset=bitcoin&quotes=live');
+        expect(noAmount.status).toBe(200);
+        expect((await noAmount.json()).meta.quoteMode).toBe('sampled');
     });
 
     it('nulls the ladder for stale curves even without amountUsd', async () => {

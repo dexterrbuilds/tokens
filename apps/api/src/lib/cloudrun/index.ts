@@ -163,6 +163,8 @@ export {
     type VariantDepthCurvesGetLatestByMintsResult,
 } from './depthCurveReads';
 
+export { executionQuotesLive, type ExecutionQuotesLiveArgs } from './liveQuotes';
+
 export {
     assetCollectionsGetMembers,
     type AssetCollectionsGetMembersArgs,
