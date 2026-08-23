@@ -50,6 +50,15 @@ function formatImpact(bps: number): string {
     return `${percent.toFixed(2)}%`;
 }
 
+/** Impact expressed as what it costs in dollars at a given trade size. */
+function formatImpactCost(sizeUsd: number, impactBps: number): string {
+    const cost = (sizeUsd * impactBps) / 10_000;
+    if (cost < 1) return '<$1';
+    if (cost < 1_000) return `−$${Math.round(cost)}`;
+    if (cost < 1_000_000) return `−$${(cost / 1_000).toFixed(cost < 10_000 ? 1 : 0)}K`;
+    return `−$${(cost / 1_000_000).toFixed(2)}M`;
+}
+
 function formatUsdCompact(value: number): string {
     return value.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 }
@@ -144,7 +153,8 @@ export function ExecutionEvaluationCard({
 
     const ladderSizes = data.meta.sizeLadderUsd ?? [];
     const withCurves = data.variants.filter(variant => variant.ladder && variant.ladder.length > 0);
-    const withoutCurves = data.variants.length - withCurves.length;
+    const noRouteVariants = data.variants.filter(variant => variant.reasons.includes('no_route'));
+    const unsampledCount = data.variants.length - withCurves.length - noRouteVariants.length;
 
     // In a variant view, lead with the mint the user is looking at.
     const orderedVariants = activeMint
@@ -163,7 +173,7 @@ export function ExecutionEvaluationCard({
             <div className="mb-3 flex items-center gap-1.5">
                 <h2 className="text-title-sm text-text-extra-high">Execution quality</h2>
                 <Tooltip
-                    content="Estimated price impact at each sampled trade size, from recent aggregator quotes. Higher grades mean less slippage."
+                    content="What price impact would cost you at each trade size, from recent aggregator quotes. A means near-zero cost; F means most of the trade is lost to slippage."
                     side="top"
                     align="center"
                 >
@@ -214,7 +224,12 @@ export function ExecutionEvaluationCard({
                                     return (
                                         <td key={variant.mint} className="py-2 text-right">
                                             {rung ? (
-                                                <GradeChip grade={rung.grade} label={formatImpact(rung.impactBps)} />
+                                                <span title={`${formatImpact(rung.impactBps)} price impact`}>
+                                                    <GradeChip
+                                                        grade={rung.grade}
+                                                        label={formatImpactCost(sizeUsd, rung.impactBps)}
+                                                    />
+                                                </span>
                                             ) : (
                                                 <span className="text-[11px] text-text-extra-low">—</span>
                                             )}
@@ -227,9 +242,14 @@ export function ExecutionEvaluationCard({
                 </table>
             </div>
 
-            {withoutCurves > 0 ? (
+            {noRouteVariants.length > 0 ? (
                 <p className="mt-2 text-[11px] text-text-extra-low">
-                    {withoutCurves} other {withoutCurves === 1 ? 'variant has' : 'variants have'} no depth samples yet.
+                    No route found right now: {noRouteVariants.map(variantLabel).join(', ')}.
+                </p>
+            ) : null}
+            {unsampledCount > 0 ? (
+                <p className="mt-2 text-[11px] text-text-extra-low">
+                    {unsampledCount} other {unsampledCount === 1 ? 'variant' : 'variants'} not sampled yet.
                 </p>
             ) : null}
 
@@ -287,14 +307,16 @@ export function ExecutionEvaluationCard({
                                                 </Tooltip>
                                             ) : null}
                                         </span>
-                                        <span className="flex items-center gap-2">
-                                            <span className="text-[11px] text-text-medium tabular-nums">
+                                        <span className="flex flex-col items-end gap-0.5">
+                                            <span title={`${formatImpact(variant.estimatedImpactBps ?? 0)} price impact`}>
+                                                <GradeChip
+                                                    grade={variant.executionGrade as ImpactGrade}
+                                                    label={`${formatImpactCost(debouncedAmount ?? 0, variant.estimatedImpactBps ?? 0)} to impact`}
+                                                />
+                                            </span>
+                                            <span className="text-[11px] text-text-extra-low tabular-nums">
                                                 ≈ {formatUsdCompact(variant.estimatedOutUsd ?? 0)} out
                                             </span>
-                                            <GradeChip
-                                                grade={variant.executionGrade as ImpactGrade}
-                                                label={formatImpact(variant.estimatedImpactBps ?? 0)}
-                                            />
                                         </span>
                                     </div>
                                 );

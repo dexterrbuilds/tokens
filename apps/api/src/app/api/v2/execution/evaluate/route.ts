@@ -161,10 +161,12 @@ export const GET = route(
                 }
 
                 const nowSeconds = Math.floor(Date.now() / 1000);
+                // Fresh curves, including empty-ladder rows: an empty ladder is a
+                // recorded "no route right now" finding, not missing data.
                 const freshCurveByMint = new Map<string, (typeof depthRows)[number]['depthCurve']>();
                 for (const row of depthRows) {
                     const curve = row.depthCurve;
-                    if (!curve || curve.ladder.length === 0) continue;
+                    if (!curve) continue;
                     if (nowSeconds - curve.asOf > MAX_DEPTH_AGE_SECONDS) continue;
                     freshCurveByMint.set(row.mint, curve);
                 }
@@ -184,12 +186,10 @@ export const GET = route(
                 }
 
                 const depthSource = freshCurveByMint.values().next().value?.source ?? null;
-                const sizeLadderUsd =
-                    freshCurveByMint.size > 0
-                        ? [...freshCurveByMint.values().next().value!.ladder]
-                              .map(point => point.sizeUsd)
-                              .sort((a, b) => a - b)
-                        : null;
+                const firstWithLadder = [...freshCurveByMint.values()].find(curve => curve!.ladder.length > 0);
+                const sizeLadderUsd = firstWithLadder
+                    ? [...firstWithLadder.ladder].map(point => point.sizeUsd).sort((a, b) => a - b)
+                    : null;
 
                 const ranked = asset
                     ? rankVariantsWithReasons({
@@ -221,18 +221,21 @@ export const GET = route(
                         const fillQuality = fillQualityByMint.get(entry.variant.mint) ?? null;
 
                         const curve = freshCurveByMint.get(entry.variant.mint) ?? null;
+                        const hasRoute = curve !== null && curve.ladder.length > 0;
                         const liveImpactBps = wantsLive ? (liveByMint.get(entry.variant.mint) ?? null) : null;
                         const impact =
                             liveImpactBps !== null
                                 ? { impactBps: liveImpactBps, extrapolated: false }
-                                : curve && amountUsd !== null
+                                : hasRoute && amountUsd !== null
                                   ? interpolateImpactBps(curve.ladder, amountUsd)
                                   : null;
                         const reasons: string[] = [entry.reason];
                         if (!curve) reasons.push('depth_unavailable');
+                        // Sampled and found untradable — the strongest avoid signal.
+                        if (curve && !hasRoute) reasons.push('no_route');
                         if (impact?.extrapolated) reasons.push('beyond_sampled_depth');
                         // Live was requested but this variant fell back to the sampled curve.
-                        if (wantsLive && curve && liveImpactBps === null) reasons.push('live_quote_unavailable');
+                        if (wantsLive && hasRoute && liveImpactBps === null) reasons.push('live_quote_unavailable');
 
                         return {
                             rank: entry.rank,

@@ -102,17 +102,18 @@ function uniqueMints(values: readonly string[]): string[] {
 }
 
 /**
- * The sampling universe: every mint of a spot-like multi-variant registry
- * asset, minus the stablecoin aggregates. Registry data is compiled into the
- * image, so this needs no DB round-trip.
+ * The sampling universe: every spot-like variant mint in the registry, minus
+ * the stablecoin aggregates. Registry data is compiled into the image, so
+ * this needs no DB round-trip. Single-variant assets are included — the
+ * evaluation surface is per-mint, not per-comparison.
  */
 export function listDepthUniverseMints(): string[] {
     const mints: string[] = [];
     for (const asset of listAssets()) {
         if (DEPTH_EXCLUDED_ASSET_IDS.has(asset.assetId)) continue;
-        const spotLike = asset.variants.filter(variant => isSpotLikeVariantKind(variant.kind));
-        if (spotLike.length < 2) continue;
-        for (const variant of spotLike) mints.push(variant.mint);
+        for (const variant of asset.variants) {
+            if (isSpotLikeVariantKind(variant.kind)) mints.push(variant.mint);
+        }
     }
     return uniqueMints(mints);
 }
@@ -186,7 +187,7 @@ export async function refreshDepthCurves(deps: DepthCronDeps, rawArgs: unknown):
             durationMs: deps.now() - start,
             requested: 0,
             refreshed: 0,
-            skippedMissing: 0,
+            noRoute: 0,
             failed: 0,
             disabled: true,
         };
@@ -217,14 +218,14 @@ export async function refreshDepthCurves(deps: DepthCronDeps, rawArgs: unknown):
             durationMs: deps.now() - start,
             requested: 0,
             refreshed: 0,
-            skippedMissing: 0,
+            noRoute: 0,
             failed: 0,
             disabled: false,
         };
     }
 
     let refreshed = 0;
-    let skippedMissing = 0;
+    let noRoute = 0;
     let failed = 0;
 
     try {
@@ -243,12 +244,9 @@ export async function refreshDepthCurves(deps: DepthCronDeps, rawArgs: unknown):
                             mint,
                             delayMs,
                         });
-                        if (ladder.length === 0) {
-                            // Every rung failed: keep the last-good row; the read
-                            // path's freshness gate marks it stale naturally.
-                            skippedMissing += 1;
-                            return;
-                        }
+                        // Every rung returned "no route" (transport failures throw
+                        // and land in onItemError instead): record the empty ladder —
+                        // "verified untradable right now" is a finding, not a miss.
                         await deps.repo.upsertVariantDepthCurve({
                             mint,
                             quoteMint: DEPTH_USDC_QUOTE_MINT,
@@ -260,7 +258,8 @@ export async function refreshDepthCurves(deps: DepthCronDeps, rawArgs: unknown):
                             asOf: Math.floor(deps.now() / 1000),
                             lastComputedAt: deps.now(),
                         });
-                        refreshed += 1;
+                        if (ladder.length === 0) noRoute += 1;
+                        else refreshed += 1;
                     }),
                 onItemError: () =>
                     Effect.sync(() => {
@@ -278,7 +277,7 @@ export async function refreshDepthCurves(deps: DepthCronDeps, rawArgs: unknown):
         durationMs: deps.now() - start,
         requested: mints.length,
         refreshed,
-        skippedMissing,
+        noRoute,
         failed,
         disabled: false,
         source: deps.quoteSource.id,

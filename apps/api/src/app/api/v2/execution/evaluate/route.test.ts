@@ -324,6 +324,36 @@ describe('GET /api/v2/execution/evaluate', () => {
         expect((await noAmount.json()).meta.quoteMode).toBe('sampled');
     });
 
+    it('reports no_route for a sampled variant with an empty ladder', async () => {
+        depthResponder = () => [
+            {
+                mint: CBBTC_MINT,
+                depthCurve: {
+                    mint: CBBTC_MINT,
+                    quoteMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+                    side: 'buy',
+                    source: 'titan',
+                    ladder: [],
+                    points: 0,
+                    failedPoints: 4,
+                    asOf: Math.floor(Date.now() / 1000) - 60,
+                    lastComputedAt: Date.now(),
+                },
+            },
+        ];
+        const response = await request('/api/v2/execution/evaluate?asset=bitcoin&amountUsd=1000000');
+        const body = await response.json();
+        const top = body.variants[0];
+        expect(top.reasons).toContain('no_route');
+        expect(top.reasons).not.toContain('depth_unavailable');
+        expect(top.ladder).toEqual([]);
+        expect(top.estimatedImpactBps).toBeNull();
+        // Sampled-but-untradable counts as coverage; the ladder meta comes only
+        // from curves that actually have rungs.
+        expect(body.meta.depthCoverage.withCurves).toBe(1);
+        expect(body.meta.sizeLadderUsd).toBeNull();
+    });
+
     it('nulls the ladder for stale curves even without amountUsd', async () => {
         depthResponder = () => [depthCurveRow(CBBTC_MINT, 7 * 60 * 60)];
         const response = await request('/api/v2/execution/evaluate?asset=bitcoin');

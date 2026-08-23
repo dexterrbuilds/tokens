@@ -91,11 +91,13 @@ describe('computeLadderImpacts', () => {
 });
 
 describe('listDepthUniverseMints', () => {
-    it('covers multi-variant assets, excludes stablecoin aggregates, dedupes', () => {
+    it('covers every spot-like registry mint, excludes stablecoin aggregates, dedupes', () => {
         const mints = listDepthUniverseMints();
-        expect(mints.length).toBeGreaterThan(50);
+        expect(mints.length).toBeGreaterThan(150);
         expect(new Set(mints).size).toBe(mints.length);
         expect(mints).toContain(MINT_A); // cbBTC (bitcoin group)
+        // Single-variant assets are in the universe too.
+        expect(mints).toContain('98sMhvDwXj1RQi5c5Mndm3vPe9cBqPrbLaufMXFNMh5g'); // HYPE
     });
 });
 
@@ -147,7 +149,7 @@ describe('refreshDepthCurves', () => {
         expect(upserts[0]?.failedPoints).toBe(1);
     });
 
-    it('skips a mint whose every rung fails without overwriting', async () => {
+    it('records an empty ladder when every rung reports no route', async () => {
         const { repo, upserts } = fakeRepo();
         const source = fakeQuoteSource(async ({ outputMint, amount }) =>
             outputMint === MINT_A ? null : syntheticQuote(amount, 0.0000000004),
@@ -157,9 +159,12 @@ describe('refreshDepthCurves', () => {
             delayMs: 0,
         });
         expect(result.refreshed).toBe(1);
-        expect(result.skippedMissing).toBe(1);
-        expect(upserts).toHaveLength(1);
-        expect(upserts[0]?.mint).toBe(MINT_B);
+        expect(result.noRoute).toBe(1);
+        expect(upserts).toHaveLength(2);
+        const noRouteRow = upserts.find(row => row.mint === MINT_A);
+        expect(noRouteRow?.ladder).toEqual([]);
+        expect(noRouteRow?.points).toBe(0);
+        expect(noRouteRow?.failedPoints).toBe(DEPTH_SIZE_LADDER_USD.length);
     });
 
     it('counts transport failures per mint and stays ok on partial failure', async () => {

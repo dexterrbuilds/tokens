@@ -154,7 +154,9 @@ interface ExecutionEvaluateResponse {
 ```
 
 Variants without a fresh depth sample carry `depth_unavailable` in `reasons` and a null
-`ladder`; samples older than 6h are treated as absent. An `amountUsd` beyond the largest
+`ladder`; samples older than 6h are treated as absent. A variant that was sampled and had
+**no route at any size** carries `no_route` with an empty `ladder` — the strongest avoid
+signal, distinct from "not sampled yet". An `amountUsd` beyond the largest
 sampled rung is clamped and flagged with `beyond_sampled_depth`. Size-aware fields are
 informational — they do not reorder `variants` while `meta.sizeAwareScoringVersion` is
 null. Single-variant assets return one entry with `primary.reason: "only_candidate"`;
