@@ -52,15 +52,6 @@ function buildFetchSnippet(requestPath: string): string {
     ].join('\n');
 }
 
-function buildCurlSnippet(requestPath: string): string {
-    return [
-        `curl -s '${PUBLIC_API_ORIGIN}${requestPath}' \\`,
-        "  -H 'x-api-key: <YOUR_API_KEY>' \\",
-        "  -H 'accept: application/json'",
-        '',
-    ].join('\n');
-}
-
 /**
  * Shows the exact request this page is making, so the panel doubles as the
  * endpoint's documentation. The path is passed in rather than rebuilt here —
@@ -109,7 +100,6 @@ export function EndpointRequestPanel({
                 <div className="mb-3 flex items-center justify-between gap-2">
                     <TabList className="w-max">
                         <Tab value="code">Code</Tab>
-                        <Tab value="curl">cURL</Tab>
                         <Tab value="response">Response</Tab>
                     </TabList>
                     <div className="flex shrink-0 items-center gap-1.5">
@@ -129,15 +119,6 @@ export function EndpointRequestPanel({
                         ariaLabel="Evaluation request code"
                         code={buildFetchSnippet(requestPath)}
                         language="javascript"
-                        maxHeight={CODE_MAX_HEIGHT_PX}
-                        className={CODE_BLOCK_CLASS_NAME}
-                    />
-                </TabPanel>
-                <TabPanel value="curl" className="pt-0">
-                    <CodeBlock
-                        ariaLabel="Evaluation request cURL"
-                        code={buildCurlSnippet(requestPath)}
-                        language="bash"
                         maxHeight={CODE_MAX_HEIGHT_PX}
                         className={CODE_BLOCK_CLASS_NAME}
                     />
