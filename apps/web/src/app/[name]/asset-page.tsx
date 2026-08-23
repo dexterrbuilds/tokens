@@ -445,6 +445,7 @@ async function TokenHeaderWithLinksLoader({
 function TokenSidebarWithData({
     descriptionOverride,
     assetId,
+    activeMint,
     coingeckoId,
     enableCoinGeckoFallback,
     buyAddress,
@@ -454,6 +455,7 @@ function TokenSidebarWithData({
 }: {
     descriptionOverride?: string | null;
     assetId: string;
+    activeMint?: string | null;
     coingeckoId: string | null;
     enableCoinGeckoFallback: boolean;
     buyAddress: string | null;
@@ -465,6 +467,8 @@ function TokenSidebarWithData({
         <Suspense
             fallback={
                 <TokenPageSidebar
+                    assetId={assetId}
+                    activeMint={activeMint}
                     buyAddress={buyAddress}
                     buySymbol={buySymbol}
                     buyLogoURI={buyLogoURI}
@@ -476,6 +480,7 @@ function TokenSidebarWithData({
             <TokenSidebarWithDataLoader
                 descriptionOverride={descriptionOverride}
                 assetId={assetId}
+                activeMint={activeMint}
                 coingeckoId={coingeckoId}
                 enableCoinGeckoFallback={enableCoinGeckoFallback}
                 buyAddress={buyAddress}
@@ -490,6 +495,7 @@ function TokenSidebarWithData({
 async function TokenSidebarWithDataLoader({
     descriptionOverride,
     assetId,
+    activeMint,
     coingeckoId,
     enableCoinGeckoFallback,
     buyAddress,
@@ -499,6 +505,7 @@ async function TokenSidebarWithDataLoader({
 }: {
     descriptionOverride?: string | null;
     assetId: string;
+    activeMint?: string | null;
     coingeckoId: string | null;
     enableCoinGeckoFallback: boolean;
     buyAddress: string | null;
@@ -510,6 +517,8 @@ async function TokenSidebarWithDataLoader({
 
     return (
         <TokenPageSidebar
+            assetId={assetId}
+            activeMint={activeMint}
             buyAddress={buyAddress}
             buySymbol={buySymbol}
             buyLogoURI={buyLogoURI}
@@ -1148,6 +1157,7 @@ async function AssetPageContent(props: AssetPageProps) {
                 <TokenSidebarWithData
                     descriptionOverride={assetDescription}
                     assetId={canonicalAssetId}
+                    activeMint={activeMint}
                     coingeckoId={coingeckoId ?? null}
                     enableCoinGeckoFallback={!isVariantView}
                     buyAddress={buyAddress}
