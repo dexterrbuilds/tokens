@@ -329,15 +329,8 @@ export function EvaluationPlayground() {
     };
 
     return (
-        <main className="flex min-h-screen justify-center bg-[#FAFAFA] px-4 py-16">
+        <main className="flex min-h-screen justify-center bg-[#FAFAFA] px-4 py-20">
             <div className="w-full max-w-[1440px] space-y-6">
-                <header className="text-center">
-                    <h1 className="text-title-lg text-text-extra-high">Execution evaluation</h1>
-                    <p className="mt-2 text-body-md text-text-medium">
-                        Fresh Titan and Jupiter quotes for one exact Solana mint. No sampled depth or cached fallback.
-                    </p>
-                </header>
-
                 {/* One column of results, one of the request that produced them.
                     Splits at xl only: the table needs ~980px, so below that the
                     two side by side would just make the table scroll. */}
