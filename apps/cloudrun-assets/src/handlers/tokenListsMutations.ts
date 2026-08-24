@@ -31,7 +31,21 @@ const SOLANA_MINT_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 export const TOKEN_LIST_STATUSES = ['draft', 'published', 'archived'] as const;
 export type TokenListStatus = (typeof TOKEN_LIST_STATUSES)[number];
 
-export const MEMBER_BATCH_CAP = 100;
+/** Infrastructure bounds (env-tunable at wiring time; see index.ts). */
+export interface TokenListCaps {
+    /** Max mints per addMembersBatch call. */
+    batch: number;
+    /** Max members a single list may hold. */
+    membersPerList: number;
+    /** Max Birdeye lookups a single batch call may spend on unknown mints. */
+    providerLookups: number;
+}
+
+export const DEFAULT_TOKEN_LIST_CAPS: TokenListCaps = {
+    batch: 1000,
+    membersPerList: 5000,
+    providerLookups: 50,
+};
 
 export interface TokenListMutationRow {
     id: string;
@@ -85,6 +99,22 @@ export interface TokenListsMutationsRepo {
     hasActiveVariantForMint(mint: string): Promise<boolean>;
     /** The mint exists in the tokens table (read-time hydration will cover metadata). */
     hasTokenForAddress(mint: string): Promise<boolean>;
+    /** Subset of `mints` with an active, non-tombstoned registry variant. One IN-query, chunked. */
+    filterMintsWithActiveVariants(mints: readonly string[]): Promise<string[]>;
+    /** Subset of `mints` present in the tokens table. One IN-query, chunked. */
+    filterMintsKnownTokens(mints: readonly string[]): Promise<string[]>;
+    /** Subset of `mints` already members of the list. */
+    filterMintsExistingMembers(listId: string, mints: readonly string[]): Promise<string[]>;
+    countMembers(listId: string): Promise<number>;
+    /**
+     * Multi-row upsert (chunked): new mints append after the current max rank
+     * in array order, existing mints keep their rank and refresh note/snapshot.
+     * Touches the parent list's updated_at ONCE.
+     */
+    upsertMembersBulk(
+        listId: string,
+        rows: Array<{ mint: string; note: string | null; addedAt: number; snapshot: MemberSnapshot | null }>,
+    ): Promise<void>;
 }
 
 export class SlugConflictError extends Error {
@@ -99,6 +129,7 @@ export interface TokenListsMutationsDeps {
     /** Birdeye token_overview for mints unknown locally; null when the provider has nothing. */
     fetchTokenOverview(mint: string): Promise<BirdeyeOverview | null>;
     now(): number;
+    caps: TokenListCaps;
 }
 
 export type TokenListMutationErrorCode =
@@ -109,7 +140,8 @@ export type TokenListMutationErrorCode =
     | 'forbidden'
     | 'invalid_mint'
     | 'unknown_mint'
-    | 'batch_too_large';
+    | 'batch_too_large'
+    | 'list_full';
 
 export interface TokenListResult {
     id: string;
@@ -340,6 +372,13 @@ export async function upsertMember(
     const owned = await requireOwnedList(deps, slug, ownerProjectId);
     if (!owned.ok) return owned;
 
+    // Updating an existing member never consumes a slot; only net-new inserts
+    // count against the members-per-list cap.
+    if ((await deps.repo.countMembers(owned.value.id)) >= deps.caps.membersPerList) {
+        const existing = await deps.repo.filterMintsExistingMembers(owned.value.id, [mint]);
+        if (existing.length === 0) return { ok: false, error: 'list_full' };
+    }
+
     const resolved = await resolveMint(deps, mint);
     if (!resolved.ok) return resolved;
 
@@ -376,6 +415,26 @@ export interface BatchAddResult {
     failed: Array<{ mint: string; error: TokenListMutationErrorCode }>;
 }
 
+/** Run `fn` over `items` with at most `limit` in flight. Results keep item order. */
+async function mapWithConcurrency<T, R>(
+    items: readonly T[],
+    limit: number,
+    fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    let next = 0;
+    async function worker() {
+        while (next < items.length) {
+            const index = next++;
+            results[index] = await fn(items[index] as T);
+        }
+    }
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+    return results;
+}
+
+const PROVIDER_LOOKUP_CONCURRENCY = 5;
+
 export async function addMembersBatch(
     deps: TokenListsMutationsDeps,
     args: unknown,
@@ -387,28 +446,79 @@ export async function addMembersBatch(
         throw new InvalidArgsError('mints must be an array of strings');
     }
     const mints = [...new Set((a.mints as string[]).map(m => m.trim()).filter(Boolean))];
-    if (mints.length > MEMBER_BATCH_CAP) return { ok: false, error: 'batch_too_large' };
+    if (mints.length > deps.caps.batch) return { ok: false, error: 'batch_too_large' };
 
     const owned = await requireOwnedList(deps, slug, ownerProjectId);
     if (!owned.ok) return owned;
+    const listId = owned.value.id;
 
-    const added: MemberResult[] = [];
     const failed: BatchAddResult['failed'] = [];
-    for (const mint of mints) {
-        const resolved = await resolveMint(deps, mint);
-        if (!resolved.ok) {
-            failed.push({ mint, error: resolved.error });
-            continue;
-        }
-        await deps.repo.upsertMember({
-            listId: owned.value.id,
-            mint,
-            rank: null,
-            note: null,
-            addedAt: deps.now(),
-            snapshot: resolved.value.snapshot,
-        });
-        added.push(resolved.value);
+
+    // Format gate first — malformed strings never reach the DB or the provider.
+    const wellFormed = mints.filter(mint => {
+        if (SOLANA_MINT_REGEX.test(mint)) return true;
+        failed.push({ mint, error: 'invalid_mint' });
+        return false;
+    });
+
+    // Batched local resolution: two IN-queries instead of 2N round trips.
+    const verifiedSet = new Set(await deps.repo.filterMintsWithActiveVariants(wellFormed));
+    const unverifiedCandidates = wellFormed.filter(mint => !verifiedSet.has(mint));
+    const knownSet = new Set(await deps.repo.filterMintsKnownTokens(unverifiedCandidates));
+    const providerCandidates = unverifiedCandidates.filter(mint => !knownSet.has(mint));
+
+    // Provider lookups are budgeted per call: a batch full of unknown mints
+    // must not turn into a thousand Birdeye requests. Over-budget unknowns
+    // fail individually and can be retried in a later batch.
+    const withinBudget = providerCandidates.slice(0, deps.caps.providerLookups);
+    for (const mint of providerCandidates.slice(deps.caps.providerLookups)) {
+        failed.push({ mint, error: 'unknown_mint' });
     }
+    const providerResolved = new Map<string, MemberSnapshot>();
+    await mapWithConcurrency(withinBudget, PROVIDER_LOOKUP_CONCURRENCY, async mint => {
+        const overview = await deps.fetchTokenOverview(mint).catch(() => null);
+        if (!overview) {
+            failed.push({ mint, error: 'unknown_mint' });
+            return;
+        }
+        providerResolved.set(mint, {
+            symbol: typeof overview.symbol === 'string' ? overview.symbol : null,
+            name: typeof overview.name === 'string' ? overview.name : null,
+            logoUri: typeof overview.logoURI === 'string' ? overview.logoURI : null,
+            decimals: typeof overview.decimals === 'number' ? overview.decimals : null,
+        });
+    });
+
+    const resolved: MemberResult[] = wellFormed.flatMap((mint): MemberResult[] => {
+        if (verifiedSet.has(mint)) return [{ mint, verified: true, snapshot: null }];
+        if (knownSet.has(mint)) return [{ mint, verified: false, snapshot: null }];
+        const snapshot = providerResolved.get(mint);
+        return snapshot ? [{ mint, verified: false, snapshot }] : [];
+    });
+
+    // Members-per-list cap: updates of existing members are free; net-new
+    // inserts consume slots in request order, and the overflow fails as
+    // list_full without sinking the rest of the batch.
+    const existingSet = new Set(
+        await deps.repo.filterMintsExistingMembers(listId, resolved.map(member => member.mint)),
+    );
+    const currentCount = await deps.repo.countMembers(listId);
+    let slots = Math.max(0, deps.caps.membersPerList - currentCount);
+    const added: MemberResult[] = [];
+    const rows: Array<{ mint: string; note: string | null; addedAt: number; snapshot: MemberSnapshot | null }> = [];
+    const addedAt = deps.now();
+    for (const member of resolved) {
+        if (!existingSet.has(member.mint)) {
+            if (slots === 0) {
+                failed.push({ mint: member.mint, error: 'list_full' });
+                continue;
+            }
+            slots -= 1;
+        }
+        rows.push({ mint: member.mint, note: null, addedAt, snapshot: member.snapshot });
+        added.push(member);
+    }
+
+    if (rows.length > 0) await deps.repo.upsertMembersBulk(listId, rows);
     return { ok: true, value: { added, failed } };
 }

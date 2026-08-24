@@ -41,7 +41,7 @@ export const PUT = route(
             const member = yield* unwrapOutcome(outcome);
             return { member };
         }),
-    { platform: { requiredScopes: ['lists:write'] } },
+    { platform: { requiredScopes: ['assets:read'] } },
 );
 
 /** DELETE /api/v2/lists/{slug}/members/{mint} — remove a member. */
@@ -57,5 +57,5 @@ export const DELETE = route(
             const removed = yield* unwrapOutcome(outcome);
             return { removed };
         }),
-    { platform: { requiredScopes: ['lists:write'] } },
+    { platform: { requiredScopes: ['assets:read'] } },
 );

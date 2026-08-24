@@ -115,7 +115,7 @@ export const PATCH = route(
             const list = yield* unwrapOutcome(outcome);
             return { list };
         }),
-    { platform: { requiredScopes: ['lists:write'] } },
+    { platform: { requiredScopes: ['assets:read'] } },
 );
 
 /**
@@ -134,5 +134,5 @@ export const DELETE = route(
             const list = yield* unwrapOutcome(outcome);
             return { list };
         }),
-    { platform: { requiredScopes: ['lists:write'] } },
+    { platform: { requiredScopes: ['assets:read'] } },
 );

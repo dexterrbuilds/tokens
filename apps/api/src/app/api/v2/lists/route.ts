@@ -66,5 +66,5 @@ export const POST = route(
             const list = yield* unwrapOutcome(outcome);
             return { list };
         }),
-    { platform: { requiredScopes: ['lists:write'] } },
+    { platform: { requiredScopes: ['assets:read'] } },
 );

@@ -3481,9 +3481,15 @@ function emptyTokenListsMutationsDeps(): TokenListsMutationsDeps {
             async hasTokenForAddress() {
                 return false;
             },
+        async filterMintsWithActiveVariants() { return []; },
+        async filterMintsKnownTokens() { return []; },
+        async filterMintsExistingMembers() { return []; },
+        async countMembers() { return 0; },
+        async upsertMembersBulk() {},
         },
         fetchTokenOverview: async () => null,
         now: () => 0,
+        caps: { batch: 1000, membersPerList: 5000, providerLookups: 50 },
     };
 }
 

@@ -262,8 +262,12 @@ export function failMutationError(
                     details: { code },
                 }),
             );
+        case 'list_full':
+            return Effect.fail(
+                new BadRequestError({ message: 'This list is at its member capacity', details: { code } }),
+            );
         case 'batch_too_large':
-            return Effect.fail(new BadRequestError({ message: 'Batch exceeds the 100-mint cap', details: { code } }));
+            return Effect.fail(new BadRequestError({ message: 'Batch exceeds the per-call mint cap', details: { code } }));
     }
 }
 

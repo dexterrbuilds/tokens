@@ -3475,7 +3475,107 @@ export function makePostgresTokenListsMutationsRepo(sql: Sql): TokenListsMutatio
             `;
             return rows[0]?.exists === true;
         },
+        async filterMintsWithActiveVariants(mints) {
+            const found: string[] = [];
+            for (const part of chunkStrings(mints, 500)) {
+                const rows = await sql<{ mint: string }[]>`
+                    SELECT DISTINCT av.mint
+                    FROM asset_variants av
+                    WHERE av.mint IN ${sql([...part])}
+                      AND av.is_active = true
+                      AND NOT EXISTS (
+                          SELECT 1 FROM asset_deletion_tombstones t WHERE t.asset_id = av.asset_id
+                      )
+                `;
+                for (const row of rows) found.push(row.mint);
+            }
+            return found;
+        },
+        async filterMintsKnownTokens(mints) {
+            const found: string[] = [];
+            for (const part of chunkStrings(mints, 500)) {
+                const rows = await sql<{ address: string }[]>`
+                    SELECT address FROM tokens WHERE address IN ${sql([...part])}
+                `;
+                for (const row of rows) found.push(row.address);
+            }
+            return found;
+        },
+        async filterMintsExistingMembers(listId, mints) {
+            const found: string[] = [];
+            for (const part of chunkStrings(mints, 500)) {
+                const rows = await sql<{ mint: string }[]>`
+                    SELECT mint FROM token_list_members
+                    WHERE list_id = ${listId} AND mint IN ${sql([...part])}
+                `;
+                for (const row of rows) found.push(row.mint);
+            }
+            return found;
+        },
+        async countMembers(listId) {
+            const rows = await sql<{ count: number }[]>`
+                SELECT COUNT(*)::int AS count FROM token_list_members WHERE list_id = ${listId}
+            `;
+            return rows[0]?.count ?? 0;
+        },
+        async upsertMembersBulk(listId, rows) {
+            if (rows.length === 0) return;
+            // New mints append after the current max rank in array order;
+            // conflicts keep their rank and refresh note/snapshot.
+            const baseRows = await sql<{ next: number }[]>`
+                SELECT COALESCE(MAX(rank), -1) + 1 AS next FROM token_list_members WHERE list_id = ${listId}
+            `;
+            let nextRank = baseRows[0]?.next ?? 0;
+            for (const part of chunkArray(rows, 500)) {
+                const values = part.map(row => ({
+                    id: randomId('tlm'),
+                    list_id: listId,
+                    mint: row.mint,
+                    rank: nextRank++,
+                    note: row.note,
+                    added_at: row.addedAt,
+                    symbol: row.snapshot?.symbol ?? null,
+                    name: row.snapshot?.name ?? null,
+                    logo_uri: row.snapshot?.logoUri ?? null,
+                    decimals: row.snapshot?.decimals ?? null,
+                }));
+                await sql`
+                    INSERT INTO token_list_members ${sql(
+                        values,
+                        'id',
+                        'list_id',
+                        'mint',
+                        'rank',
+                        'note',
+                        'added_at',
+                        'symbol',
+                        'name',
+                        'logo_uri',
+                        'decimals',
+                    )}
+                    ON CONFLICT (list_id, mint) DO UPDATE SET
+                        note = EXCLUDED.note,
+                        symbol = EXCLUDED.symbol,
+                        name = EXCLUDED.name,
+                        logo_uri = EXCLUDED.logo_uri,
+                        decimals = EXCLUDED.decimals
+                `;
+            }
+            await sql`UPDATE token_lists SET updated_at = now() WHERE id = ${listId}`;
+        },
     };
+}
+
+function chunkStrings(items: readonly string[], size: number): string[][] {
+    const chunks: string[][] = [];
+    for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size) as string[]);
+    return chunks;
+}
+
+function chunkArray<T>(items: readonly T[], size: number): T[][] {
+    const chunks: T[][] = [];
+    for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size) as T[]);
+    return chunks;
 }
 
 export function makePostgresSeedRepo(sql: Sql): SeedRepo {

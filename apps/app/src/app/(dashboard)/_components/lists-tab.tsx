@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { motion } from 'motion/react';
 import { toast } from 'sonner';
 import {
     IconCheckmark,
@@ -51,8 +50,7 @@ import { useDashboardTab } from '@/hooks/use-dashboard-tab';
  * Community lists management: a first-party client of the public /api/v2/lists
  * API, authenticated through the playground key-reveal proxy — the same write
  * path partners use programmatically, so there is nothing dashboard-only to
- * drift. Projects without the invite-only `lists:write` scope see a
- * request-access state.
+ * drift. Any API key can manage its own project's lists.
  */
 
 interface V2ListSummary {
@@ -97,8 +95,6 @@ function MetadataScoreBar({ label, value }: { label: string; value: number }) {
         </div>
     );
 }
-
-type WriteAccess = 'checking' | 'granted' | 'denied';
 
 const LIST_TOKEN_CACHE_TTL_MS = 5 * 60_000;
 const TOKEN_METADATA_CACHE_TTL_MS = 5 * 60_000;
@@ -599,7 +595,6 @@ export function ListsTab(): React.JSX.Element {
         [projectId, currentApiKeyId],
     );
 
-    const [writeAccess, setWriteAccess] = useState<WriteAccess>('checking');
     const [allLists, setAllLists] = useState<V2ListSummary[] | null>(null);
     const [railTab, setRailTab] = useState<'mine' | 'community'>('mine');
     const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
@@ -607,26 +602,6 @@ export function ListsTab(): React.JSX.Element {
     const activeDetailCacheKeyRef = useRef<string | null>(null);
 
     const ready = Boolean(projectId && currentApiKeyId && hasActiveApiKey);
-
-    // Scope probe: POST with an empty body mutates nothing — a key without
-    // lists:write gets 403 at the scope gate; a granted key reaches body
-    // validation and gets 400.
-    useEffect(() => {
-        if (!ready) return;
-        let cancelled = false;
-        setWriteAccess('checking');
-        void playgroundFetch('/api/v2/lists', { method: 'POST', body: {} }).then(
-            res => {
-                if (!cancelled) setWriteAccess(res.status === 403 ? 'denied' : 'granted');
-            },
-            () => {
-                if (!cancelled) setWriteAccess('denied');
-            },
-        );
-        return () => {
-            cancelled = true;
-        };
-    }, [ready, playgroundFetch]);
 
     const refreshLists = useCallback(async () => {
         if (!ready) return;
@@ -990,7 +965,7 @@ export function ListsTab(): React.JSX.Element {
         );
     }
 
-    if (!ready || writeAccess === 'checking') {
+    if (!ready) {
         return (
             <div className="space-y-6 container max-w-7xl mx-auto py-16 px-6">
                 <div className="mb-6 space-y-2">
@@ -1000,39 +975,6 @@ export function ListsTab(): React.JSX.Element {
                 <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-8">
                     <Skeleton className="h-[280px] w-full rounded-[12px]" />
                     <Skeleton className="h-[420px] w-full rounded-[12px]" />
-                </div>
-            </div>
-        );
-    }
-
-    if (writeAccess === 'denied') {
-        return (
-            <div className="space-y-6 container max-w-7xl mx-auto py-16 px-6">
-                <div className="mb-6">
-                    <h1 className="text-3xl font-bold text-foreground">Token Lists</h1>
-                    <p className="text-muted-foreground">
-                        Publish curated token lists any app can consume via the v2 API.
-                    </p>
-                </div>
-                <div className="relative z-10 bg-background/80 backdrop-blur-sm rounded-2xl border border-dashed border-black/20 py-12">
-                    <EmptyState
-                        icon={<IconCircleGridCrossFill className="size-[60px] mb-2 fill-muted-foreground" />}
-                        title="List publishing is invite-only"
-                        subtitle="Your project's API key doesn't have the lists:write scope yet. Reach out to the Tokens team to request access for your community."
-                        className="p-12 w-full sm:w-[480px] mx-auto"
-                    />
-                    <motion.div
-                        initial={{ opacity: 0, y: 6 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.22, ease: 'easeOut' }}
-                        className="flex justify-center"
-                    >
-                        <Button asChild variant="ghost" size="sm" className="rounded-lg">
-                            <a href="https://docs.tokens.xyz" target="_blank" rel="noreferrer">
-                                Read the lists documentation
-                            </a>
-                        </Button>
-                    </motion.div>
                 </div>
             </div>
         );

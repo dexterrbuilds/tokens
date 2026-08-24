@@ -34,5 +34,5 @@ export const POST = route(
             });
             return yield* unwrapOutcome(outcome);
         }),
-    { platform: { requiredScopes: ['lists:write'] } },
+    { platform: { requiredScopes: ['assets:read'] } },
 );

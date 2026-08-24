@@ -13,9 +13,9 @@ import { SCORING_VERSION } from '@/lib/judgment/types';
 
 /**
  * GET /api/v2/lists/search-tokens — curator-assist search for list owners
- * deciding which mint to add. Not a public ranking: it is gated behind
- * `lists:write`, defaults to the strict policy, and ALWAYS returns the
- * suppressed set with reasons — a curator must see what was filtered and why.
+ * deciding which mint to add. Not a public ranking: it defaults to the strict
+ * policy and ALWAYS returns the suppressed set with reasons — a curator must
+ * see what was filtered and why.
  * Each result carries `verified` (registry variant exists) and `inLists`
  * (curated + community lists already containing the mint — prior art).
  */
@@ -89,5 +89,5 @@ export const GET = route(
                 suppressed,
             };
         }),
-    { platform: { requiredScopes: ['lists:write'] }, cache: { maxAge: 30 } },
+    { platform: { requiredScopes: ['assets:read'] }, cache: { maxAge: 30 } },
 );

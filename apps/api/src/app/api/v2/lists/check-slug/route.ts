@@ -48,5 +48,5 @@ export const GET = route(
             return { slug: raw, available: true };
         }),
     // No cache: a slug freed by a delete must read as available immediately.
-    { platform: { requiredScopes: ['lists:write'] } },
+    { platform: { requiredScopes: ['assets:read'] } },
 );

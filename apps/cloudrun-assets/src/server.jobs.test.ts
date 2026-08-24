@@ -115,9 +115,15 @@ const noopTokenListsMutationsDeps: TokenListsMutationsDeps = {
         async removeMember() { return false; },
         async hasActiveVariantForMint() { return false; },
         async hasTokenForAddress() { return false; },
+        async filterMintsWithActiveVariants() { return []; },
+        async filterMintsKnownTokens() { return []; },
+        async filterMintsExistingMembers() { return []; },
+        async countMembers() { return 0; },
+        async upsertMembersBulk() {},
     },
     fetchTokenOverview: async () => null,
     now: () => 0,
+    caps: { batch: 1000, membersPerList: 5000, providerLookups: 50 },
 };
 const noopAssetCollectionsReadsRepo: AssetCollectionsReadsRepo = {
     async listMembersBySlug() { return []; },

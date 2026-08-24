@@ -45,6 +45,7 @@ import {
     makePostgresVariantMarketsRepo,
 } from './db';
 import type { AdminActionsDeps } from './handlers/adminActions';
+import { DEFAULT_TOKEN_LIST_CAPS } from './handlers/tokenListsMutations';
 import type { CacheWarmDeps } from './handlers/cacheWarm';
 import type { CronDeps } from './handlers/crons';
 import type { ClickhouseCronDeps } from './handlers/crons.clickhouse';
@@ -56,6 +57,12 @@ import type { ClickhouseExtrasCronDeps } from './handlers/crons.clickhouse.extra
 import type { PrestocksCronDeps } from './handlers/crons.prestocks';
 import { makeGoogleOidcVerifier } from './oidc';
 import { createApp, type ServiceRole } from './server';
+
+/** Positive-integer env override with a default. */
+function envInt(name: string, fallback: number): number {
+    const parsed = Number.parseInt(process.env[name] ?? '', 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 const authToken = process.env.TOKENS_CLOUDRUN_AUTH_TOKEN?.trim();
 if (!authToken) {
@@ -300,6 +307,11 @@ const app = createApp({
         // simply resolve as unknown_mint instead of snapshotting metadata.
         fetchTokenOverview: async mint => (cronDeps ? cronDeps.birdeye.fetchTokenOverview(mint) : null),
         now: () => Date.now(),
+        caps: {
+            batch: envInt('TOKEN_LIST_BATCH_CAP', DEFAULT_TOKEN_LIST_CAPS.batch),
+            membersPerList: envInt('TOKEN_LIST_MEMBERS_PER_LIST_CAP', DEFAULT_TOKEN_LIST_CAPS.membersPerList),
+            providerLookups: envInt('TOKEN_LIST_PROVIDER_LOOKUP_BUDGET', DEFAULT_TOKEN_LIST_CAPS.providerLookups),
+        },
     },
     coingeckoReadsRepo: makePostgresCoingeckoReadsRepo(sql),
     stockReadsRepo: makePostgresStockReadsRepo(sql),

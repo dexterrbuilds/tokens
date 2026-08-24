@@ -68,7 +68,8 @@ export type TokenListMutationErrorCode =
     | 'forbidden'
     | 'invalid_mint'
     | 'unknown_mint'
-    | 'batch_too_large';
+    | 'batch_too_large'
+    | 'list_full';
 
 export type TokenListMutationOutcome<T> = { ok: true; value: T } | { ok: false; error: TokenListMutationErrorCode };
 
@@ -152,5 +153,7 @@ export function tokenListsAddMembersBatch(args: {
     slug: string;
     mints: string[];
 }): Effect.Effect<TokenListMutationOutcome<TokenListBatchAddResult>, CloudRunError> {
-    return cloudRunMutation('assets', 'tokenListsAddMembersBatch', { ...args });
+    // A 1000-mint batch legitimately outlives the default 15s client timeout
+    // (chunked DB upserts + up to ~50 budgeted provider lookups).
+    return cloudRunMutation('assets', 'tokenListsAddMembersBatch', { ...args }, { timeoutMs: 60_000 });
 }

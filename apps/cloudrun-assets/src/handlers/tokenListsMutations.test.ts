@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { InvalidArgsError } from './assets';
 import {
-    MEMBER_BATCH_CAP,
+    DEFAULT_TOKEN_LIST_CAPS,
     SlugConflictError,
     addMembersBatch,
     archiveList,
@@ -51,10 +51,18 @@ function makeDeps(
             removeMember: async () => true,
             hasActiveVariantForMint: async () => true,
             hasTokenForAddress: async () => false,
+            // Batch resolution defaults mirror the single-mint fakes above:
+            // every well-formed mint counts as registry-known.
+            filterMintsWithActiveVariants: async mints => [...mints],
+            filterMintsKnownTokens: async () => [],
+            filterMintsExistingMembers: async () => [],
+            countMembers: async () => 0,
+            upsertMembersBulk: async () => {},
             ...repoOverrides,
         },
         fetchTokenOverview: async () => null,
         now: () => FIXED_NOW,
+        caps: { ...DEFAULT_TOKEN_LIST_CAPS },
         ...depsOverrides,
     };
 }
@@ -263,21 +271,30 @@ describe('upsertMember mint resolution', () => {
     });
 });
 
+function uniqueMints(count: number, prefix = 'M'): string[] {
+    // Base58 excludes 0, O, I, l — encode the index with safe letters only.
+    return Array.from({ length: count }, (_, i) => {
+        const tag = String(i)
+            .split('')
+            .map(digit => 'ABCDEFGHJK'[Number(digit)])
+            .join('');
+        return `${prefix}${tag}`.padEnd(40, 'z');
+    });
+}
+
 describe('addMembersBatch', () => {
-    it('caps the batch size', async () => {
-        const mints = Array.from({ length: MEMBER_BATCH_CAP + 1 }, (_, i) =>
-            `M${String(i).padStart(3, 'x')}`.padEnd(40, 'z'),
-        );
+    it('caps the batch size at caps.batch', async () => {
+        const mints = uniqueMints(DEFAULT_TOKEN_LIST_CAPS.batch + 1);
         expect(await addMembersBatch(makeDeps(), { ownerProjectId: 'proj_1', slug: 'ownership-core', mints })).toEqual({
             ok: false,
             error: 'batch_too_large',
         });
     });
 
-    it('partitions per-mint successes and failures', async () => {
+    it('partitions per-mint successes and failures via batched resolution', async () => {
         const deps = makeDeps({
-            hasActiveVariantForMint: async mint => mint === USDC_MINT,
-            hasTokenForAddress: async () => false,
+            filterMintsWithActiveVariants: async mints => mints.filter(mint => mint === USDC_MINT),
+            filterMintsKnownTokens: async () => [],
         });
         const result = await addMembersBatch(deps, {
             ownerProjectId: 'proj_1',
@@ -289,11 +306,93 @@ describe('addMembersBatch', () => {
             value: {
                 added: [{ mint: USDC_MINT, verified: true, snapshot: null }],
                 failed: [
-                    { mint: MEME_MINT, error: 'unknown_mint' },
                     { mint: 'garbage', error: 'invalid_mint' },
+                    { mint: MEME_MINT, error: 'unknown_mint' },
                 ],
             },
         });
+    });
+
+    it('writes through the bulk upsert, not the per-mint path', async () => {
+        const bulkCalls: number[] = [];
+        let singleCalls = 0;
+        const deps = makeDeps({
+            upsertMembersBulk: async (_listId, rows) => void bulkCalls.push(rows.length),
+            upsertMember: async () => {
+                singleCalls += 1;
+            },
+        });
+        await addMembersBatch(deps, {
+            ownerProjectId: 'proj_1',
+            slug: 'ownership-core',
+            mints: uniqueMints(3),
+        });
+        expect(bulkCalls).toEqual([3]);
+        expect(singleCalls).toBe(0);
+    });
+
+    it('spends at most caps.providerLookups on Birdeye and fails the rest as unknown_mint', async () => {
+        let lookups = 0;
+        const deps = makeDeps(
+            {
+                // Nothing resolves locally — every mint is a provider candidate.
+                filterMintsWithActiveVariants: async () => [],
+                filterMintsKnownTokens: async () => [],
+            },
+            {
+                fetchTokenOverview: async () => {
+                    lookups += 1;
+                    return { symbol: 'X', name: 'X Token', decimals: 6 };
+                },
+                caps: { ...DEFAULT_TOKEN_LIST_CAPS, providerLookups: 5 },
+            },
+        );
+        const result = await addMembersBatch(deps, {
+            ownerProjectId: 'proj_1',
+            slug: 'ownership-core',
+            mints: uniqueMints(8),
+        });
+        expect(lookups).toBe(5);
+        if (!result.ok) throw new Error('expected ok');
+        expect(result.value.added.length).toBe(5);
+        expect(result.value.failed.filter(f => f.error === 'unknown_mint').length).toBe(3);
+    });
+
+    it('fails net-new mints beyond the members-per-list cap with list_full, updates stay free', async () => {
+        const mints = uniqueMints(4);
+        const existing = mints[0] as string;
+        const deps = makeDeps(
+            {
+                countMembers: async () => 4999,
+                filterMintsExistingMembers: async () => [existing],
+            },
+            { caps: { ...DEFAULT_TOKEN_LIST_CAPS, membersPerList: 5000 } },
+        );
+        const result = await addMembersBatch(deps, { ownerProjectId: 'proj_1', slug: 'ownership-core', mints });
+        if (!result.ok) throw new Error('expected ok');
+        // 1 update (existing) + 1 new fills the last slot; 2 overflow.
+        expect(result.value.added.map(m => m.mint)).toEqual([mints[0], mints[1]]);
+        expect(result.value.failed).toEqual([
+            { mint: mints[2], error: 'list_full' },
+            { mint: mints[3], error: 'list_full' },
+        ]);
+    });
+});
+
+describe('upsertMember list_full', () => {
+    it('rejects a net-new member on a full list but allows updating an existing one', async () => {
+        const fullDeps = makeDeps({ countMembers: async () => 5000, filterMintsExistingMembers: async () => [] });
+        expect(
+            await upsertMember(fullDeps, { ownerProjectId: 'proj_1', slug: 'ownership-core', mint: USDC_MINT }),
+        ).toEqual({ ok: false, error: 'list_full' });
+
+        const updateDeps = makeDeps({
+            countMembers: async () => 5000,
+            filterMintsExistingMembers: async () => [USDC_MINT],
+        });
+        expect(
+            await upsertMember(updateDeps, { ownerProjectId: 'proj_1', slug: 'ownership-core', mint: USDC_MINT }),
+        ).toEqual({ ok: true, value: { mint: USDC_MINT, verified: true, snapshot: null } });
     });
 });
 
