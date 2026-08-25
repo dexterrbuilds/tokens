@@ -322,7 +322,11 @@ export async function fetchTrendingTokens(mode: TrendingMode = 'fresh', signal?:
         { signal },
     );
 
-    return (data.trending ?? []).map(trendingResultToToken);
+    if (!Array.isArray(data.trending)) {
+        throw new Error('Tokens trending response is missing the required trending array');
+    }
+
+    return data.trending.map(trendingResultToToken);
 }
 
 export async function fetchSearchTokens(query: string, signal?: AbortSignal): Promise<Token[]> {

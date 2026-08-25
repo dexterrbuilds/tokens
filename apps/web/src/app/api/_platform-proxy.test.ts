@@ -2,19 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn, type Mock } f
 
 mock.module('server-only', () => ({}));
 
-const { proxyPlatformRequest, proxyPlatformError } = await import('./_platform-proxy');
+const { proxyPlatformRequest, proxyPlatformGet, proxyPlatformError } = await import('./_platform-proxy');
 
 const ORIGINAL_FETCH = globalThis.fetch;
 const ENV_KEYS = ['API_BASE_URL', 'TOKENS_API_ORIGIN', 'TOKENS_PLATFORM_API_KEY'] as const;
 const savedEnv: Record<string, string | undefined> = {};
 
 let errorSpy: Mock<typeof console.error>;
+let infoSpy: Mock<typeof console.info>;
 
 beforeEach(() => {
     for (const key of ENV_KEYS) savedEnv[key] = process.env[key];
-    process.env.API_BASE_URL = 'https://api.example.test';
+    process.env.API_BASE_URL = 'https://api.tokens.xyz';
     process.env.TOKENS_PLATFORM_API_KEY = 'platform-key';
     errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    infoSpy = spyOn(console, 'info').mockImplementation(() => {});
 });
 
 afterEach(() => {
@@ -24,6 +26,7 @@ afterEach(() => {
         else process.env[key] = savedEnv[key];
     }
     errorSpy.mockRestore();
+    infoSpy.mockRestore();
 });
 
 function setFetch(impl: (url: string, init?: RequestInit) => Promise<Response>): void {
@@ -35,6 +38,53 @@ function getRequest(path: string, headers?: Record<string, string>): Request {
 }
 
 describe('proxyPlatformRequest', () => {
+    it('maps the internal web namespace to the hosted public v1 contract', async () => {
+        let requestedUrl = '';
+        setFetch(async url => {
+            requestedUrl = String(url);
+            return new Response(JSON.stringify({ trending: [] }), {
+                status: 200,
+                headers: { 'content-type': 'application/json' },
+            });
+        });
+
+        await proxyPlatformRequest(getRequest('/api/v1/assets/trending?limit=50&mode=fresh'));
+
+        expect(requestedUrl).toBe('https://api.tokens.xyz/v1/assets/trending?limit=50&mode=fresh');
+    });
+
+    it('preserves the internal namespace for a local API deployment', async () => {
+        process.env.API_BASE_URL = 'http://localhost:3002';
+        let requestedUrl = '';
+        setFetch(async url => {
+            requestedUrl = String(url);
+            return new Response('{}', { status: 200 });
+        });
+
+        await proxyPlatformRequest(getRequest('/api/v1/assets/trending?limit=1'));
+
+        expect(requestedUrl).toBe('http://localhost:3002/api/v1/assets/trending?limit=1');
+    });
+
+    it('logs request diagnostics without logging the API key', async () => {
+        setFetch(async () =>
+            new Response(JSON.stringify({ error: { _tag: 'UnauthorizedError', message: 'Invalid API key' } }), {
+                status: 401,
+                statusText: 'Unauthorized',
+                headers: { 'content-type': 'application/json' },
+            }),
+        );
+
+        await proxyPlatformRequest(getRequest('/api/v1/assets/trending?limit=1'));
+
+        const logs = JSON.stringify([...infoSpy.mock.calls, ...errorSpy.mock.calls]);
+        expect(logs).toContain('[TOKEN_RADAR] API key configured: true');
+        expect(logs).toContain('[TOKEN_RADAR] Requesting endpoint: /v1/assets/trending?limit=1');
+        expect(logs).toContain('[TOKEN_RADAR] Upstream status: 401');
+        expect(logs).toContain('[TOKEN_RADAR] Upstream response error: Invalid API key');
+        expect(logs.includes('platform-key')).toBe(false);
+    });
+
     it('passes through status, body, and applies cache-control for cached GETs', async () => {
         setFetch(async () =>
             new Response(JSON.stringify({ ok: true }), {
@@ -53,6 +103,19 @@ describe('proxyPlatformRequest', () => {
         setFetch(async () => new Response('{}', { status: 502, headers: { 'content-type': 'application/json' } }));
         const res = await proxyPlatformRequest(getRequest('/api/v1/x'), { next: { revalidate: 60 } }, 30);
         expect(res.status).toBe(502);
+        expect(res.headers.get('cache-control')).toBe('no-store');
+    });
+
+    it('does not add a second cache to current asset price and liquidity snapshots', async () => {
+        setFetch(async () =>
+            new Response(JSON.stringify({ asset: { assetId: 'bitcoin' } }), {
+                status: 200,
+                headers: { 'content-type': 'application/json', 'cache-control': 'private, max-age=30' },
+            }),
+        );
+
+        const res = await proxyPlatformGet(getRequest('/api/v1/assets/bitcoin'));
+
         expect(res.headers.get('cache-control')).toBe('no-store');
     });
 
