@@ -172,6 +172,8 @@ export async function proxyPlatformRequest(
         Effect.flatMap(upstreamRes => {
             console.info(`[TOKEN_RADAR] Upstream status: ${upstreamRes.status}`);
             const responseHeaders = new Headers(upstreamRes.headers);
+            const upstreamRequestId = responseHeaders.get('x-request-id')?.trim();
+            if (upstreamRequestId) console.info(`[TOKEN_RADAR] Upstream request ID: ${upstreamRequestId}`);
             stripUnsupportedUpstreamHeaders(responseHeaders);
             stripProxyUnsafeResponseHeaders(responseHeaders);
             applyProxyCacheControl(

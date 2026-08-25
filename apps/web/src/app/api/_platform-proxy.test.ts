@@ -71,7 +71,7 @@ describe('proxyPlatformRequest', () => {
             new Response(JSON.stringify({ error: { _tag: 'UnauthorizedError', message: 'Invalid API key' } }), {
                 status: 401,
                 statusText: 'Unauthorized',
-                headers: { 'content-type': 'application/json' },
+                headers: { 'content-type': 'application/json', 'x-request-id': 'request-123' },
             }),
         );
 
@@ -81,6 +81,7 @@ describe('proxyPlatformRequest', () => {
         expect(logs).toContain('[TOKEN_RADAR] API key configured: true');
         expect(logs).toContain('[TOKEN_RADAR] Requesting endpoint: /v1/assets/trending?limit=1');
         expect(logs).toContain('[TOKEN_RADAR] Upstream status: 401');
+        expect(logs).toContain('[TOKEN_RADAR] Upstream request ID: request-123');
         expect(logs).toContain('[TOKEN_RADAR] Upstream response error: Invalid API key');
         expect(logs.includes('platform-key')).toBe(false);
     });
