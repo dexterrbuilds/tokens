@@ -14,7 +14,7 @@ import {
     selectVariantForMint,
     type TokenSocialAssetResponse,
 } from '@/lib/token-social-image-data';
-import { AssetPage } from './asset-page';
+import { RadarAssetPage } from '@/components/radar/radar-asset-page';
 import { pickFirstDisplayName, pickFirstSymbol } from './lib/asset-display';
 
 interface CoinPageProps {
@@ -87,9 +87,9 @@ function firstString(value: string | string[] | undefined): string | null {
 // Static so generateMetadata never touches request headers (keeps the route cacheable/ISR).
 function getMetadataBase(): URL {
     try {
-        return new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'https://tokens.xyz');
+        return new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000');
     } catch {
-        return new URL('https://tokens.xyz');
+        return new URL('http://localhost:3000');
     }
 }
 
@@ -134,8 +134,8 @@ async function buildAssetMetadata(
         : null;
     const displayName = cleanTokenName(variantSocialData?.displayName ?? canonicalDisplayName);
     const symbol = pickFirstSymbol(variantSocialData?.symbol, canonicalSymbol) || undefined;
-    const title = symbol ? `${displayName} (${symbol}) | Tokens` : `${displayName} | Tokens`;
-    const description = `View Solana variants for ${displayName}.`;
+    const title = symbol ? `${displayName} (${symbol}) | Token Radar` : `${displayName} | Token Radar`;
+    const description = `Investigate live activity and Solana representations for ${displayName} in Token Radar.`;
     const metadataBase = getMetadataBase();
     // The minute bucket busts share-image caches, so it must read the request-time
     // clock; connection() keeps this metadata out of the prerendered shell.
@@ -203,7 +203,8 @@ export async function generateMetadata({ params, searchParams }: CoinPageProps):
     const requestedMint = normalizeRequestedSolanaMint(firstString(resolvedSearchParams?.solana));
 
     const asset =
-        (await resolveCanonicalAsset(name)) ?? (requestedMint ? await resolveCanonicalAsset(name, requestedMint) : null);
+        (await resolveCanonicalAsset(name)) ??
+        (requestedMint ? await resolveCanonicalAsset(name, requestedMint) : null);
     if (asset) return await buildAssetMetadata(name, asset, requestedMint);
 
     return {
@@ -247,7 +248,7 @@ export default async function CoinPage({ params, searchParams }: CoinPageProps) 
             redirect(`/${encodeURIComponent(asset.assetId)}`);
         }
 
-        return <AssetPage asset={asset} requestedName={name} requestedMint={requestedMint} />;
+        return <RadarAssetPage asset={asset} />;
     }
 
     const resolvedAsset = await resolveCanonicalAsset(name, requestedMint);
@@ -260,7 +261,7 @@ export default async function CoinPage({ params, searchParams }: CoinPageProps) 
             redirect(`/${encodeURIComponent(resolvedAsset.assetId)}`);
         }
 
-        return <AssetPage asset={resolvedAsset} requestedName={name} requestedMint={requestedMint} />;
+        return <RadarAssetPage asset={resolvedAsset} />;
     }
 
     notFound();

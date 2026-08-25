@@ -40,6 +40,7 @@ export interface Token {
     marketCap: number;
     lastTradeAt?: number;
     asOf?: number;
+    lastFetchedAt?: number;
 }
 
 export interface MarketStats {

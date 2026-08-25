@@ -14,9 +14,22 @@ import './globals.css';
 const GA_MEASUREMENT_ID = process.env.NODE_ENV === 'production' ? 'G-CWCQMKEH99' : undefined;
 
 export const metadata: Metadata = {
-    title: 'Tokens | Solana Liquidity & Token Aggregator',
+    metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'),
+    title: 'Token Radar | Live Solana Asset Intelligence',
     description:
-        'Aggregate liquidity and token data across Solana DEXs. Find the best prices, analyze token metrics, and discover new opportunities.',
+        'See what is moving across tokenized assets on Solana: activity, volume pace, liquidity, momentum, and representation trust.',
+    openGraph: {
+        type: 'website',
+        title: 'Token Radar | Live Solana Asset Intelligence',
+        description: 'See the market before the headline.',
+        images: [{ url: '/og.png', width: 1200, height: 630, alt: 'Token Radar market intelligence sweep' }],
+    },
+    twitter: {
+        card: 'summary_large_image',
+        title: 'Token Radar | Live Solana Asset Intelligence',
+        description: 'See the market before the headline.',
+        images: ['/og.png'],
+    },
     icons: {
         icon: [
             { url: '/favicon.ico', sizes: '32x32' },
@@ -29,10 +42,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-    themeColor: [
-        { media: '(prefers-color-scheme: light)', color: '#ffffff' },
-        { media: '(prefers-color-scheme: dark)', color: '#1C1C1D' },
-    ],
+    themeColor: '#f4f2ea',
 };
 
 export default function RootLayout({
@@ -67,7 +77,8 @@ export default function RootLayout({
                                     {children}
                                     <FloatingMarketFeedLazy />
                                     <Toaster position="top-center" richColors closeButton />
-                                    {process.env.NODE_ENV === 'development' && (
+                                    {process.env.NODE_ENV === 'development' &&
+                                        process.env.NEXT_PUBLIC_AGENTATION_ENABLED === 'true' && (
                                         <Agentation endpoint="http://localhost:4747" />
                                     )}
                                 </SearchVisibilityProvider>

@@ -219,6 +219,7 @@ function assetResultToToken(result: AssetSearchResult): Token | null {
 
     return {
         assetId: result.assetId,
+        category: result.category,
         ...(coingeckoId ? { coingeckoId } : {}),
         ...(result.category ? { category: result.category } : {}),
         ...(canonicalMarket?.source ? { canonicalMarketSource: canonicalMarket.source } : {}),
@@ -286,6 +287,7 @@ function trendingResultToToken(result: TrendingAssetResult): Token {
         marketCap: 0,
         ...(market.lastTradeAt != null ? { lastTradeAt: market.lastTradeAt } : {}),
         ...(market.asOf != null ? { asOf: market.asOf } : {}),
+        ...(market.lastFetchedAt != null ? { lastFetchedAt: market.lastFetchedAt } : {}),
         trendingRank: result.rank,
         trendingScore: result.trending.score,
     } satisfies Token;
@@ -364,6 +366,8 @@ export function useTrendingTokens(options: TokensQueryOptions & { mode?: Trendin
         queryKey: ['tokens', 'trending', mode],
         queryFn: ({ signal }) => fetchTrendingTokens(mode, signal),
         staleTime: mode === 'fresh' ? 15 * 1000 : 30 * 1000,
+        refetchInterval: 30 * 1000,
+        refetchIntervalInBackground: false,
         placeholderData: keepPreviousData,
         initialData,
         initialDataUpdatedAt,

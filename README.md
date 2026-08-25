@@ -1,128 +1,218 @@
-# Tokens
+# Token Radar
 
-Tokens is the open-source monorepo for the Tokens website, API, docs, and services. This is the live repository the project is developed and deployed from — it is not a mirror or a snapshot.
+Token Radar turns the Solana Foundation Tokens repository into a live market
+intelligence system for tokenized assets.
 
-Issues are welcome; external pull requests are not accepted. See the contribution policy below and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
+The original Tokens experience answers, “What assets exist and where can I find
+them?” This fork answers, “What is happening across those assets right now?”
 
-## Contributions and Curation
+It is an analytics and discovery product. It does not recommend buying,
+selling, or trading.
 
-Tokens is open source, and you are free to inspect, use, and fork the code under
-the terms of the MIT license. The hosted Tokens product—including its frontend
-experience and its curated token, venue, market, and metadata coverage—remains
-operated and controlled by the Tokens team. Publishing the source does not make
-the hosted product or its listings community-managed.
+## What changed
 
-We do not accept external pull requests, including requests to add or update
-tokens, venues, markets, logos, metadata, rankings, or other product content.
-External pull requests are closed automatically without review.
+- A live radar field that spatializes the most active canonical assets.
+- Deterministic sections for moving assets, volume spikes, current liquidity
+  depth, positive momentum, cooling activity, and representation tier.
+- A snapshot-signal feed derived from real thresholds, never generated events.
+- Asset investigation pages with current price, activity, volume, liquidity,
+  trust context, and a plain-language metric summary.
+- An asset-family map connecting a canonical asset to every Solana
+  representation, including per-variant market data and cached trading
+  destinations.
+- A transparent 0–100 Radar Score with every component visible.
+- A price-and-volume Signal Tape with a draggable cursor.
+- Downloadable 1200×630 per-asset Radar cards rendered with the repository's
+  existing `html-to-image` dependency.
+- Purposeful loading, empty, error, keyboard, reduced-motion, and mobile states.
 
-If you have found a relevant bug, data issue, or other improvement, please
-[open an issue](https://github.com/solana-foundation/tokens/issues) with enough
-context for the maintainers to evaluate it. Please report security
-vulnerabilities through the process in [SECURITY.md](SECURITY.md), not through a
-public issue.
+The rest of the monorepo remains intact: the API, services, shared packages,
+database schema, infrastructure, admin app, API manager, and docs can continue
+to evolve independently.
 
-## Scope
+## Why this is Live Radar, not full Market Replay
 
-- The code here powers the hosted Tokens product; the hosted surfaces remain the easiest way to *use* Tokens.
-- Self-hosting a full production deployment is possible but not yet documented end to end — the app code, database schema (`db/`), and infrastructure (`terraform/`) are all here, but you will need to supply your own credentials and infrastructure.
-- `apps/admin` and the operational apps are authenticated maintainer tooling, not anonymous public surfaces.
+The repository stores OHLCV candles, so price and candle volume can be rewound.
+It stores liquidity only in latest-snapshot tables. A historical cursor cannot
+truthfully update past liquidity, representation trust, or liquidity-change
+events.
 
-## Repo Surfaces
+Token Radar therefore uses:
 
-| Surface      | Role                                                | Deployment                                       |
-| ------------ | --------------------------------------------------- | ------------------------------------------------ |
-| `apps/web`         | Public product website and lightweight proxy routes | Vercel                                     |
-| `apps/docs`        | Public API documentation site                       | Vercel                                     |
-| `apps/api`         | Tokens platform API (`/v1/...`) and helper routes   | Vercel                                     |
-| `apps/app`         | First-party dashboard for API keys and usage        | Vercel                                     |
-| `apps/admin`       | Authenticated tooling for curated asset management  | Vercel (authenticated maintainer surface)  |
-| `apps/cloudrun-*`  | Backend services (assets, prices, usage, admin)     | GCP Cloud Run                              |
-| `packages/*`       | Shared packages and UI primitives                   | Consumed by the apps                       |
-| `db/`              | SQL schema and ordered migrations                   | Postgres (Cloud SQL)                       |
-| `terraform/`       | Live infrastructure-as-code for staging/production  | GCP (applied by CI)                        |
-| `scripts`          | Verification, seeding, and maintenance utilities    | Local / CI tooling                         |
+- live snapshots for liquidity, trust, trades, wallets, and current activity;
+- historical OHLCV only for the asset page's price-and-volume Signal Tape; and
+- explicit labeling whenever a value remains a live snapshot.
+
+It never fabricates liquidity expansion, liquidity contraction, or an exact
+event time that the data does not support. See
+[the reconnaissance note](docs/token-radar-reconnaissance.md) for the complete
+source-level findings.
 
 ## Architecture
 
-The `apps/web`, `apps/app`, and `apps/admin` Next.js frontends talk to `apps/api`
-(the public `/v1/...` platform API). `apps/api` authenticates callers (Clerk for
-sessions, hashed platform API keys for programmatic access) and proxies to the
-Cloud Run backend services in `apps/cloudrun-*` (assets, prices, usage, admin),
-which own data access to Postgres (Cloud SQL), ClickHouse, and Upstash Redis.
-Schema lives in `db/`; infrastructure in `terraform/`.
+The smallest production deployment is the existing public web application:
 
-## Tech Stack
+```text
+Browser
+  └─ apps/web (Next.js on Vercel)
+       ├─ /api/v1/* same-origin, server-side proxy
+       ├─ @tokens/asset-registry (canonical assets + representations)
+       └─ https://api.tokens.xyz/v1 (hosted Tokens API)
+```
 
-- Next.js 16 App Router
-- Bun workspaces + Turborepo
-- TypeScript
-- Tailwind CSS 4
-- Clerk (auth)
-- Postgres (Cloud SQL) + ClickHouse + Upstash Redis
-- Cloud Run (backend services)
+This deployment does **not** require the fork to run Cloud Run, Postgres,
+ClickHouse, Redis, Clerk, or provider ingestion jobs. The Vercel server keeps
+the Tokens API key out of the browser and preserves the existing cache policy.
 
-## Getting Started
+### Reused repository systems
 
-1. Install dependencies.
+| Need | Existing system used |
+| --- | --- |
+| Canonical assets and variants | `@tokens/asset-registry` |
+| Current activity | `/v1/assets/trending` |
+| Asset and variant snapshots | `/v1/assets/:assetId` |
+| Trading destinations | `/v1/assets/:assetId/variant-top-markets` |
+| Historical price and volume | `/v1/assets/:assetId/price-chart` |
+| Browser data fetching | Effect API client + TanStack Query |
+| Logos and remote images | existing normalization and image proxy |
+| Share images | existing `html-to-image` dependency |
+| UI foundations | shared Tokens/Solana design-system styles |
+
+### Data freshness
+
+- The Radar client refreshes the trending snapshot every 30 seconds while the
+  page is active.
+- The upstream trending API is dynamic with a 30-second cache policy.
+- Asset and OHLCV proxy responses generally use a 60-second cache window;
+  OHLCV can serve stale data while revalidating.
+- The UI displays provider timestamps when they exist.
+
+## Radar Score methodology
+
+Radar Score means “notable current activity,” not “good investment.” Missing
+metrics contribute zero rather than being estimated.
+
+| Component | Weight | Deterministic input |
+| --- | ---: | --- |
+| Activity | 30% | Log-scaled 1h volume (45%), trades (30%), and unique wallets (25%) |
+| Volume acceleration | 25% | `volume1h / (volume24h / 24)`, mapped from 0.5× to 4× |
+| Liquidity | 20% | Log-scaled current on-chain liquidity from $10k to $20m |
+| Price movement | 15% | Absolute reported 1h change, capped at 5% |
+| Representation tier | 10% | Current liquidity-derived tier: 100 / 68 / 36, or 20 if unrated |
+
+The executable formula and comments live in
+`apps/web/src/lib/radar.ts`, with tests in `radar.test.ts`.
+
+### Signal thresholds
+
+- **Volume spike:** 1h volume pace is at least 2× the asset's own 24h hourly
+  baseline.
+- **Positive momentum:** reported 1h price change is at least +1%.
+- **Cooling:** reported 1h price change is at most −1%.
+- **Unusual activity:** Radar Score is at least 78 and no more specific signal
+  already applies.
+
+Signals are snapshot classifications. The displayed time is the latest usable
+trade/snapshot timestamp, not a claim about the exact millisecond a threshold
+was crossed.
+
+## Local development
+
+Requirements: Bun 1.3.6+ and Node.js 20+.
 
 ```bash
 bun install
-```
-
-2. Create local env files from the checked-in templates.
-
-```bash
-cp .env.example .env.local
-cp apps/api/.env.example apps/api/.env.local
-cp apps/app/.env.example apps/app/.env.local
-cp apps/admin/.env.example apps/admin/.env.local
 cp apps/web/.env.example apps/web/.env.local
+bun run --cwd apps/web dev
 ```
 
-3. Fill in the credentials and service URLs required for the apps you plan to run.
-4. Apply the database schema (Postgres) if you are running services that need it.
+Open [http://localhost:3000](http://localhost:3000).
 
-```bash
-DATABASE_URL=postgres://... ./db/apply.sh
+Set these values in `apps/web/.env.local`:
+
+```dotenv
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+API_BASE_URL=https://api.tokens.xyz
+TOKENS_PLATFORM_API_KEY=your_server_side_tokens_api_key
 ```
 
-5. Start the workspace dev servers.
+Create/manage the key through the Tokens API Manager. It needs the
+`assets:read` scope. Never prefix it with `NEXT_PUBLIC_` and never commit
+`.env.local`.
+
+Without data configuration, the shell, methodology, and deliberate error
+states still render; live values remain unavailable instead of falling back to
+sample or random data.
+
+### Relevant checks
 
 ```bash
-bun dev
+bun run --cwd apps/web typecheck
+bun run --cwd apps/web lint
+bun run --cwd apps/web test
+bun run --cwd apps/web build
 ```
 
-Common local ports:
-
-- `web`: `http://localhost:3000`
-- `app`: `http://localhost:3001`
-- `api`: `http://localhost:3002`
-- `docs`: `http://localhost:3003`
-- `admin`: `http://localhost:3004`
-
-## Common Commands
+Run the whole monorepo when changing shared or backend code:
 
 ```bash
-bun dev
-bun run build
+bun run typecheck
 bun run lint
-bun run check:repo-hygiene
-bun run verify:api-health-routes
-bun run audit:deps
+bun run test
+bun run build
 ```
 
-## Verification And Releases
+## Deploying the frontend to Vercel
 
-- Read [TESTING.md](TESTING.md) for CI and local verification guidance used by maintainers.
-- Read [RELEASING.md](RELEASING.md) for how changes promote from staging to production, and how to roll back.
-- Review [SECURITY.md](SECURITY.md) before reporting vulnerabilities.
+1. Import the repository into Vercel.
+2. Select `apps/web` as the Root Directory and enable access to source files
+   outside the Root Directory so workspace packages resolve.
+3. Keep Bun as the package manager and use the workspace `build` script (`next build --webpack`).
+4. Add `NEXT_PUBLIC_SITE_URL`, `API_BASE_URL=https://api.tokens.xyz`, and
+   `TOKENS_PLATFORM_API_KEY` to the Production environment.
+5. Deploy, then set `NEXT_PUBLIC_SITE_URL` to the final HTTPS origin and
+   redeploy so canonical and social metadata use the correct host.
 
-## Security And Hygiene
+No secrets belong in `vercel.json`, source files, client-side variables, or
+Git history.
 
-- Local env files such as `.env.local` are ignored and must never be committed.
-- Never commit credentials, secrets, or personal data. `bun run check:repo-hygiene` enforces the basics in CI.
+## Environment variables
 
-## License
+| Variable | Required for Radar | Exposure | Purpose |
+| --- | --- | --- | --- |
+| `NEXT_PUBLIC_SITE_URL` | Yes in production | Public | canonical URLs and social metadata |
+| `API_BASE_URL` | Yes | Server only | hosted Tokens API origin |
+| `TOKENS_API_ORIGIN` | Alternative | Server only | fallback alias for the API origin |
+| `TOKENS_PLATFORM_API_KEY` | Yes | Server only | authenticated `assets:read` requests |
+| `NEXT_PUBLIC_POSTHOG_*` | No | Public | optional analytics |
+| `BIRDEYE_API_KEY`, `COINGECKO_API_KEY`, `DD_API_KEY` | No | Server only | only needed for legacy/direct helper routes, not the minimal Radar path |
 
-MIT. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for vendored-asset posture.
+The documented external contract is `https://api.tokens.xyz/v1` and requires
+an API key. Internal `/api/v1/*` paths on a Tokens web deployment are proxy
+implementation details and should not be treated as a stable anonymous API.
+
+## Data limitations
+
+- Trending is a cached top-50 representation sample, not every Solana asset.
+- The homepage keeps the highest-scoring representation per canonical asset.
+- Liquidity is a current snapshot; there is no liquidity time series.
+- OHLCV coverage varies by asset and can be empty while background warming runs.
+- Provider timestamps and refresh cadence vary; the UI shows what is available.
+- Registry tiers are curation/market-ranking context, not smart-contract or
+  issuer audits.
+- Risk-helper inputs such as holder concentration are not guaranteed on the
+  lightweight Radar path, so Radar does not synthesize them.
+- Volume pace uses the current rolling 1h window against the rolling 24h hourly
+  average. It is a useful acceleration signal, not a seasonality model.
+
+## Original repository and attribution
+
+Token Radar is a fork of the
+[Solana Foundation Tokens repository](https://github.com/solana-foundation/tokens).
+The UI includes “Data provided by Tokens” attribution and preserves the
+original monorepo structure where practical.
+
+The original repository is MIT licensed. The existing [LICENSE](LICENSE),
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md), and attribution files remain
+intact. Tokens, Solana, provider names, and third-party assets remain subject to
+their respective rights and terms.

@@ -8,14 +8,27 @@ import { trackEvent } from '@/lib/posthog-client';
 import { TokenSearch } from './token-search';
 import { Logo } from './logo';
 import { useSearchVisibility } from './search-visibility-provider';
+import { resolveAlias } from '@tokens/asset-registry';
 
 function getHasScrolled(): boolean {
     return window.scrollY > 0;
 }
 
 function shouldHideGlobalHeader(pathname: string): boolean {
+    const segment = pathname.split('/').filter(Boolean)[0];
+    const isAssetRoute = segment
+        ? (() => {
+              try {
+                  return Boolean(resolveAlias(decodeURIComponent(segment)));
+              } catch {
+                  return false;
+              }
+          })()
+        : false;
     // Routes that render their own page-scoped nav and want the global header hidden.
     return (
+        pathname === '/' ||
+        isAssetRoute ||
         pathname === '/assets-api' ||
         pathname.startsWith('/assets-api/') ||
         pathname === '/partners' ||
